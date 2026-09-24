@@ -1,0 +1,47 @@
+{
+  "status": "CONFLICTING_CHECKED_IN_CONTRACTS; REMOTE_SCHEMA_NOT_VERIFIED",
+  "same_project_ref": "zxqwtqlbrlegwdodjhiq",
+  "entities": {
+    "trading_accounts": {
+      "customer": {"owner": "owner_user_id", "source": "supabase/migrations/20260917000100_terminal_schema.sql"},
+      "terminal_os": {"owner": "owner_user_id in legacy SQL; newer service contract not fully declared", "source": "database/schema.sql; server/services/accounts.ts"},
+      "result": "PARTIAL"
+    },
+    "orders": {
+      "customer": {"domain": "trading schema table named orders", "key": "account_id"},
+      "terminal_os": {"domain": "payment/checkout in service documentation; trading service uses trading_orders", "key": "trading_account_id in legacy SQL"},
+      "result": "DIFFERENT"
+    },
+    "executions": {
+      "customer": {"key": "account_id", "owner": "owner_user_id"},
+      "terminal_os": {"key": "trading_account_id in legacy SQL; service joins trading_orders"},
+      "result": "DIFFERENT"
+    },
+    "positions": {
+      "customer": {"state": "position_status", "key": "account_id"},
+      "terminal_os": {"state": "status in legacy SQL; is_open/qty/avg_price in current services", "key": "trading_account_id in legacy SQL"},
+      "result": "DIFFERENT"
+    },
+    "metrics": {
+      "customer": {"table": "account_metric_snapshots"},
+      "terminal_os": {"tables": ["account_metrics", "account_metric_snapshots"]},
+      "result": "DIFFERENT"
+    },
+    "staff": {
+      "customer": {"table": "not verified"},
+      "terminal_os": {"tables": ["employees", "staff_members mentioned by current contract"]},
+      "result": "DIFFERENT/UNKNOWN"
+    },
+    "watchlists": {
+      "customer": {"tables": ["watchlists", "watchlist_items"], "rls": "owner policies"},
+      "terminal_os": {"tables": ["watchlists", "watchlist_items"], "rls": "remote not verified"},
+      "result": "SAME NAMES; CONTRACT UNKNOWN"
+    }
+  },
+  "rpcs": {
+    "customer": ["get_active_account_context", "evaluate_pre_trade_risk"],
+    "terminal_os": ["encrypt_broker_credentials", "decrypt_broker_credentials"]
+  },
+  "storage_buckets": {"customer": [], "terminal_os": [], "status": "No storage API calls found"},
+  "remote_verification": {"performed": false, "reason": "Read-only audit did not query the remote database or alter Supabase."}
+}

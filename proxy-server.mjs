@@ -14,6 +14,7 @@
  */
 
 import http from "node:http";
+import { createHash, randomBytes } from "node:crypto";
 import { URL } from "node:url";
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
@@ -41,6 +42,64 @@ try {
 const PORT = parseInt(process.env.PROXY_PORT || "4002", 10);
 const DHAN_BASE = "https://api.dhan.co/v2";
 const NSE_BASE = "https://www.nseindia.com";
+const KITE_BASE = "https://api.kite.trade";
+const KITE_LOGIN_BASE = "https://kite.zerodha.com/connect/login";
+const KITE_SESSION_COOKIE = "kite_session";
+const kiteSessions = new Map();
+const INDIAN_NEWS_FEEDS = [
+  { name: "Moneycontrol", url: "https://www.moneycontrol.com/rss/marketreports.xml" },
+  { name: "Economic Times", url: "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms" },
+  { name: "Business Standard", url: "https://www.business-standard.com/rss/markets-106.rss" },
+];
+const INDIAN_NEWS_TERMS = /\b(india|indian|nse|bse|nifty|banknifty|finnifty|sensex|sebi|rbi|dalal|mumbai|rupee|inr|f&o|fno|listed|ipo|stock market|shares?|equities?|earnings?|quarterly results?|dividend|buyback)\b/i;
+const EXCLUDED_NEWS_TERMS = /\b(crypto(?:currency)?|bitcoin|ethereum|nasdaq|dow jones|s&p 500|wall street|us stocks?|american stocks?|european stocks?|forex|oil prices?|gold prices?|global markets?|federal reserve|fed rate)\b/i;
+
+function kiteRedirectUrl() { return process.env.KITE_REDIRECT_URL || "http://localhost:4001/api/kite/callback"; }
+function getKiteSession(id) {
+  const session = id && kiteSessions.get(id);
+  if (!session || session.expiresAt <= Date.now()) { if (id) kiteSessions.delete(id); return null; }
+  return session;
+}
+function parseCookies(header = "") {
+  return Object.fromEntries(header.split(";").map((part) => part.trim().split("=")).filter(([key, value]) => key && value));
+}
+function kiteCredentials(req, params) {
+  const cookies = parseCookies(req.headers.cookie);
+  const session = getKiteSession(cookies[KITE_SESSION_COOKIE]);
+  return { apiKey: req.headers["x-kite-api-key"] || session?.apiKey || process.env.KITE_API_KEY, accessToken: req.headers["x-kite-access-token"] || session?.accessToken };
+}
+async function kiteFetch(endpoint, params, credentials) {
+  if (!credentials.apiKey || !credentials.accessToken) throw new Error("Kite API key or access token is not configured.");
+  let path;
+  if (endpoint === "profile") path = "/user/profile";
+  else if (endpoint === "margins") path = "/user/margins";
+  else if (endpoint === "holdings") path = "/portfolio/holdings";
+  else if (endpoint === "positions") path = "/portfolio/positions";
+  else if (endpoint === "orders") path = "/orders";
+  else if (endpoint === "order-status") path = `/orders/${encodeURIComponent(params.orderId)}`;
+  else if (endpoint === "instruments") path = "/instruments";
+  else if (endpoint === "quote") {
+    const instruments = (params.instruments || params.instrument || "").split(",").filter(Boolean);
+    path = `/quote?${instruments.map((instrument) => `i=${encodeURIComponent(instrument)}`).join("&")}`;
+  } else if (endpoint === "historical") {
+    path = `/instruments/historical/${encodeURIComponent(params.instrumentToken)}/${encodeURIComponent(params.interval)}?${new URLSearchParams({ from: params.from || "", to: params.to || "" })}`;
+  } else throw new Error(`Unsupported Kite endpoint: ${endpoint}`);
+  const response = await fetch(`${KITE_BASE}${path}`, { headers: { "X-Kite-Version": "3", Authorization: `token ${credentials.apiKey}:${credentials.accessToken}`, Accept: "application/json, text/csv" } });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`Kite API error [${response.status}]: ${text.slice(0, 240)}`);
+  if (endpoint !== "instruments") return JSON.parse(text);
+  const lines = text.split(/\r?\n/).filter(Boolean);
+  const headers = lines.shift().split(",");
+  return { status: "success", data: lines.map((line) => { const values = parseCsvLine(line); return Object.fromEntries(headers.map((header, index) => [header, values[index] || ""])); }) };
+}
+async function exchangeKiteToken(requestToken) {
+  const apiKey = process.env.KITE_API_KEY; const apiSecret = process.env.KITE_API_SECRET;
+  if (!apiKey || !apiSecret) throw new Error("Kite OAuth credentials are not configured.");
+  const checksum = createHash("sha256").update(`${apiKey}${requestToken}${apiSecret}`).digest("hex");
+  const response = await fetch(`${KITE_BASE}/session/token`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ api_key: apiKey, request_token: requestToken, checksum }) });
+  const body = await response.json(); if (!response.ok || body.status !== "success") throw new Error(body.message || "Kite token exchange failed.");
+  return { apiKey, accessToken: body.data.access_token };
+}
 
 // ══════════════════════════════════════════════
 // ── SECTION 1: In-Memory Cache ──
@@ -135,9 +194,106 @@ function getLastGood(key) {
   return null;
 }
 
+function decodeXml(value = "") {
+  return value
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/<[^>]+>/g, "")
+    .trim();
+}
+
+function xmlTag(block, tag) {
+  const match = block.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, "i"));
+  return match ? decodeXml(match[1]) : "";
+}
+
+function xmlAttribute(block, tag, attribute) {
+  const match = block.match(new RegExp(`<${tag}\\b[^>]*\\b${attribute}=["']([^"']+)["']`, "i"));
+  return match ? decodeXml(match[1]) : "";
+}
+
+function classifyIndianNews(text) {
+  const value = text.toLowerCase();
+  if (/\b(sebi|rbi)\b/.test(value)) return "Regulation";
+  if (/\b(nifty|banknifty|finnifty|sensex|index|indices)\b/.test(value)) return "Indices";
+  if (/\b(f&o|fno|futures|options?)\b/.test(value)) return "F&O";
+  if (/\b(ipo|listing|listed)\b/.test(value)) return "Corporate";
+  return "Indian Markets";
+}
+
+function parseIndianNewsFeed(xml, source) {
+  return [...xml.matchAll(/<item\b[\s\S]*?<\/item>/gi)].map((match) => {
+    const block = match[0];
+    const headline = xmlTag(block, "title");
+    const summary = xmlTag(block, "description");
+    const text = `${headline} ${summary}`;
+    const image = xmlAttribute(block, "media:content", "url") || xmlAttribute(block, "enclosure", "url") || null;
+    const publishedAt = xmlTag(block, "pubDate") || xmlTag(block, "dc:date") || null;
+    return {
+      headline,
+      summary,
+      source,
+      publishedAt,
+      url: xmlTag(block, "link") || xmlTag(block, "guid"),
+      image,
+      related: text.match(/\b(NIFTY|BANKNIFTY|FINNIFTY|SENSEX|SEBI|RBI)\b/i)?.[1]?.toUpperCase() || null,
+      category: classifyIndianNews(text),
+    };
+  }).filter((article) => article.headline && article.url && INDIAN_NEWS_TERMS.test(`${article.headline} ${article.summary}`) && !EXCLUDED_NEWS_TERMS.test(`${article.headline} ${article.summary}`));
+}
+
+async function handleIndianNews() {
+  const cacheKey = "news:indian-markets";
+  const cached = getCached(cacheKey);
+  if (cached) return { data: cached, cacheHit: true };
+
+  const results = await Promise.allSettled(INDIAN_NEWS_FEEDS.map(async ({ name, url }) => {
+    const response = await fetch(url, {
+      headers: { Accept: "application/rss+xml, application/xml, text/xml", "User-Agent": "FundedWealthTerminal/1.0" },
+    });
+    if (!response.ok) throw new Error(`${name} RSS HTTP ${response.status}`);
+    return parseIndianNewsFeed(await response.text(), name);
+  }));
+  const articles = results.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+  const unique = [...new Map(articles.map((article) => [article.url, article])).values()]
+    .sort((a, b) => (Date.parse(b.publishedAt || "") || 0) - (Date.parse(a.publishedAt || "") || 0))
+    .slice(0, 60);
+  const data = { provider: "Indian financial RSS feeds", articles: unique, fetchedAt: new Date().toISOString() };
+  setCache(cacheKey, data, 300000);
+  return { data, cacheHit: false };
+}
+
 // ══════════════════════════════════════════════
 // ── SECTION 2: Dhan REST API ──
 // ══════════════════════════════════════════════
+
+function parseCsvLine(line) {
+  const values = [];
+  let value = "";
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      if (quoted && line[i + 1] === '"') {
+        value += '"';
+        i++;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (char === "," && !quoted) {
+      values.push(value);
+      value = "";
+    } else {
+      value += char;
+    }
+  }
+  values.push(value);
+  return values;
+}
 
 const INDEX_SECURITY_IDS = {
   NIFTY: { secId: 13, exchSeg: "IDX_I" },
@@ -154,12 +310,12 @@ const UNDERLYING_MAP = {
   MIDCPNIFTY: { underlyingScrip: 442, expirySegment: "NSE_FNO", ocSegment: "IDX_I" },
 };
 
-async function dhanFetch(path, body, method = "POST", customClientId, customAccessToken) {
-  const clientId = customClientId || process.env.DHAN_CLIENT_ID;
-  const accessToken = customAccessToken || process.env.DHAN_ACCESS_TOKEN;
+async function dhanFetch(path, body, method = "POST") {
+  const clientId = process.env.DHAN_CLIENT_ID || dhanWSCredentials.clientId;
+  const accessToken = process.env.DHAN_ACCESS_TOKEN || dhanWSCredentials.accessToken;
 
   if (!clientId || !accessToken) {
-    throw new Error("DHAN_CLIENT_ID or DHAN_ACCESS_TOKEN not configured. Add them to .env or pass via headers.");
+    throw new Error("DHAN_CLIENT_ID or DHAN_ACCESS_TOKEN not configured on the proxy server.");
   }
 
   const url = `${DHAN_BASE}${path}`;
@@ -177,19 +333,25 @@ async function dhanFetch(path, body, method = "POST", customClientId, customAcce
   }
 
   const res = await fetch(url, options);
+  const responseText = await res.text();
   if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Dhan API error [${res.status}]: ${errText}`);
+    let responseBody;
+    try { responseBody = JSON.parse(responseText); } catch { responseBody = null; }
+    const errorCode = responseBody?.errorCode || responseBody?.error_code || responseBody?.code || "unknown";
+    console.error(`  ❌ Dhan REST ${method} ${path} -> HTTP ${res.status}, errorCode ${errorCode}: ${responseText.slice(0, 240)}`);
+    const error = new Error(`Dhan API error [${res.status}] code ${errorCode}: ${responseText}`);
+    error.status = res.status;
+    error.errorCode = errorCode;
+    throw error;
   }
-  return res.json();
+  return JSON.parse(responseText);
 }
 
-async function handleDhanProxy(params, userClientId, userAccessToken) {
+async function handleDhanProxy(params) {
   const endpoint = params.get("endpoint");
   const symbol = (params.get("symbol") || "NIFTY").toUpperCase();
   const expiry = params.get("expiry");
-  const userPrefix = userClientId ? `user:${userClientId}:` : "";
-  const cacheKey = `dhan:${userPrefix}${endpoint}:${symbol}:${expiry || ""}`;
+  const cacheKey = `dhan:${endpoint}:${symbol}:${expiry || ""}`;
 
   const cached = getCached(cacheKey);
   if (cached) return { data: cached, cacheHit: true };
@@ -210,7 +372,7 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
               expiryList = await dhanFetch("/optionchain/expirylist", {
                 UnderlyingScrip: underlying.underlyingScrip,
                 UnderlyingSeg: underlying.expirySegment,
-              }, "POST", userClientId, userAccessToken);
+              });
               setCache(expiryListKey, expiryList, 300000);
             }
             if (expiryList?.data?.length > 0) expiryDate = expiryList.data[0];
@@ -228,13 +390,13 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
 
         let result;
         try {
-          result = await dhanFetch("/optionchain", body, "POST", userClientId, userAccessToken);
+          result = await dhanFetch("/optionchain", body);
         } catch (ocErr) {
           // If "Invalid Expiry Date" error, retry without expiry
           if (ocErr.message.includes("Invalid Expiry") && expiryDate) {
             console.log(`  🔄 Retrying OC for ${symbol} without expiry date...`);
             const retryBody = { UnderlyingScrip: underlying.underlyingScrip, UnderlyingSeg: underlying.ocSegment };
-            result = await dhanFetch("/optionchain", retryBody, "POST", userClientId, userAccessToken);
+            result = await dhanFetch("/optionchain", retryBody);
           } else {
             throw ocErr;
           }
@@ -288,7 +450,7 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
         const result = await dhanFetch("/optionchain/expirylist", {
           UnderlyingScrip: underlying.underlyingScrip,
           UnderlyingSeg: underlying.expirySegment,
-        }, "POST", userClientId, userAccessToken);
+        });
         if (result?.data?.length > 0) {
           setLastGood(lastGoodKey, result);
         }
@@ -310,7 +472,7 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
 
       const result = await dhanFetch("/marketfeed/ltp", {
         [secInfo.exchSeg]: [secInfo.secId],
-      }, "POST", userClientId, userAccessToken);
+      });
       setCache(cacheKey, result, 2000);
       return { data: result, cacheHit: false };
     }
@@ -349,12 +511,12 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
       };
       const ALLOWED_SEGMENTS = new Set(["NSE_EQ", "NSE_FNO", "IDX_I"]);
 
-      const lines = csvText.split("\n");
-      const header = lines[0].split(",").map(h => h.trim());
+      const lines = csvText.split(/\r?\n/).filter(Boolean);
+      const header = parseCsvLine(lines[0]).map(h => h.trim());
       
       const instruments = [];
       for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(",");
+        const cols = parseCsvLine(lines[i]);
         if (cols.length < 8) continue;
         
         const exchId = cols[header.indexOf("SEM_EXM_EXCH_ID")]?.trim();
@@ -365,6 +527,7 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
         const lotUnitsRaw = cols[header.indexOf("SEM_LOT_UNITS")]?.trim();
         const lotSize = parseInt(parseFloat(lotUnitsRaw) || 1);
         const customSymbol = cols[header.indexOf("SEM_CUSTOM_SYMBOL")]?.trim();
+        const symbolName = cols[header.indexOf("SM_SYMBOL_NAME")]?.trim();
         const expiryDate = cols[header.indexOf("SEM_EXPIRY_DATE")]?.trim();
         const strikePrice = parseFloat(cols[header.indexOf("SEM_STRIKE_PRICE")]?.trim()) || 0;
         const optionType = cols[header.indexOf("SEM_OPTION_TYPE")]?.trim();
@@ -373,8 +536,8 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
         const exchangeSegment = SEGMENT_MAP[`${exchId}:${segCode}`];
         if (!exchangeSegment || !ALLOWED_SEGMENTS.has(exchangeSegment)) continue;
 
-        // Extract base symbol from custom symbol (e.g., "EICHERMOT 26 MAY 5200 PUT" → "EICHERMOT")
-        const baseSymbol = customSymbol?.split(" ")[0] || tradingSymbol?.split("-")[0] || tradingSymbol;
+        // Prefer the master symbol column; custom symbol is only a fallback for older master files.
+        const baseSymbol = symbolName || customSymbol?.split(" ")[0] || tradingSymbol?.split("-")[0] || tradingSymbol;
 
         instruments.push({
           securityId: secId,
@@ -452,7 +615,7 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
       }
 
       console.log(`  📊 Fetching ${isDailyCandle ? "daily" : "intraday"} chart: ${secId} (${from} → ${to}), interval=${interval}`);
-      const result = await dhanFetch(apiPath, body, "POST", userClientId, userAccessToken);
+      const result = await dhanFetch(apiPath, body);
       setCache(historicalCacheKey, result, isDailyCandle ? 300000 : 60000); // 5min cache for daily, 1min for intraday
       return { data: result, cacheHit: false };
     }
@@ -565,7 +728,9 @@ async function handleNSEProxy(params) {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const cookies = await getNSESession();
-      const nseRes = await fetch(`${NSE_BASE}${apiPath}`, {
+      const nseUrl = `${NSE_BASE}${apiPath}`;
+      console.log(`  🌐 NSE GET ${nseUrl}`);
+      const nseRes = await fetch(nseUrl, {
         headers: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
           Accept: "application/json, text/plain, */*",
@@ -577,6 +742,7 @@ async function handleNSEProxy(params) {
       });
 
       if (!nseRes.ok) {
+        console.error(`  ❌ NSE GET ${nseUrl} -> HTTP ${nseRes.status}`);
         throw new Error(`NSE HTTP ${nseRes.status}`);
       }
 
@@ -966,9 +1132,27 @@ let dhanWSReconnectTimer = null;
 let dhanWSReconnectDelay = 1000;
 let dhanWSConnected = false;
 let dhanWSCredentials = { clientId: null, accessToken: null };
+let dhanWSBlockedUntil = 0;
+let dhanWSUnavailableReason = null;
+let dhanWSStableTimer = null;
+const DHAN_WS_MAX_BACKOFF = 120000;
+const DHAN_WS_RATE_LIMIT_BACKOFF = 10 * 60 * 1000;
+
+function blockDhanWebSocket(reason, duration = DHAN_WS_RATE_LIMIT_BACKOFF) {
+  dhanWSBlockedUntil = Date.now() + duration;
+  dhanWSReconnectDelay = duration;
+  dhanWSUnavailableReason = reason;
+  console.log(`  ⏳ Dhan WebSocket unavailable: ${reason}. Retry suppressed for ${duration / 60000}min`);
+  broadcastToClients({ type: "status", provider: "dhan", connected: false, state: "UNAVAILABLE", unavailableUntil: dhanWSBlockedUntil, reason });
+}
 
 function connectDhanWebSocket(clientId, accessToken) {
-  if (dhanWS && dhanWS.readyState === WebSocket.OPEN) {
+  if (Date.now() < dhanWSBlockedUntil) {
+    console.log(`  ⏸️  Dhan WebSocket unavailable; retry suppressed for ${Math.ceil((dhanWSBlockedUntil - Date.now()) / 1000)}s`);
+    return;
+  }
+
+  if (dhanWS && (dhanWS.readyState === WebSocket.OPEN || dhanWS.readyState === WebSocket.CONNECTING)) {
     console.log("  ℹ️  Dhan WebSocket already connected");
     return;
   }
@@ -979,9 +1163,10 @@ function connectDhanWebSocket(clientId, accessToken) {
   }
 
   dhanWSCredentials = { clientId, accessToken };
+  dhanWSUnavailableReason = null;
 
   const wsUrl = `wss://api-feed.dhan.co?version=2&token=${accessToken}&clientId=${clientId}&authType=2`;
-  console.log(`  🔌 Connecting to Dhan WebSocket...`);
+  console.log(`  🔌 Connecting to Dhan WebSocket wss://api-feed.dhan.co?version=2&authType=2 (credentials redacted)`);
 
   try {
     dhanWS = new WebSocket(wsUrl);
@@ -994,7 +1179,12 @@ function connectDhanWebSocket(clientId, accessToken) {
   dhanWS.on("open", () => {
     console.log("  ✅ Dhan WebSocket connected!");
     dhanWSConnected = true;
-    dhanWSReconnectDelay = 1000;
+    if (dhanWSStableTimer) clearTimeout(dhanWSStableTimer);
+    dhanWSStableTimer = setTimeout(() => {
+      dhanWSReconnectDelay = 1000;
+      dhanWSStableTimer = null;
+      console.log("  ✅ Dhan WebSocket connection stable; backoff reset");
+    }, 30000);
 
     // Subscribe to index instruments (Quote data = RequestCode 17)
     const subscribeMsg = JSON.stringify({
@@ -1002,11 +1192,13 @@ function connectDhanWebSocket(clientId, accessToken) {
       InstrumentCount: WS_INSTRUMENTS.length,
       InstrumentList: WS_INSTRUMENTS,
     });
-    dhanWS.send(subscribeMsg);
-    console.log(`  📡 Subscribed to ${WS_INSTRUMENTS.length} instruments (Quote mode)`);
+    if (dhanWS?.readyState === WebSocket.OPEN) {
+      dhanWS.send(subscribeMsg);
+      console.log(`  📡 Subscribed to ${WS_INSTRUMENTS.length} instruments (Quote mode)`);
+    }
 
     // Broadcast connection status to browser clients
-    broadcastToClients({ type: "status", connected: true, instrumentCount: WS_INSTRUMENTS.length });
+    broadcastToClients({ type: "status", provider: "dhan", connected: true, instrumentCount: WS_INSTRUMENTS.length });
   });
 
   dhanWS.on("message", (data) => {
@@ -1014,7 +1206,11 @@ function connectDhanWebSocket(clientId, accessToken) {
       // Dhan sends binary data
       const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
       const parsed = parseDhanBinaryPacket(buf);
-      if (!parsed || parsed.type === "disconnect") return;
+      if (!parsed) return;
+      if (parsed.type === "disconnect") {
+        if (parsed.disconnectCode === 806) blockDhanWebSocket("Dhan entitlement error 806");
+        return;
+      }
 
       // Merge into latest tick cache
       const key = parsed.securityId;
@@ -1039,17 +1235,16 @@ function connectDhanWebSocket(clientId, accessToken) {
   dhanWS.on("close", (code, reason) => {
     console.log(`  🔴 Dhan WebSocket closed (${code}): ${reason || "no reason"}`);
     dhanWSConnected = false;
-    broadcastToClients({ type: "status", connected: false });
+    broadcastToClients({ type: "status", provider: "dhan", connected: false, state: dhanWSUnavailableReason ? "UNAVAILABLE" : "RECONNECTING", unavailableUntil: dhanWSBlockedUntil || undefined, reason: dhanWSUnavailableReason || undefined });
     scheduleDhanReconnect();
   });
 
   dhanWS.on("error", (err) => {
     console.error("  ❌ Dhan WebSocket error:", err.message);
     dhanWSConnected = false;
-    // If rate-limited (429), use longer backoff
-    if (err.message && err.message.includes("429")) {
-      dhanWSReconnectDelay = 120000; // 2 minutes
-      console.log("  ⏳ Rate-limited by Dhan. Will retry in 120s...");
+    // A 429 is provider rate limiting, so stop retrying until the circuit opens.
+    if (err.message && /429|Unexpected server response: 429/i.test(err.message)) {
+      blockDhanWebSocket("Dhan WebSocket HTTP 429 rate limit");
     }
   });
 
@@ -1058,9 +1253,11 @@ function connectDhanWebSocket(clientId, accessToken) {
 
 function scheduleDhanReconnect() {
   if (dhanWSReconnectTimer) clearTimeout(dhanWSReconnectTimer);
-  // Only double the delay if not already set higher (e.g. by rate-limit handler)
-  const doubled = Math.min(dhanWSReconnectDelay * 2, 30000);
-  dhanWSReconnectDelay = Math.max(dhanWSReconnectDelay, doubled);
+  if (Date.now() < dhanWSBlockedUntil) {
+    console.log(`  ⏸️  Dhan WebSocket reconnect suppressed until ${new Date(dhanWSBlockedUntil).toISOString()}`);
+    return;
+  }
+  dhanWSReconnectDelay = Math.min(Math.max(dhanWSReconnectDelay * 2, 2000), DHAN_WS_MAX_BACKOFF);
   console.log(`  🔄 Reconnecting in ${dhanWSReconnectDelay / 1000}s...`);
   dhanWSReconnectTimer = setTimeout(() => {
     connectDhanWebSocket(dhanWSCredentials.clientId, dhanWSCredentials.accessToken);
@@ -1086,7 +1283,11 @@ localWSS.on("connection", (ws) => {
   // Send current status
   ws.send(JSON.stringify({
     type: "status",
+    provider: "dhan",
     connected: dhanWSConnected,
+    state: dhanWSUnavailableReason ? "UNAVAILABLE" : dhanWSConnected ? "CONNECTED" : "DISCONNECTED",
+    unavailableUntil: dhanWSBlockedUntil || undefined,
+    reason: dhanWSUnavailableReason || undefined,
     instrumentCount: WS_INSTRUMENTS.length,
   }));
 
@@ -1095,19 +1296,10 @@ localWSS.on("connection", (ws) => {
     ws.send(JSON.stringify(tickData));
   }
 
-  // Handle messages from browser (e.g., credential updates, custom subscriptions)
+  // Handle non-sensitive subscription messages from browser.
   ws.on("message", (msg) => {
     try {
       const parsed = JSON.parse(msg.toString());
-
-      if (parsed.type === "configure") {
-        // Browser is sending Dhan credentials for WebSocket
-        const { clientId, accessToken } = parsed;
-        if (clientId && accessToken) {
-          console.log("  🔑 Received Dhan credentials from browser, connecting WebSocket...");
-          connectDhanWebSocket(clientId, accessToken);
-        }
-      }
 
       if (parsed.type === "subscribe" && parsed.instruments) {
         // Dynamic subscription support (future: option chain instruments)
@@ -1134,9 +1326,10 @@ localWSS.on("connection", (ws) => {
 // ══════════════════════════════════════════════
 
 const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Origin": "http://localhost:4001",
+  "Access-Control-Allow-Credentials": "true",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, x-dhan-client-id, x-dhan-access-token",
+  "Access-Control-Allow-Headers": "Content-Type",
 };
 
 const server = http.createServer(async (req, res) => {
@@ -1152,10 +1345,30 @@ const server = http.createServer(async (req, res) => {
   Object.entries(CORS_HEADERS).forEach(([k, v]) => res.setHeader(k, v));
 
   try {
-    if (url.pathname === "/api/dhan-proxy") {
-      const userClientId = req.headers["x-dhan-client-id"];
-      const userAccessToken = req.headers["x-dhan-access-token"];
-      const { data, cacheHit } = await handleDhanProxy(params, userClientId, userAccessToken);
+    if (url.pathname === "/api/kite/login") {
+      const apiKey = process.env.KITE_API_KEY;
+      if (!apiKey) throw new Error("KITE_API_KEY is not configured.");
+      res.setHeader("Location", `${KITE_LOGIN_BASE}?v=3&api_key=${encodeURIComponent(apiKey)}&redirect_url=${encodeURIComponent(kiteRedirectUrl())}`);
+      res.writeHead(302); return res.end();
+    } else if (url.pathname === "/api/kite/callback") {
+      const requestToken = params.get("request_token");
+      if (!requestToken) throw new Error("Missing Kite request token.");
+      const session = await exchangeKiteToken(requestToken);
+      const sessionId = randomBytes(32).toString("base64url");
+      kiteSessions.set(sessionId, { ...session, expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
+      res.setHeader("Set-Cookie", `${KITE_SESSION_COOKIE}=${sessionId}; HttpOnly; SameSite=Lax; Path=/`);
+      res.setHeader("Location", "http://localhost:4001/broker-settings?kite=connected");
+      res.writeHead(302); return res.end();
+    } else if (url.pathname === "/api/kite/status") {
+      const session = getKiteSession(parseCookies(req.headers.cookie)[KITE_SESSION_COOKIE]);
+      res.writeHead(200); return res.end(JSON.stringify({ authenticated: Boolean(session), provider: "zerodha" }));
+    } else if (url.pathname === "/api/kite-proxy") {
+      const credentials = kiteCredentials(req, params);
+      const requestParams = Object.fromEntries(params.entries()); delete requestParams.endpoint;
+      const data = await kiteFetch(params.get("endpoint"), requestParams, credentials);
+      res.writeHead(200); return res.end(JSON.stringify(data));
+    } else if (url.pathname === "/api/dhan-proxy") {
+      const { data, cacheHit } = await handleDhanProxy(params);
       res.setHeader("X-Cache", cacheHit ? "HIT" : "MISS");
       res.writeHead(200);
       res.end(JSON.stringify(data));
@@ -1174,14 +1387,17 @@ const server = http.createServer(async (req, res) => {
       res.setHeader("X-Cache", cacheHit ? "HIT" : "MISS");
       res.writeHead(200);
       res.end(JSON.stringify(data));
+    } else if (url.pathname === "/api/indian-news") {
+      const { data, cacheHit } = await handleIndianNews();
+      res.setHeader("X-Cache", cacheHit ? "HIT" : "MISS");
+      res.writeHead(200);
+      res.end(JSON.stringify(data));
     } else if (url.pathname === "/api/test-connection") {
-      // Test Dhan API connection with user credentials
-      const userClientId = req.headers["x-dhan-client-id"];
-      const userAccessToken = req.headers["x-dhan-access-token"];
+      // Test Dhan API connection with proxy-server credentials.
       try {
         const result = await dhanFetch("/optionchain/expirylist", {
           UnderlyingScrip: 13, UnderlyingSeg: "NSE_FNO",
-        }, "POST", userClientId, userAccessToken);
+        });
         res.writeHead(200);
         res.end(JSON.stringify({ status: "success", message: "Dhan API connected", data: result }));
       } catch (err) {
@@ -1200,7 +1416,7 @@ const server = http.createServer(async (req, res) => {
           cachedTicks: latestTicks.size,
         },
         sources: {
-          dhan: !!process.env.DHAN_CLIENT_ID,
+          dhan: Boolean(process.env.DHAN_CLIENT_ID || dhanWSCredentials.clientId),
           tradingview: true,
           nse: true,
           yahoo: true,
@@ -1229,7 +1445,7 @@ server.on("upgrade", (request, socket, head) => {
   }
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, "127.0.0.1", () => {
   console.log("");
   console.log("  🚀 Mr. Chartist Proxy Server");
   console.log(`  ├─ HTTP:       http://localhost:${PORT}`);

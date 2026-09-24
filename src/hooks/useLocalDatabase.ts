@@ -18,14 +18,15 @@ import {
   getAllCandleHistories,
   getDatabaseStats,
   getFnOStockList,
-  findInstrumentBySymbol,
-  getInstrumentsBySegment,
+  findInstrumentsBySymbol,
+  getAllInstruments,
   type PriceSnapshot,
   type CandleHistory,
   type CandleData,
   type DatabaseStats,
   type Instrument,
 } from "@/lib/localDatabase";
+import { classifyInstrument, type InstrumentCategory } from "@/lib/instrumentClassification";
 
 // ── Hook: Database readiness check ──
 
@@ -166,8 +167,7 @@ export function useInstrumentLookup() {
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
-    // Only load F&O instruments for perf (subset of full master)
-    getInstrumentsBySegment("NSE_FNO").then((data) => {
+    getAllInstruments().then((data) => {
       setAllInstruments(data);
       setIsLoaded(true);
     }).catch(() => {
@@ -175,22 +175,28 @@ export function useInstrumentLookup() {
     });
   }, []);
 
-  const search = useCallback((query: string, limit = 20) => {
+  const search = useCallback((query: string, category?: InstrumentCategory, limit = 20) => {
     if (!query || query.length < 1) return [];
     const q = query.toUpperCase();
     return allInstruments
-      .filter((i) => 
+      .filter((i) => (!category || classifyInstrument(i) === category) &&
         i.symbol.toUpperCase().includes(q) || 
         i.tradingSymbol.toUpperCase().includes(q)
       )
       .slice(0, limit);
   }, [allInstruments]);
 
-  const findBySymbol = useCallback(async (symbol: string) => {
-    return findInstrumentBySymbol(symbol);
+  const findBySymbol = useCallback(async (symbol: string, category?: InstrumentCategory) => {
+    const matches = await findInstrumentsBySymbol(symbol);
+    return matches.find((instrument) => !category || classifyInstrument(instrument) === category);
   }, []);
 
-  return { search, findBySymbol, isLoaded, count: allInstruments.length };
+  const symbols = useCallback((category: InstrumentCategory) => {
+    const seen = new Set<string>();
+    return allInstruments.filter((instrument) => classifyInstrument(instrument) === category && !seen.has(instrument.symbol) && seen.add(instrument.symbol));
+  }, [allInstruments]);
+
+  return { search, findBySymbol, symbols, instruments: allInstruments, isLoaded, count: allInstruments.length };
 }
 
 // ── Symbol → SecurityId mapping from local DB ──

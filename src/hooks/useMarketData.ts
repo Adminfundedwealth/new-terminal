@@ -2,8 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchLiveOptionChain, fetchLiveIndices, fetchMarketStatus, fetchExpiryList, fetchAllIndices, fetchLiveFnOStocks, fetchProxyHealth } from "@/lib/marketApi";
 import type { FnOStockData } from "@/lib/marketApi";
 import { getMaxPain } from "@/lib/oiUtils";
-import { getLotSize } from "@/lib/positionStore";
 import type { OptionData, IndexData, ExpiryDate } from "@/lib/mockData";
+import { findInstrumentsBySymbol } from "@/lib/localDatabase";
+import { classifyInstrument } from "@/lib/instrumentClassification";
 import { useWebSocketIndices, useWebSocketVix, useWebSocketStatus } from "@/hooks/useWebSocket";
 import { useMemo, useEffect, useState, useRef } from "react";
 import {
@@ -176,8 +177,26 @@ export function useMarketStatus() {
 
 // ── Hook: Live Option Chain ──
 // Returns live data during market hours, or cached "last close" data after hours
+interface LiveOptionChainState {
+  chain: OptionData[];
+  spotPrice: number;
+  expiries: ExpiryDate[];
+  lotSize: number;
+  stepSize: number;
+  maxPain: number;
+  totalCEOI: number;
+  totalPEOI: number;
+  isLive: boolean;
+  afterHours: boolean;
+  source: string;
+  cachedAt: string | number | null;
+  oiChangeAvailable?: boolean;
+  errorMessage?: string | null;
+  unsupported?: boolean;
+}
+
 export function useLiveOptionChain(symbol: string, expiry?: string) {
-  return useQuery({
+  return useQuery<LiveOptionChainState | null>({
     queryKey: ["live-option-chain", symbol, expiry],
     queryFn: async () => {
       if (shouldTryProxy()) {
@@ -194,7 +213,8 @@ export function useLiveOptionChain(symbol: string, expiry?: string) {
             if (hasChainData || isAfterHours) {
               return {
                 chain: result.chain, spotPrice: result.spotPrice, expiries: result.expiries,
-                lotSize: getLotSize(symbol), stepSize, maxPain: hasChainData ? getMaxPain(result.chain) : 0,
+                lotSize: (await findInstrumentsBySymbol(symbol)).find((instrument) => classifyInstrument(instrument) === "options" && (!expiry || instrument.expiryDate === expiry))?.lotSize || 0,
+                stepSize, maxPain: hasChainData ? getMaxPain(result.chain) : 0,
                 totalCEOI: result.totalCEOI, totalPEOI: result.totalPEOI,
                 isLive: hasChainData && !isAfterHours, afterHours: isAfterHours,
                 source: result.source || "live",

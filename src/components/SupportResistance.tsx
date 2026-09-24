@@ -86,7 +86,7 @@ export function SupportResistance({ chain, spotPrice }: SupportResistanceProps) 
 
         <div className="rounded-md border border-primary/15 bg-primary/10 px-2 py-2 text-center">
           <p className="text-xs text-muted-foreground">Spot Price</p>
-          <p className="text-sm font-bold font-mono">{spotPrice.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</p>
+          <p className="text-sm font-bold font-mono">{spotPrice > 0 ? spotPrice.toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "—"}</p>
         </div>
 
         <div>

@@ -1,12 +1,12 @@
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:071018,50:0f8c95,100:101827&height=180&section=header&text=Mr.%20Chartist%20Terminal&fontSize=46&fontColor=ffffff&animation=fadeIn&fontAlignY=35&desc=India's%20Best%20Open-Source%20F%26O%20Analytics%20Terminal&descSize=16&descAlignY=55&descColor=22d3ee" width="100%" />
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:071018,50:0f8c95,100:101827&height=180&section=header&text=FundedWealth%20Terminal&fontSize=46&fontColor=ffffff&animation=fadeIn&fontAlignY=35&desc=Professional%20F%26O%20Analytics%20Terminal&descSize=16&descAlignY=55&descColor=22d3ee" width="100%" />
 
 <div align="center">
 
-**India's most comprehensive open-source Options & Futures analytics terminal.**
+**Professional options & futures analytics terminal for NSE F&O traders.**
 
-Built for NSE F&O traders who want a polished, institutional-style terminal -- free, open-source, and running in your browser.
+Built for traders who want a polished, institutional-style terminal -- professional, browser-based, and ready to extend.
 
-Built by [**Mr. Chartist**](https://github.com/MrChartist) | Part of the [Mr. Chartist Ecosystem](https://mrchartist.com)
+FundedWealth Terminal
 
 [![React](https://img.shields.io/badge/React-18.3-61dafb?logo=react&logoColor=white)](https://react.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178c6?logo=typescript&logoColor=white)](https://typescriptlang.org)
@@ -50,7 +50,7 @@ Built by [**Mr. Chartist**](https://github.com/MrChartist) | Part of the [Mr. Ch
 <details>
 <summary><strong>Polished Compact Navigation</strong></summary>
 
-![Mr. Chartist compact navigation rail](docs/screenshots/dashboard-collapsed-navbar.png)
+![FundedWealth Terminal compact navigation rail](docs/screenshots/dashboard-collapsed-navbar.png)
 
 </details>
 

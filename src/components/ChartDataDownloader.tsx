@@ -13,7 +13,8 @@ import {
   Download, Loader2, CheckCircle2, AlertCircle, Search, CandlestickChart,
   FileDown, Clock, BarChart3, TrendingUp, Database, XCircle, CheckSquare, Square,
 } from "lucide-react";
-import { fetchHistoricalCandles, fetchYahooChart } from "@/lib/marketApi";
+import { fetchYahooChart } from "@/lib/marketApi";
+import { brokerRouter } from "@/lib/brokerRouter";
 import {
   saveCandleHistory, setMetadata,
   type CandleHistory, type CandleData,
@@ -215,17 +216,23 @@ export function ChartDataDownloader() {
         // ── Fallback to Dhan if Yahoo didn't return data ──
         if (!rawData) {
           try {
-            const dhanResult = await fetchHistoricalCandles(
-              sym.securityId,
-              sym.segment,
-              sym.instrument,
-              dhanInterval,
+            const adapter = brokerRouter.getAdapter("dhan");
+            if (!adapter) throw new Error("Dhan adapter unavailable");
+            const dhanResult = await adapter.getHistoricalData(sym.securityId, dhanInterval, {
+              exchangeSegment: sym.segment,
+              instrument: sym.instrument,
               fromDate,
               toDate,
-            );
-            const dd = dhanResult?.data || dhanResult;
-            if (dd && 'close' in dd && Array.isArray(dd.close) && dd.close.length > 0) {
-              rawData = dd;
+            });
+            if (dhanResult.data && dhanResult.data.length > 0) {
+              rawData = {
+                timestamp: dhanResult.data.map((candle) => candle.timestamp),
+                open: dhanResult.data.map((candle) => candle.open),
+                high: dhanResult.data.map((candle) => candle.high),
+                low: dhanResult.data.map((candle) => candle.low),
+                close: dhanResult.data.map((candle) => candle.close),
+                volume: dhanResult.data.map((candle) => candle.volume),
+              };
               source = "dhan";
             }
           } catch (dhanErr: any) {

@@ -17,6 +17,8 @@ import { Label } from "@/components/ui/label";
 import { useLiveOptionChain } from "@/hooks/useMarketData";
 import { StockChart } from "@/components/StockChart";
 import { toast } from "sonner";
+import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
+import { classifyInstrument } from "@/lib/instrumentClassification";
 
 const PROXY_BASE = import.meta.env.VITE_PROXY_URL || "http://localhost:4002";
 
@@ -128,15 +130,15 @@ const SYMBOL_CATEGORIES: { label: string; symbols: { label: string; value: strin
 const ALL_SYMBOLS = SYMBOL_CATEGORIES.flatMap(cat => cat.symbols);
 
 // ── Searchable Symbol Selector Component ──
-function SymbolSearch({ value, onSelect }: { value: string; onSelect: (v: string) => void }) {
+function SymbolSearch({ value, onSelect, categories }: { value: string; onSelect: (v: string) => void; categories: { label: string; symbols: { label: string; value: string }[] }[] }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const filtered = useMemo(() => {
-    if (!search) return SYMBOL_CATEGORIES;
+    if (!search) return categories;
     const q = search.toUpperCase();
-    return SYMBOL_CATEGORIES
+    return categories
       .map(cat => ({
         ...cat,
         symbols: cat.symbols.filter(s =>
@@ -144,9 +146,9 @@ function SymbolSearch({ value, onSelect }: { value: string; onSelect: (v: string
         ),
       }))
       .filter(cat => cat.symbols.length > 0);
-  }, [search]);
+  }, [categories, search]);
 
-  const currentLabel = ALL_SYMBOLS.find(s => s.value === value)?.label || value;
+  const currentLabel = categories.flatMap(cat => cat.symbols).find(s => s.value === value)?.label || value;
 
   useEffect(() => {
     if (open && inputRef.current) {
@@ -254,10 +256,14 @@ function OIBar({ value, max, side }: { value: number; max: number; side: "call" 
   );
 }
 
-export default function OptionChain() {
+export default function OptionChain({ defaultMarketView = "stocks" }: { defaultMarketView?: "stocks" | "indices" }) {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const [symbol, setSymbol] = useState(searchParams.get("symbol") || "NIFTY");
+  const { instruments: masterInstruments, isLoaded: isMasterLoaded } = useInstrumentLookup();
+  const indexSymbols = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]);
+  const stockSymbols = new Set(ALL_SYMBOLS.filter(s => !indexSymbols.has(s.value)).map(s => s.value));
+  const [marketView, setMarketView] = useState<"stocks" | "indices">(defaultMarketView);
+  const [symbol, setSymbol] = useState(searchParams.get("symbol") || (defaultMarketView === "indices" ? "NIFTY" : "RELIANCE"));
   const [selectedExpiry, setSelectedExpiry] = useState<string | undefined>(undefined);
   const [viewMode, setViewMode] = useState<"expiration" | "strike">("expiration");
   const [selectedStrike, setSelectedStrike] = useState<number | null>(null);
@@ -272,8 +278,46 @@ export default function OptionChain() {
   const [isDownloadingPast, setIsDownloadingPast] = useState(false);
   const [focusedStrikeIdx, setFocusedStrikeIdx] = useState<number>(-1);
 
+  useEffect(() => {
+    const routeSymbol = searchParams.get("symbol");
+    if (!routeSymbol) return;
+    const isIndex = indexSymbols.has(routeSymbol);
+    setSymbol(routeSymbol);
+    setMarketView(isIndex ? "indices" : "stocks");
+    setSelectedExpiry(undefined);
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (searchParams.get("symbol")) return;
+    setMarketView(defaultMarketView);
+    if (defaultMarketView === "indices") {
+      setSymbol(current => indexSymbols.has(current) ? current : "NIFTY");
+    } else {
+      setSymbol(current => stockSymbols.has(current) ? current : "RELIANCE");
+    }
+  }, [defaultMarketView]);
+
+  const visibleCategories = useMemo(() => {
+    if (isMasterLoaded) {
+      const category = marketView === "indices" ? "indices" : "stocks";
+      const symbols = masterInstruments
+        .filter(instrument => classifyInstrument(instrument) === category)
+        .reduce<{ label: string; value: string }[]>((result, instrument) => {
+          if (!result.some(item => item.value === instrument.symbol)) {
+            result.push({ label: instrument.symbol, value: instrument.symbol });
+          }
+          return result;
+        }, [])
+        .sort((a, b) => a.label.localeCompare(b.label));
+      return [{ label: marketView === "indices" ? "Indices" : "Stocks", symbols }];
+    }
+    return marketView === "indices"
+      ? SYMBOL_CATEGORIES.filter(cat => cat.label === "Indices")
+      : SYMBOL_CATEGORIES.filter(cat => cat.label !== "Indices");
+  }, [isMasterLoaded, masterInstruments, marketView]);
+
   const quickTrade = useCallback((strike: number, type: "CE" | "PE", action: "BUY" | "SELL") => {
-    navigate(`/strategy?${new URLSearchParams({ symbol, strike: String(strike), type, action })}`);
+    navigate(`/strategy-builder?${new URLSearchParams({ symbol, strike: String(strike), type, action })}`);
   }, [symbol, navigate]);
 
   const { data, isLoading, refetch } = useLiveOptionChain(symbol, selectedExpiry);
@@ -340,7 +384,7 @@ export default function OptionChain() {
       case "sell": quickTrade(strike, type, "SELL"); break;
       case "straddle":
         toast.success(`Added ${strike} Straddle to Strategy Builder`);
-        navigate(`/strategy?strike=${strike}&type=CE&action=BUY`);
+        navigate(`/strategy-builder?symbol=${symbol}&strike=${strike}&type=CE&action=BUY`);
         break;
       case "alert": toast.success(`Alert set for ${symbol} ${strike} ${type}`); break;
       case "oi-analysis": navigate(`/oi-analysis`); break;
@@ -526,7 +570,16 @@ export default function OptionChain() {
       {/* Header Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div className="flex items-center gap-3">
-          <SymbolSearch value={symbol} onSelect={(v) => { setSymbol(v); setSelectedExpiry(undefined); }} />
+          <SymbolSearch value={symbol} onSelect={(v) => { setSymbol(v); setSelectedExpiry(undefined); }} categories={visibleCategories} />
+
+          <ToggleGroup type="single" value={marketView} onValueChange={(v) => v && setMarketView(v as "stocks" | "indices")} className="bg-muted rounded-md p-0.5">
+            <ToggleGroupItem value="stocks" className="text-xs h-7 px-3 data-[state=on]:bg-background data-[state=on]:shadow-sm rounded">
+              Stocks
+            </ToggleGroupItem>
+            <ToggleGroupItem value="indices" className="text-xs h-7 px-3 data-[state=on]:bg-background data-[state=on]:shadow-sm rounded">
+              Indices
+            </ToggleGroupItem>
+          </ToggleGroup>
 
           {/* View Mode Tabs */}
           <ToggleGroup type="single" value={viewMode} onValueChange={(v) => v && setViewMode(v as any)} className="bg-muted rounded-md p-0.5">
@@ -677,7 +730,7 @@ export default function OptionChain() {
               {hasData
                 ? "Data is from the last market session. PCR, Max Pain, and OI values reflect closing snapshot."
                 : "Option chain data will be available once the market opens (9:15 AM IST) or when the proxy has cached data."}
-              {data?.cachedAt && ` Cached ${Math.round((Date.now() - data.cachedAt) / 60000)} min ago.`}
+              {data?.cachedAt && ` Cached ${Math.round((Date.now() - Number(data.cachedAt)) / 60000)} min ago.`}
             </p>
           </div>
         </div>

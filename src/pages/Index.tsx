@@ -21,7 +21,7 @@ import { SectorHeatmap } from "@/components/dashboard/SectorHeatmap";
 import { MostActiveFnO } from "@/components/dashboard/MostActiveFnO";
 import { MarketBreadth } from "@/components/dashboard/MarketBreadth";
 import { SectionHeader } from "@/components/dashboard/SectionHeader";
-import { DataSourcesBar } from "@/components/dashboard/DataSourcesBar";
+import { TerminalAccountData } from "@/components/TerminalAccountData";
 
 const EXPIRY_CONTRACTS = [
   { symbol: "NIFTY", exchange: "NSE", lotSize: 25, type: "Weekly" },
@@ -93,8 +93,8 @@ export default function Index() {
       <div className="space-y-3 animate-fade-in">
         {/* ═══ WELCOME + HEADER ═══ */}
         <MarketHeader isLive={isLive} isOpen={isOpen} marketStatus={marketStatus} />
-        <DataSourcesBar />
         <WelcomeBanner />
+        <TerminalAccountData />
 
         {/* ═══ TICKER TAPE ═══ */}
         <TickerTape indices={indices} giftNifty={giftNifty} />
@@ -111,7 +111,7 @@ export default function Index() {
         {/* ═══ INDEX CARDS ═══ */}
         <SectionHeader
           title="Live Indices"
-          subtitle="'''Do not make any visual modifications. The phrases I write are commands to understand what I want, not to be written down. Understand their content well, then execute what is required.'''\n                                        \n                                            \n                                            find erros andlets solve this"
+          subtitle="Real-time spot prices for major indices"
           icon={<TrendingUp className="h-4 w-4" />}
           tooltip="Real-time spot prices for major indices. The mini-chart shows today's intraday movement. Click to open option chain."
         />

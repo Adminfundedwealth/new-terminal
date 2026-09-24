@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { simulatePnL, simulateGreeksDecay, fnoStocks, type Position } from "@/lib/mockData";
+import { simulatePnL, simulateGreeksDecay, type Position } from "@/lib/mockData";
 import {
   getPositions, savePositions, removePosition as storeRemove,
   updatePosition as storeUpdate, clearPositions, createPosition,
@@ -20,12 +20,9 @@ import { Plus, Trash2, DollarSign, Shield, Clock, Activity, BarChart3, Download,
 import { ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Area, AreaChart, Bar } from "recharts";
 import { WhatIfSimulator } from "@/components/WhatIfSimulator";
 import { useToast } from "@/hooks/use-toast";
-
-// Available symbols: indices + all F&O stocks
-const AVAILABLE_SYMBOLS = [
-  "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY",
-  ...fnoStocks.filter(s => !["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"].includes(s)),
-];
+import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
+import { classifyInstrument, validateInstrumentForOrder } from "@/lib/instrumentClassification";
+import { TerminalAccountData } from "@/components/TerminalAccountData";
 
 // Inline editable cell
 function EditableCell({ value, onSave, prefix = "", suffix = "", className = "" }: {
@@ -70,6 +67,7 @@ function EditableCell({ value, onSave, prefix = "", suffix = "", className = "" 
 
 export default function PositionTracker() {
   const { toast } = useToast();
+  const { instruments: masterInstruments, isLoaded: isMasterLoaded } = useInstrumentLookup();
   const [positions, setPositions] = useState<Position[]>(() => getPositions());
   const [closedPositions, setClosedPositions] = useState<ClosedPosition[]>(() => getClosedPositions());
   const [showAddForm, setShowAddForm] = useState(false);
@@ -89,6 +87,16 @@ export default function PositionTracker() {
   const [formEntry, setFormEntry] = useState("100");
   const [formCmp, setFormCmp] = useState("100");
   const [formExpiry, setFormExpiry] = useState("");
+
+  const optionInstruments = useMemo(() => masterInstruments.filter((instrument) => classifyInstrument(instrument) === "options"), [masterInstruments]);
+  const availablePositionSymbols = useMemo(() => Array.from(new Set(optionInstruments.map((instrument) => instrument.symbol))).sort(), [optionInstruments]);
+  const selectedOptionLotSize = optionInstruments.find((instrument) => instrument.symbol === formSymbol && instrument.optionType === formType)?.lotSize || 0;
+
+  useEffect(() => {
+    if (isMasterLoaded && availablePositionSymbols.length > 0 && !availablePositionSymbols.includes(formSymbol)) {
+      setFormSymbol(availablePositionSymbols[0]);
+    }
+  }, [availablePositionSymbols, formSymbol, isMasterLoaded]);
 
   // Update defaults when symbol changes
   useEffect(() => {
@@ -148,6 +156,17 @@ export default function PositionTracker() {
 
   // ── Actions ──
   const handleAddPosition = useCallback(() => {
+    const candidates = optionInstruments
+      .filter((instrument) => instrument.symbol === formSymbol && instrument.optionType === formType && instrument.strikePrice === Number(formStrike))
+      .filter((instrument) => !formExpiry || instrument.expiryDate === formExpiry || instrument.expiryDate?.includes(formExpiry));
+    const selectedInstrument = candidates
+      .filter((instrument) => !instrument.expiryDate || new Date(instrument.expiryDate).getTime() >= Date.now())
+      .sort((a, b) => (a.expiryDate || "").localeCompare(b.expiryDate || ""))[0];
+    const validationError = validateInstrumentForOrder(selectedInstrument, "options");
+    if (validationError) {
+      toast({ title: "Invalid instrument", description: validationError, variant: "destructive" });
+      return;
+    }
     const pos = createPosition({
       symbol: formSymbol,
       type: formType,
@@ -156,16 +175,22 @@ export default function PositionTracker() {
       lots: Number(formLots),
       entryPrice: Number(formEntry),
       currentPrice: Number(formCmp),
-      expiry: formExpiry,
+      expiry: selectedInstrument.expiryDate || "",
+      securityId: selectedInstrument.securityId,
+      tradingSymbol: selectedInstrument.tradingSymbol,
+      exchangeSegment: selectedInstrument.exchangeSegment,
+      instrumentType: selectedInstrument.instrumentType,
+      optionType: selectedInstrument.optionType as "CE" | "PE",
+      lotSize: selectedInstrument.lotSize,
     });
     setPositions(prev => [...prev, pos]);
-    toast({ title: "Position Added", description: `${formAction} ${formSymbol} ${formStrike} ${formType}` });
+    toast({ title: "Simulated Order Added", description: `Simulated ${formAction} ${formSymbol} ${formStrike} ${formType}` });
     // Reset form
     setFormEntry("100");
     setFormCmp("100");
     setFormLots("1");
     setShowAddForm(false);
-  }, [formSymbol, formType, formAction, formStrike, formLots, formEntry, formCmp, formExpiry, toast]);
+  }, [optionInstruments, formSymbol, formType, formAction, formStrike, formLots, formEntry, formCmp, formExpiry, toast]);
 
   const handleRemove = useCallback((id: string) => {
     setPositions(prev => prev.filter(p => p.id !== id));
@@ -261,9 +286,9 @@ export default function PositionTracker() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Position Tracker</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Position Tracker <span className="text-sm font-normal text-muted-foreground">Simulated Trading</span></h1>
           <p className="text-sm text-muted-foreground">
-            Live P&L · P&L Simulator · Greeks Decay · Portfolio Risk
+            Live P&L · Simulated Orders · Greeks Decay · Portfolio Risk
             {positions.length > 0 && <Badge variant="outline" className="ml-2 text-[11px]">{positions.length} active</Badge>}
             {closedPositions.length > 0 && <Badge variant="outline" className="ml-1 text-[11px]">{closedPositions.length} closed</Badge>}
           </p>
@@ -299,6 +324,8 @@ export default function PositionTracker() {
         </div>
       </div>
 
+      <TerminalAccountData />
+
       {/* Add Position Form */}
       {showAddForm && (
         <Card className="border-primary/30">
@@ -317,7 +344,7 @@ export default function PositionTracker() {
                 <Select value={formSymbol} onValueChange={setFormSymbol}>
                   <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent className="max-h-[200px]">
-                    {AVAILABLE_SYMBOLS.map(s => (
+                    {availablePositionSymbols.map(s => (
                       <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
                     ))}
                   </SelectContent>
@@ -334,7 +361,7 @@ export default function PositionTracker() {
                 <Label className="text-[11px]">Action</Label>
                 <Select value={formAction} onValueChange={v => setFormAction(v as "BUY" | "SELL")}>
                   <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value="BUY">BUY</SelectItem><SelectItem value="SELL">SELL</SelectItem></SelectContent>
+                  <SelectContent><SelectItem value="BUY">Simulated BUY</SelectItem><SelectItem value="SELL">Simulated SELL</SelectItem></SelectContent>
                 </Select>
               </div>
               <div>
@@ -342,7 +369,7 @@ export default function PositionTracker() {
                 <Input value={formStrike} onChange={e => setFormStrike(e.target.value)} type="number" className="h-7 text-xs font-mono" />
               </div>
               <div>
-                <Label className="text-[11px]">Lots ({getLotSize(formSymbol)}/lot)</Label>
+                <Label className="text-[11px]">Lots ({selectedOptionLotSize || "-"}/lot)</Label>
                 <Input value={formLots} onChange={e => setFormLots(e.target.value)} type="number" min={1} className="h-7 text-xs font-mono" />
               </div>
               <div>
@@ -358,13 +385,13 @@ export default function PositionTracker() {
                 <Input value={formExpiry} onChange={e => setFormExpiry(e.target.value)} placeholder="27 Mar" className="h-7 text-xs" />
               </div>
               <div className="flex items-end">
-                <Button size="sm" className="h-7 text-xs w-full gap-1" onClick={handleAddPosition}>
+                <Button size="sm" className="h-7 text-xs w-full gap-1" onClick={handleAddPosition} disabled={!isMasterLoaded || availablePositionSymbols.length === 0}>
                   <Check className="h-3 w-3" /> Add
                 </Button>
               </div>
             </div>
             <p className="text-[11px] text-muted-foreground mt-1.5">
-              Lot size: {getLotSize(formSymbol)} | Total qty: {Number(formLots) * getLotSize(formSymbol)} | Investment: ₹{(Number(formEntry) * Number(formLots) * getLotSize(formSymbol)).toLocaleString("en-IN")}
+              {isMasterLoaded ? `Lot size: ${selectedOptionLotSize || "-"} | ` : "Instrument master loading... | "}Total qty: {Number(formLots) * selectedOptionLotSize} | Investment: ₹{(Number(formEntry) * Number(formLots) * selectedOptionLotSize).toLocaleString("en-IN")}
             </p>
           </CardContent>
         </Card>
@@ -514,7 +541,7 @@ export default function PositionTracker() {
         </TabsContent>
       </Tabs>
 
-      {/* What-If Scenario Simulator */}
+      {/* Simulation Mode */}
       <WhatIfSimulator positions={positions} />
 
       {/* Active Positions by Symbol */}

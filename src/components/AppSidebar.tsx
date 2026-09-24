@@ -1,4 +1,4 @@
-import { BarChart3, Briefcase, LayoutDashboard, Layers, Moon, Settings, Star, Sun, TableProperties } from "lucide-react";
+import { BarChart3, Briefcase, CalendarDays, CandlestickChart, LayoutDashboard, Layers, Moon, Newspaper, Settings, Star, Sun, TableProperties, TrendingUp } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import {
   Sidebar,
@@ -19,14 +19,19 @@ import { cn } from "@/lib/utils";
 
 const mainItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard, shortcut: "1" },
-  { title: "Option Chain", url: "/option-chain", icon: TableProperties, shortcut: "2" },
-  { title: "OI Analysis", url: "/oi-analysis", icon: BarChart3, shortcut: "3" },
-  { title: "Watchlist", url: "/watchlist", icon: Star, shortcut: "4" },
+  { title: "Stocks", url: "/stocks", icon: TrendingUp, shortcut: "2" },
+  { title: "Indices", url: "/indices", icon: TableProperties, shortcut: "3" },
+  { title: "Option Chain", url: "/option-chain", icon: CandlestickChart, shortcut: "4" },
+  { title: "Futures", url: "/futures", icon: CandlestickChart, shortcut: "5" },
+  { title: "OI Analysis", url: "/oi-analysis", icon: BarChart3, shortcut: "6" },
+  { title: "Watchlist", url: "/watchlist", icon: Star, shortcut: "7" },
 ];
 
 const tradingItems = [
-  { title: "Strategy Builder", url: "/strategy-builder", icon: Layers, shortcut: "5" },
-  { title: "Position Tracker", url: "/position-tracker", icon: Briefcase, shortcut: "6" },
+  { title: "Strategy Builder", url: "/strategy-builder", icon: Layers, shortcut: "8" },
+  { title: "Position Tracker", url: "/position-tracker", icon: Briefcase, shortcut: "9" },
+  { title: "Calendar", url: "/calendar", icon: CalendarDays, shortcut: "10" },
+  { title: "Market News", url: "/market-news", icon: Newspaper, shortcut: "11" },
 ];
 
 const settingItems = [
@@ -75,29 +80,20 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader className={cn("border-b border-sidebar-border/80 px-4 py-4", collapsed && "items-center border-white/10 px-0 py-3")}>
+      <SidebarHeader className={cn("border-b border-sidebar-border/80 px-3 py-3", collapsed && "items-center border-white/10 px-0 py-3")}>
         <div className={cn("flex items-center gap-3", collapsed && "justify-center gap-0")}>
-          <div className={cn("group relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-lg border border-primary/25 bg-[#071018] shadow-glow-sm", collapsed && "h-10 w-10 rounded-xl border-primary/30")}>
-            <div className="absolute inset-0 bg-[linear-gradient(145deg,hsl(var(--primary)/0.2),transparent_72%)] opacity-95 transition-opacity duration-500" />
-            
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="relative z-10" aria-hidden="true">
-              <path d="M12 2L2 7V17L12 22L22 17V7L12 2Z" stroke="hsl(var(--primary))" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.75" />
-              <path d="M6 16V10L9 13L12 9L15 7V16" stroke="hsl(var(--primary))" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-              <circle cx="15" cy="7" r="1.8" fill="hsl(var(--primary))" opacity="0.9">
-              </circle>
-            </svg>
-          </div>
+          <img src="/brand-logo-original.png" alt="FundedWealth" className={cn("object-contain", collapsed ? "h-11 w-11" : "h-11 w-11")} />
           {!collapsed && (
-            <div className="flex flex-col">
-              <h1 className="text-[15px] font-bold text-foreground leading-none">Mr. Chartist</h1>
-              <p className="text-[11px] text-muted-foreground/75 mt-1 tracking-[0.14em] font-semibold uppercase">Options Terminal</p>
+            <div className="flex flex-col items-start leading-[0.7]">
+              <h1 className="text-[14px] font-black tracking-[0.1em] text-white uppercase">FUNDEDWEALTH</h1>
+              <p className="mt-1 w-full text-center text-[16px] font-bold tracking-[0.2em] text-white/80 uppercase">TERMINAL</p>
             </div>
           )}
         </div>
         {collapsed && (
-          <div className="mt-1 text-center leading-none">
-            <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-primary">MR</p>
-            <p className="mt-1 text-[6px] font-semibold uppercase tracking-[0.1em] text-white/38">Chartist</p>
+          <div className="mt-1 text-center leading-[0.7]">
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-white">FW</p>
+            <p className="mt-1 text-[8px] font-bold uppercase tracking-[0.18em] text-white/75">TERM</p>
           </div>
         )}
       </SidebarHeader>

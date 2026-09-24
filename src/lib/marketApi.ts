@@ -1,23 +1,25 @@
 import type { OptionData, ExpiryDate, IndexData } from "./mockData";
-import { getActiveBroker } from "./brokerConfig";
+import { ZerodhaAdapter } from "./zerodhaAdapter";
 
 // Local proxy base URL — override via VITE_PROXY_URL if deploying proxy elsewhere
 const PROXY_BASE = import.meta.env.VITE_PROXY_URL || "http://localhost:4002";
 
-// Direct fetch to local proxy with optional user credentials
+export interface IndianNewsArticle {
+  headline: string;
+  summary: string;
+  source: string;
+  publishedAt: string | null;
+  url: string;
+  image: string | null;
+  related: string | null;
+  category: string;
+}
+
+// The proxy owns broker credentials; browser requests never carry them.
 async function fetchDhanProxy(endpoint: string, params?: Record<string, string>): Promise<any> {
   const qp = new URLSearchParams({ endpoint, ...params });
   const url = `${PROXY_BASE}/api/dhan-proxy?${qp.toString()}`;
-
-  // Inject user's Dhan credentials if available
-  const headers: Record<string, string> = {};
-  const activeBroker = getActiveBroker();
-  if (activeBroker?.brokerId === "dhan" && activeBroker.values.clientId && activeBroker.values.accessToken) {
-    headers["x-dhan-client-id"] = activeBroker.values.clientId;
-    headers["x-dhan-access-token"] = activeBroker.values.accessToken;
-  }
-
-  const res = await fetch(url, { headers });
+  const res = await fetch(url);
   if (!res.ok) {
     const errText = await res.text();
     throw new Error(`Dhan proxy error ${res.status}: ${errText}`);
@@ -36,6 +38,25 @@ async function fetchNSEProxy(endpoint: string, symbol?: string): Promise<any> {
     throw new Error(`NSE proxy error ${res.status}: ${errText}`);
   }
   return res.json();
+}
+
+export async function fetchIndianMarketNews(): Promise<{ provider: string; articles: IndianNewsArticle[]; fetchedAt: string }> {
+  const res = await fetch(`${PROXY_BASE}/api/indian-news`);
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Indian news proxy error ${res.status}: ${errText}`);
+  }
+  return res.json();
+}
+
+export function normalizeInstrumentMasterResponse(raw: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(raw)) return raw;
+  if (!raw || typeof raw !== "object") return [];
+
+  const response = raw as { instruments?: unknown; data?: { instruments?: unknown } };
+  if (Array.isArray(response.instruments)) return response.instruments;
+  if (response.data && Array.isArray(response.data.instruments)) return response.data.instruments;
+  return [];
 }
 
 // ── Parse Dhan Option Chain Response ──
@@ -243,6 +264,28 @@ export function parseNSEOptionChain(raw: NSEOptionChainResponse, selectedExpiry?
 
 // Dhan Option Chain (primary) with NSE fallback
 export async function fetchLiveOptionChain(symbol: string, expiry?: string) {
+  try {
+    const kiteStatus = await fetch(`${PROXY_BASE}/api/kite/status`, { credentials: "include" });
+    if (kiteStatus.ok && (await kiteStatus.json()).authenticated) {
+      const { ZerodhaAdapter } = await import("./zerodhaAdapter");
+      const result = await new ZerodhaAdapter().getOptionChain(symbol, expiry);
+      if (result.data) {
+        return {
+          chain: result.data.chain,
+          spotPrice: result.data.spotPrice,
+          expiries: result.data.expiries.map((value) => ({ label: value, value, daysToExpiry: 0 })),
+          totalCEOI: result.data.totalCEOI || 0,
+          totalPEOI: result.data.totalPEOI || 0,
+          source: "zerodha" as const,
+          afterHours: result.data.afterHours || false,
+          cachedAt: result.data.cachedAt || null,
+        };
+      }
+    }
+  } catch (error) {
+    console.warn("Kite option chain unavailable, trying Dhan/NSE:", error);
+  }
+
   // Try Dhan first
   try {
     const params: Record<string, string> = { symbol: symbol.toUpperCase() };
@@ -263,6 +306,7 @@ export async function fetchLiveOptionChain(symbol: string, expiry?: string) {
               value: dateStr,
               daysToExpiry: days,
             };
+
           });
         }
       } catch {
@@ -287,6 +331,21 @@ export async function fetchLiveOptionChain(symbol: string, expiry?: string) {
     console.warn("NSE option chain also failed:", e);
     throw e;
   }
+}
+
+export async function fetchDhanQuote(symbol: string) {
+  const raw = await fetchDhanProxy("ltp", { symbol: symbol.toUpperCase() });
+  const security = raw?.data?.IDX_I?.[0] || raw?.data?.NSE_EQ?.[0] || raw?.data?.[symbol.toUpperCase()]?.[0];
+  if (!security?.last_price && !security?.ltp) throw new Error(`Dhan quote unavailable for ${symbol}`);
+  const ltp = Number(security.last_price ?? security.ltp);
+  const previousClose = Number(security.previous_close ?? security.close ?? ltp);
+  return {
+    symbol: symbol.toUpperCase(),
+    ltp,
+    change: ltp - previousClose,
+    changePercent: previousClose ? ((ltp - previousClose) / previousClose) * 100 : 0,
+    timestamp: new Date().toISOString(),
+  };
 }
 
 // Dhan expiry list
@@ -495,13 +554,7 @@ export async function fetchFIIDII(): Promise<FIIDIIData[]> {
 // ── Test Connection ──
 
 export async function testDhanConnection(): Promise<{ status: string; message: string }> {
-  const headers: Record<string, string> = {};
-  const activeBroker = getActiveBroker();
-  if (activeBroker?.brokerId === "dhan" && activeBroker.values.clientId && activeBroker.values.accessToken) {
-    headers["x-dhan-client-id"] = activeBroker.values.clientId;
-    headers["x-dhan-access-token"] = activeBroker.values.accessToken;
-  }
-  const res = await fetch(`${PROXY_BASE}/api/test-connection`, { headers });
+  const res = await fetch(`${PROXY_BASE}/api/test-connection`);
   return res.json();
 }
 
@@ -517,8 +570,21 @@ export async function fetchInstrumentMaster(): Promise<{
   instruments: any[];
   count: number;
 }> {
-  const result = await fetchDhanProxy("instruments");
-  return result;
+  try {
+    const result = await fetchDhanProxy("instruments");
+    if (Array.isArray(result?.instruments) && result.instruments.length > 0) return result;
+  } catch (error) {
+    console.warn("Dhan instrument master unavailable, trying Kite:", error);
+  }
+
+  const kiteStatus = await fetch(`${PROXY_BASE}/api/kite/status`, { credentials: "include" });
+  if (!kiteStatus.ok || !(await kiteStatus.json()).authenticated) {
+    throw new Error("No provider instrument master is available.");
+  }
+
+  const result = await new ZerodhaAdapter().getInstruments();
+  if (!result.data?.length) throw new Error(result.message || "Kite instrument master is empty.");
+  return { instruments: result.data, count: result.data.length };
 }
 
 // ── Historical Candle Data ──

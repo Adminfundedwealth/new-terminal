@@ -28,7 +28,7 @@ export function useKeyboardShortcuts({
     { key: "2", ctrl: true, description: "Option Chain", category: "Navigation", action: () => navigate("/option-chain") },
     { key: "3", ctrl: true, description: "OI Analysis", category: "Navigation", action: () => navigate("/oi-analysis") },
     { key: "4", ctrl: true, description: "Greeks Calculator", category: "Navigation", action: () => navigate("/greeks") },
-    { key: "5", ctrl: true, description: "Strategy Builder", category: "Navigation", action: () => navigate("/strategy") },
+    { key: "5", ctrl: true, description: "Strategy Builder", category: "Navigation", action: () => navigate("/strategy-builder") },
     { key: "g", description: "Toggle Greeks", category: "Option Chain", action: () => onToggleGreeks?.() },
     { key: "a", alt: true, description: "Open Alerts", category: "Tools", action: () => onToggleAlerts?.() },
     { key: "Escape", description: "Close panels", category: "General", action: () => {} },

@@ -108,11 +108,11 @@ export function WhatIfSimulator({ positions }: Props) {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2">
-            <Sliders className="h-4 w-4 text-primary" /> What-If Scenario Simulator
+            <Sliders className="h-4 w-4 text-primary" /> Simulation Mode
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-muted-foreground text-center py-6">Add positions to use the What-If simulator.</p>
+          <p className="text-sm text-muted-foreground text-center py-6">Add positions to use Simulation Mode.</p>
         </CardContent>
       </Card>
     );
@@ -122,7 +122,7 @@ export function WhatIfSimulator({ positions }: Props) {
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2">
-          <Sliders className="h-4 w-4 text-primary" /> What-If Scenario Simulator
+          <Sliders className="h-4 w-4 text-primary" /> Simulation Mode
           <Badge variant="outline" className="text-[11px] font-mono">Base: {baseSpot.toLocaleString("en-IN")} | {baseDTE} DTE</Badge>
         </CardTitle>
       </CardHeader>
@@ -252,7 +252,7 @@ export function WhatIfSimulator({ positions }: Props) {
               <TableRow key={pos.id} className="text-[11px] font-mono">
                 <TableCell>
                   <div className="flex items-center gap-1">
-                    <Badge variant={pos.action === "BUY" ? "default" : "destructive"} className="text-xs h-3.5 px-1">{pos.action}</Badge>
+                    <Badge variant={pos.action === "BUY" ? "default" : "destructive"} className="text-xs h-3.5 px-1">{pos.action === "BUY" ? "Simulated BUY" : "Simulated SELL"}</Badge>
                     <span className="font-sans text-xs">{pos.symbol} {pos.strike} {pos.type}</span>
                   </div>
                 </TableCell>

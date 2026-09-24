@@ -45,7 +45,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
           <CommandItem onSelect={() => go("/option-chain")}><TableProperties className="mr-2 h-4 w-4" /> Option Chain <span className="ml-auto text-xs text-muted-foreground font-mono">Ctrl+2</span></CommandItem>
           <CommandItem onSelect={() => go("/oi-analysis")}><BarChart3 className="mr-2 h-4 w-4" /> OI Analysis <span className="ml-auto text-xs text-muted-foreground font-mono">Ctrl+3</span></CommandItem>
           <CommandItem onSelect={() => go("/greeks")}><Calculator className="mr-2 h-4 w-4" /> Greeks Calculator <span className="ml-auto text-xs text-muted-foreground font-mono">Ctrl+4</span></CommandItem>
-          <CommandItem onSelect={() => go("/strategy")}><Layers className="mr-2 h-4 w-4" /> Strategy Builder <span className="ml-auto text-xs text-muted-foreground font-mono">Ctrl+5</span></CommandItem>
+          <CommandItem onSelect={() => go("/strategy-builder")}><Layers className="mr-2 h-4 w-4" /> Strategy Builder <span className="ml-auto text-xs text-muted-foreground font-mono">Ctrl+5</span></CommandItem>
         </CommandGroup>
 
         <CommandSeparator />

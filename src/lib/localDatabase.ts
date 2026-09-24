@@ -1,3 +1,5 @@
+import { classifyInstrument, isProductionInstrument, type InstrumentCategory } from "./instrumentClassification";
+
 /**
  * Local Database — IndexedDB-based storage for offline market data
  * 
@@ -201,13 +203,66 @@ export const getInstrument = (securityId: string) => getItem<Instrument>("instru
 export const getAllInstruments = () => getAllItems<Instrument>("instruments");
 export const getInstrumentsBySegment = (segment: string) => getItemsByIndex<Instrument>("instruments", "exchangeSegment", segment);
 export const getInstrumentsByType = (type: string) => getItemsByIndex<Instrument>("instruments", "instrumentType", type);
+export async function getInstrumentsByCategory(category: InstrumentCategory): Promise<Instrument[]> {
+  const instruments = await getAllInstruments();
+  return instruments.filter((instrument) => isProductionInstrument(instrument) && classifyInstrument(instrument) === category);
+}
 export const clearInstruments = () => clearStore("instruments");
 export const countInstruments = () => countItems("instruments");
 
+const INDEX_LOOKUP_ALIASES: Record<string, string[]> = {
+  NIFTY: ["NIFTY", "NIFTY 50"],
+  BANKNIFTY: ["BANKNIFTY", "NIFTY BANK"],
+  FINNIFTY: ["FINNIFTY", "NIFTY FINANCIAL SERVICES", "NIFTY FIN SERVICE", "FIN NIFTY"],
+  MIDCPNIFTY: ["MIDCPNIFTY", "NIFTY MIDCAP 50", "MIDCAP NIFTY"],
+  INDIAVIX: ["INDIAVIX", "INDIA VIX"],
+};
+
+function normalizeLookupSymbol(value: string | undefined): string {
+  return (value || "")
+    .toUpperCase()
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function matchesInstrumentLookupSymbol(query: string, instrument: Pick<Instrument, "symbol" | "tradingSymbol">): boolean {
+  const normalizedQuery = normalizeLookupSymbol(query);
+  if (!normalizedQuery) return false;
+
+  const aliases = new Set<string>();
+  for (const candidate of [instrument.symbol, instrument.tradingSymbol, normalizedQuery]) {
+    const normalized = normalizeLookupSymbol(candidate);
+    if (!normalized) continue;
+    aliases.add(normalized);
+    aliases.add(normalized.replace(/\s+/g, ""));
+
+    for (const [canonical, variants] of Object.entries(INDEX_LOOKUP_ALIASES)) {
+      const aliasSet = [canonical, ...variants].map(normalizeLookupSymbol);
+      if (aliasSet.includes(normalized) || aliasSet.includes(normalizedQuery)) {
+        aliasSet.forEach((alias) => {
+          aliases.add(alias);
+          aliases.add(alias.replace(/\s+/g, ""));
+        });
+      }
+    }
+  }
+
+  return [...aliases].some((alias) => alias === normalizedQuery || alias === normalizedQuery.replace(/\s+/g, ""));
+}
+
 // Instrument lookup by symbol
 export async function findInstrumentBySymbol(symbol: string): Promise<Instrument | undefined> {
-  const results = await getItemsByIndex<Instrument>("instruments", "symbol", symbol);
+  const results = await findInstrumentsBySymbol(symbol);
   return results[0];
+}
+
+export async function findInstrumentsBySymbol(symbol: string): Promise<Instrument[]> {
+  const normalizedQuery = normalizeLookupSymbol(symbol);
+  if (!normalizedQuery) return [];
+
+  const allInstruments = await getAllInstruments();
+  return allInstruments.filter((instrument) => matchesInstrumentLookupSymbol(normalizedQuery, instrument));
 }
 
 // Get all F&O stocks (unique equity symbols in NSE_FNO segment)
@@ -216,12 +271,10 @@ export async function getFnOStockList(): Promise<Instrument[]> {
   // Get unique underlying symbols (FUTSTK type gives us the stock names)
   const seen = new Set<string>();
   return fnoInstruments
-    .filter((i) => {
-      if (i.instrumentType === "FUTSTK" && !seen.has(i.symbol)) {
-        seen.add(i.symbol);
-        return true;
-      }
-      return false;
+    .filter((i) => isProductionInstrument(i) && i.instrumentType === "FUTSTK" && !seen.has(i.symbol))
+    .map((i) => {
+      seen.add(i.symbol);
+      return i;
     })
     .sort((a, b) => a.symbol.localeCompare(b.symbol));
 }

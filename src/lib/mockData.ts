@@ -631,6 +631,11 @@ export interface CandleData {
 export interface Position {
   id: string;
   symbol: string;
+  securityId?: string;
+  tradingSymbol?: string;
+  exchangeSegment?: string;
+  instrumentType?: string;
+  optionType?: "CE" | "PE";
   type: "CE" | "PE";
   action: "BUY" | "SELL";
   strike: number;

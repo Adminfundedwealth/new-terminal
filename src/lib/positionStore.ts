@@ -171,6 +171,7 @@ export function clearPositions(): void {
 export interface ClosedPosition extends Position {
   exitPrice: number;
   exitDate: string;
+  exitTimestamp: string;
   realizedPnl: number;
 }
 
@@ -189,12 +190,14 @@ export function closePosition(id: string, exitPrice: number): { active: Position
   // Calculate realized P&L
   const mult = pos.action === "BUY" ? 1 : -1;
   const realizedPnl = Math.round((exitPrice - pos.entryPrice) * mult * pos.lots * pos.lotSize);
+  const exitTimestamp = new Date().toISOString();
 
   const closedPos: ClosedPosition = {
     ...pos,
     currentPrice: exitPrice,
     exitPrice,
     exitDate: new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short" }),
+    exitTimestamp,
     realizedPnl,
     pnl: realizedPnl,
     pnlPercent: pos.entryPrice > 0
@@ -236,6 +239,11 @@ export function createPosition(
   return {
     id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
     symbol,
+    securityId: overrides.securityId,
+    tradingSymbol: overrides.tradingSymbol,
+    exchangeSegment: overrides.exchangeSegment,
+    instrumentType: overrides.instrumentType,
+    optionType: overrides.optionType || overrides.type,
     type: overrides.type,
     action: overrides.action,
     strike: overrides.strike,

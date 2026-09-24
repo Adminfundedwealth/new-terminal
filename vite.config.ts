@@ -7,6 +7,12 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "0.0.0.0",
     port: 4001,
+    proxy: {
+      "/api/kite/login": { target: "http://localhost:4002", changeOrigin: true },
+      "/api/kite/callback": { target: "http://localhost:4002", changeOrigin: true },
+      "/api/kite-proxy": { target: "http://localhost:4002", changeOrigin: true },
+      "/api/kite/status": { target: "http://localhost:4002", changeOrigin: true },
+    },
     hmr: {
       overlay: false,
     },

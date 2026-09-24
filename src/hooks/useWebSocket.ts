@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { marketWS, SYMBOL_TO_SECURITY_ID, type TickData } from "@/lib/websocketClient";
+import { marketWS, SYMBOL_TO_SECURITY_ID, type ConnectionState, type TickData } from "@/lib/websocketClient";
 
 // ── Hook: WebSocket Connection Status ──
 
@@ -18,6 +18,14 @@ export function useWebSocketStatus() {
   }, []);
 
   return isConnected;
+}
+
+export function useWebSocketConnectionState(): ConnectionState {
+  const [state, setState] = useState<ConnectionState>(marketWS.state);
+
+  useEffect(() => marketWS.onConnectionState(setState), []);
+
+  return state;
 }
 
 // ── Hook: Single Instrument Tick ──

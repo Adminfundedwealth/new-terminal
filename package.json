@@ -1,10 +1,10 @@
 {
   "name": "india-s-best-option-hub",
   "version": "1.0.0",
-  "description": "India's most comprehensive open-source Options & Futures analytics terminal for NSE F&O traders.",
+  "description": "FundedWealth Terminal for NSE F&O analytics.",
   "private": false,
   "type": "module",
-  "author": "MrChartist",
+  "author": "FundedWealth",
   "license": "MIT",
   "repository": {
     "type": "git",

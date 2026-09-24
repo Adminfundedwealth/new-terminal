@@ -1,7 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -9,10 +7,9 @@ import { toast } from "sonner";
 import {
   BROKERS,
   getSavedBrokers,
-  saveBrokerCredentials,
-  removeBrokerCredentials,
-  setActiveBroker,
   getActiveBroker,
+  saveBrokerCredentials,
+  setActiveBroker,
   type BrokerInfo,
   type BrokerCredentials,
 } from "@/lib/brokerConfig";
@@ -20,7 +17,7 @@ import { testDhanConnection } from "@/lib/marketApi";
 import { useProxyHealth } from "@/hooks/useMarketData";
 import { useWebSocketStatus } from "@/hooks/useWebSocket";
 import {
-  Shield, ExternalLink, Trash2, CheckCircle2, Circle, Eye, EyeOff, Info, Key, Plug, AlertTriangle,
+  Shield, ExternalLink, CheckCircle2, Circle, Key, Plug, AlertTriangle,
   Server, Zap, Globe, BarChart3, Loader2, CheckCircle, XCircle, Wifi,
 } from "lucide-react";
 import { DatabaseManager } from "@/components/DatabaseManager";
@@ -30,31 +27,13 @@ function BrokerCard({
   broker,
   saved,
   isActive,
-  onSave,
-  onRemove,
   onSetActive,
 }: {
   broker: BrokerInfo;
   saved?: BrokerCredentials;
   isActive: boolean;
-  onSave: (brokerId: string, values: Record<string, string>) => void;
-  onRemove: (brokerId: string) => void;
   onSetActive: (brokerId: string) => void;
 }) {
-  const [values, setValues] = useState<Record<string, string>>(saved?.values || {});
-  const [showFields, setShowFields] = useState<Record<string, boolean>>({});
-  const [isEditing, setIsEditing] = useState(!saved);
-
-  const handleSave = () => {
-    const missing = broker.fields.filter((f) => f.required && !values[f.key]?.trim());
-    if (missing.length > 0) {
-      toast.error(`Please fill: ${missing.map((f) => f.label).join(", ")}`);
-      return;
-    }
-    onSave(broker.id, values);
-    setIsEditing(false);
-  };
-
   return (
     <Card className={`transition-all duration-200 ${isActive ? "ring-2 ring-primary shadow-lg" : "hover:shadow-md"}`}>
       <CardHeader className="pb-3">
@@ -66,7 +45,7 @@ function BrokerCard({
                 {broker.name}
                 {saved && (
                   <Badge variant={isActive ? "default" : "secondary"} className="text-2xs">
-                    {isActive ? "Active" : "Connected"}
+                    {isActive ? "Active" : "Configured"}
                   </Badge>
                 )}
               </CardTitle>
@@ -88,73 +67,35 @@ function BrokerCard({
       </CardHeader>
 
       <CardContent className="space-y-3">
-        {isEditing ? (
-          <>
-            {broker.fields.map((field) => (
-              <div key={field.key} className="space-y-1.5">
-                <Label className="text-xs flex items-center gap-1">
-                  {field.label}
-                  {field.required && <span className="text-destructive">*</span>}
-                </Label>
-                <div className="relative">
-                  <Input
-                    type={field.type === "password" && !showFields[field.key] ? "password" : "text"}
-                    placeholder={field.placeholder}
-                    value={values[field.key] || ""}
-                    onChange={(e) => setValues({ ...values, [field.key]: e.target.value })}
-                    className="text-sm pr-9"
-                  />
-                  {field.type === "password" && (
-                    <button
-                      type="button"
-                      onClick={() => setShowFields({ ...showFields, [field.key]: !showFields[field.key] })}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    >
-                      {showFields[field.key] ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                    </button>
-                  )}
-                </div>
-                {field.helpText && (
-                  <p className="text-2xs text-muted-foreground flex items-center gap-1">
-                    <Info className="h-3 w-3 shrink-0" />
-                    {field.helpText}
-                  </p>
-                )}
-              </div>
-            ))}
-            <div className="flex gap-2 pt-2">
-              <Button size="sm" onClick={handleSave} className="flex-1">
-                <Key className="h-3.5 w-3.5 mr-1.5" />
-                Save Keys
-              </Button>
-              {saved && (
-                <Button size="sm" variant="ghost" onClick={() => setIsEditing(false)}>
-                  Cancel
-                </Button>
-              )}
-            </div>
-          </>
-        ) : (
+        {saved ? (
           <div className="space-y-2">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+              <CheckCircle2 className="h-4 w-4 text-amber-500" />
               <span>{broker.fields.filter((f) => f.required).length} keys configured</span>
               <span className="text-2xs">• Added {new Date(saved!.addedAt).toLocaleDateString("en-IN")}</span>
             </div>
             <div className="flex gap-2">
+              {broker.id === "zerodha" && (
+                <Button size="sm" variant="outline" onClick={() => window.location.assign("/api/kite/login")}>
+                  Connect with Kite OAuth
+                </Button>
+              )}
               {!isActive && (
                 <Button size="sm" variant="outline" onClick={() => onSetActive(broker.id)} className="flex-1">
                   <Circle className="h-3.5 w-3.5 mr-1.5" />
                   Set Active
                 </Button>
               )}
-              <Button size="sm" variant="outline" onClick={() => setIsEditing(true)}>
-                Edit
-              </Button>
-              <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => onRemove(broker.id)}>
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
             </div>
+          </div>
+        ) : (
+          <div className="space-y-2 text-sm text-muted-foreground">
+            <p>Credentials are configured in the local proxy environment.</p>
+            {broker.id === "zerodha" && (
+              <Button size="sm" variant="outline" className="w-full" onClick={() => window.location.assign("/api/kite/login")}>
+                Connect with Kite OAuth
+              </Button>
+            )}
           </div>
         )}
       </CardContent>
@@ -288,23 +229,20 @@ export default function BrokerSettings() {
   const [savedBrokers, setSavedBrokers] = useState(getSavedBrokers());
   const activeBroker = getActiveBroker();
 
-  const handleSave = (brokerId: string, values: Record<string, string>) => {
-    const creds: BrokerCredentials = {
-      brokerId,
-      values,
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("kite") !== "connected") return;
+    saveBrokerCredentials({
+      brokerId: "zerodha",
+      values: {},
       addedAt: new Date().toISOString(),
-      isActive: savedBrokers.length === 0, // first broker is auto-active
-    };
-    saveBrokerCredentials(creds);
+      isActive: true,
+    });
+    setActiveBroker("zerodha");
     setSavedBrokers(getSavedBrokers());
-    toast.success(`${BROKERS.find((b) => b.id === brokerId)?.name} keys saved securely`);
-  };
+    window.history.replaceState({}, "", "/broker-settings");
+  }, []);
 
-  const handleRemove = (brokerId: string) => {
-    removeBrokerCredentials(brokerId);
-    setSavedBrokers(getSavedBrokers());
-    toast.info("Broker keys removed");
-  };
 
   const handleSetActive = (brokerId: string) => {
     setActiveBroker(brokerId);
@@ -325,7 +263,7 @@ export default function BrokerSettings() {
           Broker API Settings
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Connect your broker accounts for live market data and trading. Keys are stored locally in your browser.
+          Connect broker accounts through the local proxy. Broker secrets must be configured on the server, never in the browser.
         </p>
       </div>
 
@@ -335,10 +273,8 @@ export default function BrokerSettings() {
           <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
           <div className="text-sm">
             <p className="font-medium text-foreground">Security Notice</p>
-            <p className="text-muted-foreground text-xs mt-0.5">
-              API keys are stored in your browser's localStorage and are <strong>never sent to our servers</strong>.
-              They are passed directly to your broker's API through a secure proxy. For maximum security, use
-              read-only API tokens when available.
+              <p className="text-muted-foreground text-xs mt-0.5">
+                This browser does not persist or forward broker secrets. Configure provider credentials in the proxy server environment and use read-only tokens when available.
             </p>
           </div>
         </CardContent>
@@ -357,7 +293,7 @@ export default function BrokerSettings() {
         <TabsList>
           <TabsTrigger value="connected" className="gap-1.5">
             <Shield className="h-3.5 w-3.5" />
-            Connected ({connectedBrokers.length})
+            Configured ({connectedBrokers.length})
           </TabsTrigger>
           <TabsTrigger value="available" className="gap-1.5">
             <Plug className="h-3.5 w-3.5" />
@@ -371,7 +307,7 @@ export default function BrokerSettings() {
               <CardContent className="py-12 text-center">
                 <Key className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
                 <p className="text-sm text-muted-foreground">No brokers connected yet</p>
-                <p className="text-xs text-muted-foreground/60 mt-1">Switch to "Available" tab to add your first broker</p>
+                <p className="text-xs text-muted-foreground/60 mt-1">Switch to "Available" tab to configure a broker</p>
               </CardContent>
             </Card>
           ) : (
@@ -382,8 +318,6 @@ export default function BrokerSettings() {
                   broker={broker}
                   saved={savedBrokers.find((s) => s.brokerId === broker.id)}
                   isActive={activeBroker?.brokerId === broker.id}
-                  onSave={handleSave}
-                  onRemove={handleRemove}
                   onSetActive={handleSetActive}
                 />
               ))}
@@ -398,8 +332,6 @@ export default function BrokerSettings() {
                 key={broker.id}
                 broker={broker}
                 isActive={false}
-                onSave={handleSave}
-                onRemove={handleRemove}
                 onSetActive={handleSetActive}
               />
             ))}
@@ -415,8 +347,8 @@ export default function BrokerSettings() {
         <CardContent>
           <div className="grid gap-4 sm:grid-cols-3">
             {[
-              { step: "1", title: "Get API Keys", desc: "Sign up for API access on your broker's developer portal" },
-              { step: "2", title: "Enter Credentials", desc: "Paste your Client ID, API Key, and Access Token above" },
+              { step: "1", title: "Configure the proxy", desc: "Set provider credentials in the local server environment" },
+              { step: "2", title: "Verify the connection", desc: "Use the status panel to confirm the server-side provider connection" },
               { step: "3", title: "Live Data Flows", desc: "Option chain, LTP, Greeks, and OI update in real-time" },
             ].map((s) => (
               <div key={s.step} className="flex gap-3">

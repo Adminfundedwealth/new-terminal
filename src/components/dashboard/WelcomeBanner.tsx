@@ -23,9 +23,11 @@ export function WelcomeBanner() {
               {greeting}, Trader
             </h2>
             <p className="mt-1.5 max-w-xl text-[13px] leading-relaxed text-muted-foreground whitespace-pre-line">
-              {`'''Do not make any visual modifications. The phrases I write are commands to understand what I want, not to be written down. Understand their content well, then execute what is required.'''
-
-              find erros andlets solve this`}
+              {`The market rewards preparation, not prediction.
+Wait for your setup. Trust your analysis.
+Protect your capital before you pursue profit.
+Stay disciplined when the market tests your conviction.
+One disciplined decision at a time builds a stronger trader.`}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-3">

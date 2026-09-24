@@ -1,0 +1,33 @@
+﻿   Γû▓ Next.js 15.0.3
+
+   Linting and checking validity of types ...
+node.exe : 
+At line:1 char:48
++ ... size=4096"; & node "C:\Users\jitro\option-hub\TERMINAL-OS\node_module ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+ ΓÜá The Next.js plugin was not detected in your ESLint configuration. See 
+https://nextjs.org/docs/app/building-your-application/configuring/eslint#migrating-existing-config
+Failed to compile.
+
+./src/hooks/useMarketData.ts:216:35
+Type error: Property 'totalCEOI' does not exist on type '{ chain: OptionData[]; spotPrice: number; expiries: { label: 
+string; value: string; daysToExpiry: number; }[]; source: BrokerId; afterHours: boolean; }'.
+
+[0m [90m 214 |[39m                 lotSize[33m:[39m ([36mawait[39m 
+findInstrumentsBySymbol(symbol))[33m.[39mfind((instrument) [33m=>[39m classifyInstrument(instrument) [33m===[39m 
+[32m"options"[39m [33m&&[39m ([33m![39mexpiry [33m||[39m instrument[33m.[39mexpiryDate [33m===[39m 
+expiry))[33m?[39m[33m.[39mlotSize [33m||[39m [35m0[39m[33m,[39m[0m
+[0m [90m 215 |[39m                 stepSize[33m,[39m maxPain[33m:[39m hasChainData [33m?[39m 
+getMaxPain(result[33m.[39mchain) [33m:[39m [35m0[39m[33m,[39m[0m
+[0m[31m[1m>[22m[39m[90m 216 |[39m                 totalCEOI[33m:[39m result[33m.[39mtotalCEOI[33m,[39m 
+totalPEOI[33m:[39m result[33m.[39mtotalPEOI[33m,[39m[0m
+[0m [90m     |[39m                                   [31m[1m^[22m[39m[0m
+[0m [90m 217 |[39m                 isLive[33m:[39m hasChainData [33m&&[39m [33m![39misAfterHours[33m,[39m 
+afterHours[33m:[39m isAfterHours[33m,[39m[0m
+[0m [90m 218 |[39m                 source[33m:[39m result[33m.[39msource [33m||[39m 
+[32m"live"[39m[33m,[39m[0m
+[0m [90m 219 |[39m                 cachedAt[33m:[39m (result [36mas[39m any)[33m.[39mcachedAt [33m||[39m 
+[36mnull[39m[33m,[39m[0m

@@ -4,11 +4,25 @@ node_modules/
 # Build output
 dist/
 dist-ssr/
+.next/
+build/
 
 # Environment variables
 .env
 .env.local
 .env.*.local
+.env.*
+!.env.example
+!.env.template
+
+# Secrets and credentials
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
 
 # Editor & IDE
 .vscode/*
@@ -25,6 +39,7 @@ Thumbs.db
 desktop.ini
 
 # Debug logs
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -35,6 +50,12 @@ coverage/
 
 # Temp
 *.tsbuildinfo
+*.tmp
+*.temp
+.exec-only.json
+.full-vitest.json
+.task10-pass.json
+.task10-vitest.json
 
 # Proxy server cache
 .cache/
@@ -44,3 +65,13 @@ coverage/
 .gemini/
 .agents/
 _agents/
+
+# Supabase temp state
+supabase/.temp/
+
+# Local runtime artifacts
+opencode-dev.log
+proxy-live.log
+proxy-live.err.log
+vite-local.out.log
+vite-local.err.log

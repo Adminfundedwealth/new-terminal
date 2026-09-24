@@ -6,11 +6,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Cell, LineChart, Line, ComposedChart, Area } from "recharts";
 import { getMaxPain, getDeltaOI, getStrikePCR, getATMZoneAnalysis, calculatePCR } from "@/lib/oiUtils";
+import { resolveOIDataState } from "@/lib/marketDataState";
 import { OIHeatmap } from "@/components/OIHeatmap";
 import { SupportResistance } from "@/components/SupportResistance";
 import { MultiExpiryOI } from "@/components/MultiExpiryOI";
 import { IVPercentileGauge } from "@/components/IVPercentileGauge";
-import { useLiveOptionChain } from "@/hooks/useMarketData";
+import { useLiveOptionChain, useMarketStatus } from "@/hooks/useMarketData";
 import { Wifi, WifiOff, RefreshCw, Loader2, Keyboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -18,13 +19,26 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 export default function OIAnalysis() {
   const [symbol, setSymbol] = useState("NIFTY");
   const [atmZoneSize, setATMZoneSize] = useState<number>(5);
-  const { data: liveData, refetch, isLoading } = useLiveOptionChain(symbol);
+  const { data: marketStatusData } = useMarketStatus();
+  const { data: liveData, refetch, isLoading, error: queryError } = useLiveOptionChain(symbol);
   const chain = useMemo(() => liveData?.chain ?? [], [liveData]);
   const spotPrice = liveData?.spotPrice ?? 0;
   const stepSize = liveData?.stepSize ?? 50;
   const isLive = liveData?.isLive ?? false;
   const afterHours = liveData?.afterHours ?? false;
+  const oiChangeAvailable = liveData?.oiChangeAvailable !== false;
   const hasData = chain.length > 0;
+  const marketIsOpen = marketStatusData?.isOpen ?? null;
+  const errorMessage = liveData?.errorMessage || (queryError instanceof Error ? queryError.message : null);
+  const oiState = resolveOIDataState({
+    isLive,
+    afterHours,
+    hasData,
+    isLoading,
+    marketIsOpen,
+    unsupported: !!liveData?.unsupported,
+    errorMessage,
+  });
   const handleRefetch = useCallback(() => refetch(), [refetch]);
   const maxPain = useMemo(() => getMaxPain(chain), [chain]);
   // Live PCR computed from current chain
@@ -63,10 +77,8 @@ export default function OIAnalysis() {
     const baseChain = chain.filter(o => o.ce.oi > 50000 || o.pe.oi > 50000);
     return baseChain.map(o => ({
       strike: o.strikePrice,
-      ceOI_weekly: Math.round(o.ce.oi / 1000),
-      peOI_weekly: Math.round(o.pe.oi / 1000),
-      ceOI_monthly: Math.round(o.ce.oi * 0.6 / 1000),
-      peOI_monthly: Math.round(o.pe.oi * 0.7 / 1000),
+      callOI: Math.round(o.ce.oi / 1000),
+      putOI: Math.round(o.pe.oi / 1000),
     }));
   }, [chain]);
 
@@ -120,6 +132,7 @@ export default function OIAnalysis() {
   const pcr = totalCEOI > 0 ? (totalPEOI / totalCEOI) : 0;
   const totalCEOIChg = chain.reduce((s, o) => s + o.ce.oiChange, 0);
   const totalPEOIChg = chain.reduce((s, o) => s + o.pe.oiChange, 0);
+  const formatOI = (value: number) => hasData && value > 0 ? `${(value / 100000).toFixed(1)}L` : "—";
 
   const tooltipStyle = { backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", fontSize: "11px", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", padding: "8px 12px" };
   const fmtK = (v: number) => `${v >= 0 ? "+" : ""}${v.toLocaleString("en-IN")}K`;
@@ -127,12 +140,12 @@ export default function OIAnalysis() {
   const moduleCardClass = "overflow-hidden border-border/80 bg-card/95";
   const moduleHeaderClass = "border-b border-border/70 bg-muted/25 px-4 py-3";
   const metricCards = [
-    { label: "Max Pain", value: maxPain.toLocaleString("en-IN"), valueClass: "text-warning", accentClass: "bg-warning" },
-    { label: "PCR (OI)", value: pcr.toFixed(2), valueClass: pcr > 1 ? "text-bullish" : "text-bearish", accentClass: pcr > 1 ? "bg-bullish" : "bg-bearish" },
-    { label: "Total CE OI", value: `${(totalCEOI / 100000).toFixed(1)}L`, valueClass: "text-foreground", accentClass: "bg-bearish" },
-    { label: "Total PE OI", value: `${(totalPEOI / 100000).toFixed(1)}L`, valueClass: "text-foreground", accentClass: "bg-bullish" },
-    { label: "CE OI Chg", value: `${(totalCEOIChg / 100000).toFixed(1)}L`, valueClass: totalCEOIChg >= 0 ? "text-bullish" : "text-bearish", accentClass: totalCEOIChg >= 0 ? "bg-bullish" : "bg-bearish" },
-    { label: "PE OI Chg", value: `${(totalPEOIChg / 100000).toFixed(1)}L`, valueClass: totalPEOIChg >= 0 ? "text-bullish" : "text-bearish", accentClass: totalPEOIChg >= 0 ? "bg-bullish" : "bg-bearish" },
+    { label: "Max Pain", value: hasData && maxPain > 0 ? maxPain.toLocaleString("en-IN") : "—", valueClass: "text-warning", accentClass: "bg-warning" },
+    { label: "PCR (OI)", value: hasData && totalCEOI > 0 ? pcr.toFixed(2) : "—", valueClass: pcr > 1 ? "text-bullish" : "text-bearish", accentClass: pcr > 1 ? "bg-bullish" : "bg-bearish" },
+    { label: "Total CE OI", value: hasData && totalCEOI > 0 ? `${(totalCEOI / 100000).toFixed(1)}L` : "—", valueClass: "text-foreground", accentClass: "bg-bearish" },
+    { label: "Total PE OI", value: hasData && totalPEOI > 0 ? `${(totalPEOI / 100000).toFixed(1)}L` : "—", valueClass: "text-foreground", accentClass: "bg-bullish" },
+    { label: "CE OI Chg", value: hasData && oiChangeAvailable ? `${(totalCEOIChg / 100000).toFixed(1)}L` : "Unavailable", valueClass: "text-muted-foreground", accentClass: "bg-muted" },
+    { label: "PE OI Chg", value: hasData && oiChangeAvailable ? `${(totalPEOIChg / 100000).toFixed(1)}L` : "Unavailable", valueClass: "text-muted-foreground", accentClass: "bg-muted" },
   ];
 
   return (
@@ -142,9 +155,9 @@ export default function OIAnalysis() {
         <div className="min-w-0">
           <h1 className="text-[1.55rem] font-semibold leading-tight text-foreground">OI Analysis</h1>
           <div className="mt-2 flex flex-wrap items-center gap-2.5">
-            <Badge variant="outline" className={`gap-1 text-xs ${isLive ? "border-bullish text-bullish" : afterHours ? "border-amber-500/50 text-amber-400" : "border-red-500/50 text-red-400"}`}>
-              {isLive ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
-              {isLive ? "LIVE" : afterHours ? "CLOSED" : "OFFLINE"}
+            <Badge variant="outline" className={`gap-1 text-xs ${oiState.status === "LIVE" ? "border-bullish text-bullish" : oiState.status === "HISTORICAL" ? "border-amber-500/50 text-amber-400" : oiState.status === "ERROR" ? "border-red-500/50 text-red-400" : "border-slate-500/40 text-slate-300"}`}>
+              {oiState.status === "LIVE" ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+              {oiState.badge}
             </Badge>
             {(isLive || afterHours) && spotPrice > 0 && (
               <span className="text-xs font-mono text-muted-foreground">
@@ -204,34 +217,26 @@ export default function OIAnalysis() {
         </div>
       )}
 
-      {/* Loading / Empty State — professional skeleton with market info */}
-      {!hasData && !isLoading && !afterHours && (
+      {/* Loading / Empty / Error State */}
+      {oiState.status !== "LIVE" && oiState.status !== "HISTORICAL" && !isLoading && (
         <Card className="border-dashed border-border/50 bg-card/30">
           <CardContent className="py-12 space-y-5">
             <div className="text-center">
               <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-muted/50 mb-3 animate-pulse">
                 <WifiOff className="h-7 w-7 text-muted-foreground/40" />
               </div>
-              <p className="text-[15px] font-semibold text-foreground">Waiting for OI Analysis Data</p>
+              <p className="text-[15px] font-semibold text-foreground">{oiState.title}</p>
               <p className="text-xs text-muted-foreground mt-1.5 max-w-md mx-auto leading-relaxed">
-                Data refreshes automatically during market hours. Check that the proxy server is running on port <code className="font-mono text-primary/70 bg-primary/10 px-1 rounded">4002</code>.
+                {oiState.description}
               </p>
             </div>
-            {/* Animated skeleton chart */}
-            <div className="flex items-end justify-center gap-1.5 h-[100px] px-8">
-              {[35, 60, 45, 80, 55, 70, 40, 65, 50, 75, 38, 62, 48, 72, 42].map((h, i) => (
-                <div
-                  key={i}
-                  className="flex-1 rounded-t-sm animate-pulse"
-                  style={{
-                    height: `${h}%`,
-                    backgroundColor: i < 7 ? 'hsl(var(--bearish) / 0.15)' : 'hsl(var(--bullish) / 0.15)',
-                    animationDelay: `${i * 80}ms`,
-                  }}
-                />
-              ))}
-            </div>
-            {/* Market hours info */}
+            {oiState.status !== "UNAVAILABLE" && oiState.status !== "ERROR" && (
+              <div className="flex items-end justify-center gap-1.5 h-[100px] px-8">
+                {[35, 60, 45, 80, 55, 70, 40, 65, 50, 75, 38, 62, 48, 72, 42].map((h, i) => (
+                  <div key={i} className="flex-1 rounded-t-sm animate-pulse" style={{ height: `${h}%`, backgroundColor: i < 7 ? 'hsl(var(--bearish) / 0.15)' : 'hsl(var(--bullish) / 0.15)', animationDelay: `${i * 80}ms` }} />
+                ))}
+              </div>
+            )}
             <div className="flex justify-center gap-6 text-xs text-muted-foreground/50">
               <div className="flex items-center gap-1.5">
                 <div className="w-1.5 h-1.5 rounded-full bg-bullish/40" />
@@ -242,20 +247,22 @@ export default function OIAnalysis() {
                 Auto-refresh: Every 3s
               </div>
             </div>
-            <div className="text-center pt-2">
-              <Button variant="outline" size="sm" className="gap-1.5 hover:text-primary hover:border-primary/50 transition-colors" onClick={handleRefetch}>
-                <RefreshCw className="h-3.5 w-3.5" /> Retry Connection
-              </Button>
-            </div>
+            {oiState.showRetry && (
+              <div className="text-center pt-2">
+                <Button variant="outline" size="sm" className="gap-1.5 hover:text-primary hover:border-primary/50 transition-colors" onClick={handleRefetch}>
+                  <RefreshCw className="h-3.5 w-3.5" /> Retry Connection
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
 
-      {isLoading && !isLive && (
+      {oiState.status === "LOADING" && (
         <Card>
           <CardContent className="py-12 text-center">
             <Loader2 className="h-8 w-8 text-primary animate-spin mx-auto mb-3" />
-            <p className="text-sm font-medium text-muted-foreground">Loading Option Chain...</p>
+            <p className="text-sm font-medium text-muted-foreground">{oiState.title}</p>
           </CardContent>
         </Card>
       )}
@@ -295,23 +302,23 @@ export default function OIAnalysis() {
           <div className="grid grid-cols-4 md:grid-cols-8 gap-2 mb-4">
             <div className="rounded-md border border-border/60 bg-background/65 p-2 text-center">
               <p className="text-[11px] text-muted-foreground">Zone PCR</p>
-              <p className={`text-lg font-bold font-mono ${activeATMZone.pcr > 1 ? "text-bullish" : "text-bearish"}`}>{activeATMZone.pcr}</p>
+              <p className={`text-lg font-bold font-mono ${activeATMZone.pcr > 1 ? "text-bullish" : "text-bearish"}`}>{hasData ? activeATMZone.pcr : "—"}</p>
             </div>
             <div className="rounded-md border border-border/60 bg-background/65 p-2 text-center">
               <p className="text-[11px] text-muted-foreground">CE OI</p>
-              <p className="text-sm font-bold font-mono">{(activeATMZone.totalCEOI / 100000).toFixed(1)}L</p>
+              <p className="text-sm font-bold font-mono">{formatOI(activeATMZone.totalCEOI)}</p>
             </div>
             <div className="rounded-md border border-border/60 bg-background/65 p-2 text-center">
               <p className="text-[11px] text-muted-foreground">PE OI</p>
-              <p className="text-sm font-bold font-mono">{(activeATMZone.totalPEOI / 100000).toFixed(1)}L</p>
+              <p className="text-sm font-bold font-mono">{formatOI(activeATMZone.totalPEOI)}</p>
             </div>
             <div className="rounded-md border border-border/60 bg-background/65 p-2 text-center">
               <p className="text-[11px] text-muted-foreground">CE OI Chg%</p>
-              <p className={`text-sm font-bold font-mono ${activeATMZone.ceOIChgPercent >= 0 ? "text-bullish" : "text-bearish"}`}>{activeATMZone.ceOIChgPercent >= 0 ? "+" : ""}{activeATMZone.ceOIChgPercent}%</p>
+              <p className={`text-sm font-bold font-mono ${activeATMZone.ceOIChgPercent >= 0 ? "text-bullish" : "text-bearish"}`}>{hasData ? `${activeATMZone.ceOIChgPercent >= 0 ? "+" : ""}${activeATMZone.ceOIChgPercent}%` : "—"}</p>
             </div>
             <div className="rounded-md border border-border/60 bg-background/65 p-2 text-center">
               <p className="text-[11px] text-muted-foreground">PE OI Chg%</p>
-              <p className={`text-sm font-bold font-mono ${activeATMZone.peOIChgPercent >= 0 ? "text-bullish" : "text-bearish"}`}>{activeATMZone.peOIChgPercent >= 0 ? "+" : ""}{activeATMZone.peOIChgPercent}%</p>
+              <p className={`text-sm font-bold font-mono ${activeATMZone.peOIChgPercent >= 0 ? "text-bullish" : "text-bearish"}`}>{hasData ? `${activeATMZone.peOIChgPercent >= 0 ? "+" : ""}${activeATMZone.peOIChgPercent}%` : "—"}</p>
             </div>
             <div className="col-span-3 rounded-md border border-border/60 bg-background/65 p-2 text-center">
               <p className="text-[11px] text-muted-foreground">Strike-wise PCR in Zone</p>
@@ -525,7 +532,7 @@ export default function OIAnalysis() {
 
         <TabsContent value="multi-expiry">
           <Card className={moduleCardClass}>
-            <CardHeader className={moduleHeaderClass}><CardTitle className="text-sm">Multi-Expiry OI Comparison (Weekly vs Monthly)</CardTitle></CardHeader>
+            <CardHeader className={moduleHeaderClass}><CardTitle className="text-sm">Selected-Expiry OI Comparison</CardTitle></CardHeader>
             <CardContent>
               <div className="h-[400px]">
                 <ResponsiveContainer width="100%" height="100%">
@@ -535,10 +542,8 @@ export default function OIAnalysis() {
                     <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
                     <Tooltip contentStyle={tooltipStyle} />
                     <ReferenceLine x={Math.round(spotPrice / 50) * 50} stroke="hsl(210 100% 52%)" strokeDasharray="3 3" />
-                    <Bar dataKey="ceOI_weekly" fill="hsl(142 71% 45%)" opacity={0.9} name="CE Weekly" radius={[2, 2, 0, 0]} />
-                    <Bar dataKey="ceOI_monthly" fill="hsl(142 71% 45% / 0.4)" name="CE Monthly" radius={[2, 2, 0, 0]} />
-                    <Bar dataKey="peOI_weekly" fill="hsl(0 84% 60%)" opacity={0.9} name="PE Weekly" radius={[2, 2, 0, 0]} />
-                    <Bar dataKey="peOI_monthly" fill="hsl(0 84% 60% / 0.4)" name="PE Monthly" radius={[2, 2, 0, 0]} />
+                    <Bar dataKey="callOI" fill="hsl(142 71% 45%)" name="Call OI" radius={[2, 2, 0, 0]} />
+                    <Bar dataKey="putOI" fill="hsl(0 84% 60%)" name="Put OI" radius={[2, 2, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -611,7 +616,7 @@ export default function OIAnalysis() {
                   <div className="space-y-3">
                     <h4 className="text-xs font-semibold text-bearish">CALL OI (Writers = Resistance)</h4>
                     <div className="p-3 rounded-md bg-bearish/5 border border-bearish/10">
-                      <p className="text-2xl font-bold font-mono text-bearish">{(pcrData.totalCEOI / 100000).toFixed(1)}L</p>
+                      <p className="text-2xl font-bold font-mono text-bearish">{formatOI(pcrData.totalCEOI)}</p>
                       <p className="text-xs text-muted-foreground mt-0.5">Total CE Open Interest</p>
                     </div>
                     <div className="p-3 rounded-md bg-accent/30">
@@ -622,7 +627,7 @@ export default function OIAnalysis() {
                   <div className="space-y-3">
                     <h4 className="text-xs font-semibold text-bullish">PUT OI (Writers = Support)</h4>
                     <div className="p-3 rounded-md bg-bullish/5 border border-bullish/10">
-                      <p className="text-2xl font-bold font-mono text-bullish">{(pcrData.totalPEOI / 100000).toFixed(1)}L</p>
+                      <p className="text-2xl font-bold font-mono text-bullish">{formatOI(pcrData.totalPEOI)}</p>
                       <p className="text-xs text-muted-foreground mt-0.5">Total PE Open Interest</p>
                     </div>
                     <div className="p-3 rounded-md bg-accent/30">

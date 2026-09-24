@@ -1,4 +1,4 @@
-// Broker configuration and localStorage-based key management
+// Broker configuration held only for the current page session.
 
 export interface BrokerInfo {
   id: string;
@@ -27,7 +27,11 @@ export interface BrokerCredentials {
   isActive: boolean;
 }
 
-const STORAGE_KEY = "optionsdesk_broker_keys";
+export type ExecutionMode = "SIMULATED" | "REAL";
+
+// Credentials are intentionally session-scoped. Secrets must not survive in browser storage.
+let sessionBrokers: BrokerCredentials[] = [];
+let executionMode: ExecutionMode = "SIMULATED";
 
 export const BROKERS: BrokerInfo[] = [
   {
@@ -48,7 +52,7 @@ export const BROKERS: BrokerInfo[] = [
     name: "Zerodha (Kite)",
     logo: "🔴",
     color: "hsl(0 84% 60%)",
-    description: "India's largest broker. Access live data via Kite Connect API with WebSocket streaming.",
+    description: "Configuration only: Kite Connect credentials are collected, but no runtime adapter is available in this terminal.",
     docsUrl: "https://kite.trade/docs/connect/v3/",
     features: ["Option Chain", "Live Quotes", "WebSocket Streaming", "Historical Data"],
     fields: [
@@ -58,11 +62,11 @@ export const BROKERS: BrokerInfo[] = [
     ],
   },
   {
-    id: "angelone",
+    id: "angel_one",
     name: "Angel One (SmartAPI)",
     logo: "🟠",
     color: "hsl(25 95% 53%)",
-    description: "Full-featured SmartAPI with option chain, order placement, and portfolio tracking.",
+    description: "Configuration only: SmartAPI credentials are collected, but no runtime adapter is available in this terminal.",
     docsUrl: "https://smartapi.angelone.in/docs",
     features: ["Option Chain", "Live Quotes", "Order Placement", "Portfolio"],
     fields: [
@@ -77,7 +81,7 @@ export const BROKERS: BrokerInfo[] = [
     name: "Upstox",
     logo: "🟣",
     color: "hsl(271 76% 53%)",
-    description: "Upstox API v2 with market data, option chain, and advanced order types.",
+    description: "Configuration only: Upstox credentials are collected, but no runtime adapter is available in this terminal.",
     docsUrl: "https://upstox.com/developer/api-documentation/",
     features: ["Option Chain", "Market Data", "Orders", "Portfolio"],
     fields: [
@@ -91,7 +95,7 @@ export const BROKERS: BrokerInfo[] = [
     name: "5paisa",
     logo: "🔵",
     color: "hsl(217 91% 60%)",
-    description: "5paisa Connect API for live market data, option chain, and trading.",
+    description: "Configuration only: 5paisa credentials are collected, but no runtime adapter is available in this terminal.",
     docsUrl: "https://www.5paisa.com/developerapi/overview",
     features: ["Option Chain", "Market Data", "Orders"],
     fields: [
@@ -106,7 +110,7 @@ export const BROKERS: BrokerInfo[] = [
     name: "Fyers",
     logo: "🟡",
     color: "hsl(48 96% 53%)",
-    description: "Fyers API v3 with TradingView charting, market data, and algo trading support.",
+    description: "Configuration only: Fyers credentials are collected, but no runtime adapter is available in this terminal.",
     docsUrl: "https://myapi.fyers.in/docs/",
     features: ["Option Chain", "Historical Data", "TradingView Charts", "Orders"],
     fields: [
@@ -120,7 +124,7 @@ export const BROKERS: BrokerInfo[] = [
     name: "Alice Blue",
     logo: "💎",
     color: "hsl(199 89% 48%)",
-    description: "Alice Blue ANT API for low-cost trading with real-time market feeds.",
+    description: "Configuration only: Alice Blue credentials are collected, but no runtime adapter is available in this terminal.",
     docsUrl: "https://v2api.aliceblueonline.com/",
     features: ["Market Data", "Orders", "Portfolio", "Funds"],
     fields: [
@@ -130,15 +134,10 @@ export const BROKERS: BrokerInfo[] = [
   },
 ];
 
-// ── localStorage CRUD ──
+// ── In-memory CRUD ──
 
 export function getSavedBrokers(): BrokerCredentials[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+  return sessionBrokers.map((broker) => ({ ...broker, values: { ...broker.values } }));
 }
 
 export function saveBrokerCredentials(creds: BrokerCredentials): void {
@@ -149,12 +148,11 @@ export function saveBrokerCredentials(creds: BrokerCredentials): void {
   } else {
     existing.push(creds);
   }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(existing));
+  sessionBrokers = existing;
 }
 
 export function removeBrokerCredentials(brokerId: string): void {
-  const existing = getSavedBrokers().filter((b) => b.brokerId !== brokerId);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(existing));
+  sessionBrokers = getSavedBrokers().filter((b) => b.brokerId !== brokerId);
 }
 
 export function getActiveBroker(): BrokerCredentials | null {
@@ -163,11 +161,18 @@ export function getActiveBroker(): BrokerCredentials | null {
 }
 
 export function setActiveBroker(brokerId: string): void {
-  const all = getSavedBrokers().map((b) => ({
+  sessionBrokers = getSavedBrokers().map((b) => ({
     ...b,
     isActive: b.brokerId === brokerId,
   }));
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+}
+
+export function getExecutionMode(): ExecutionMode {
+  return executionMode;
+}
+
+export function setExecutionMode(mode: ExecutionMode): void {
+  executionMode = mode;
 }
 
 export function getBrokerInfo(brokerId: string): BrokerInfo | undefined {

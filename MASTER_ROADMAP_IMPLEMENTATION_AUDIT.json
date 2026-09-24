@@ -1,0 +1,949 @@
+﻿{
+    "audit_type":  "MASTER ROADMAP IMPLEMENTATION AUDIT",
+    "audit_date":  "2026-09-23",
+    "scope":  [
+                  "C:/Users/jitro/option-hub/india-s-best-option-hub",
+                  "C:/Users/jitro/TERMINAL-OS"
+              ],
+    "audit_only":  true,
+    "other_projects_inspected":  false,
+    "safety":  {
+                   "files_changed":  3,
+                   "database_changed":  false,
+                   "supabase_changed":  false,
+                   "env_changed":  false,
+                   "credentials_changed":  false,
+                   "migrations_applied":  false,
+                   "deployment_performed":  false,
+                   "real_broker_orders":  false
+               },
+    "supabase":  {
+                     "customer":  {
+                                      "url_host":  "zxqwtqlbrlegwdodjhiq.supabase.co",
+                                      "project_ref":  "zxqwtqlbrlegwdodjhiq",
+                                      "config":  ".env; supabase/config.toml"
+                                  },
+                     "terminal_os":  {
+                                         "url_host":  "zxqwtqlbrlegwdodjhiq.supabase.co",
+                                         "project_ref":  "zxqwtqlbrlegwdodjhiq",
+                                         "config":  ".env.local; lib/supabase/client.ts; lib/supabase/server.ts"
+                                     },
+                     "same_project":  "YES locally",
+                     "remote_schema_status":  "PARTIAL/NOT VERIFIED"
+                 },
+    "runtime_evidence":  {
+                             "customer_tests":  {
+                                                    "status":  "PASS",
+                                                    "files":  16,
+                                                    "tests":  122,
+                                                    "warning":  "Kite option-chain construction reported instrument master unavailable"
+                                                },
+                             "terminal_os_type_check":  "PASS",
+                             "live_supabase_probe":  {
+                                                         "status":  "READ_ONLY",
+                                                         "observations":  [
+                                                                              "Core tables returned HTTP 403 permission denied for table",
+                                                                              "trading_orders returned HTTP 404 not found in schema cache",
+                                                                              "account_metrics returned HTTP 404 not found in schema cache",
+                                                                              "employees returned HTTP 404 not found in schema cache",
+                                                                              "staff_members returned HTTP 404 not found in schema cache",
+                                                                              "broker_credentials returned HTTP 404 not found in schema cache",
+                                                                              "account-context and risk RPCs returned HTTP 403 permission denied",
+                                                                              "broker encryption RPCs returned HTTP 404 not found in schema cache"
+                                                                          ]
+                                                     }
+                         },
+    "status_definitions":  {
+                               "PASS":  "implemented and verified",
+                               "PARTIAL":  "implemented but incomplete or not production ready",
+                               "FAIL":  "implemented/intended but current runtime/test behavior fails",
+                               "MISSING":  "no meaningful implementation",
+                               "NOT VERIFIED":  "potential implementation but insufficient evidence"
+                           },
+    "status_counts":  {
+                          "PASS":  0,
+                          "PARTIAL":  543,
+                          "FAIL":  29,
+                          "MISSING":  9,
+                          "NOT VERIFIED":  180
+                      },
+    "requirement_row_count":  761,
+    "phase_statuses":  [
+                           {
+                               "phase":  1,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  2,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  3,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  4,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  5,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  6,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  7,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  8,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  9,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  10,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  11,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  12,
+                               "status":  "NOT VERIFIED"
+                           },
+                           {
+                               "phase":  13,
+                               "status":  "NOT VERIFIED"
+                           },
+                           {
+                               "phase":  14,
+                               "status":  "NOT VERIFIED"
+                           },
+                           {
+                               "phase":  15,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  16,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  17,
+                               "status":  "NOT VERIFIED"
+                           },
+                           {
+                               "phase":  18,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  19,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  20,
+                               "status":  "NOT VERIFIED"
+                           },
+                           {
+                               "phase":  21,
+                               "status":  "NOT VERIFIED"
+                           },
+                           {
+                               "phase":  22,
+                               "status":  "NOT VERIFIED"
+                           },
+                           {
+                               "phase":  23,
+                               "status":  "MISSING"
+                           },
+                           {
+                               "phase":  24,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  25,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  26,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  27,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  28,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  29,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  30,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  31,
+                               "status":  "NOT VERIFIED"
+                           },
+                           {
+                               "phase":  32,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  33,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  34,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  35,
+                               "status":  "FAIL"
+                           },
+                           {
+                               "phase":  36,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  37,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  38,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  39,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  40,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  41,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  42,
+                               "status":  "MISSING"
+                           },
+                           {
+                               "phase":  43,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  44,
+                               "status":  "PARTIAL"
+                           },
+                           {
+                               "phase":  45,
+                               "status":  "NOT VERIFIED"
+                           },
+                           {
+                               "phase":  46,
+                               "status":  "NOT VERIFIED"
+                           },
+                           {
+                               "phase":  47,
+                               "status":  "NOT VERIFIED"
+                           },
+                           {
+                               "phase":  48,
+                               "status":  "NOT VERIFIED"
+                           },
+                           {
+                               "phase":  49,
+                               "status":  "NOT VERIFIED"
+                           },
+                           {
+                               "phase":  50,
+                               "status":  "FAIL"
+                           }
+                       ],
+    "critical_findings":  [
+                              "Both local projects target Supabase ref zxqwtqlbrlegwdodjhiq.",
+                              "Live read-only probes show core tables permission-denied but show 404 for trading_orders, account_metrics, employees, staff_members, broker_credentials and Terminal OS encryption RPCs.",
+                              "Customer migration contract and Terminal OS service/legacy SQL contracts conflict.",
+                              "Customer has 122 passing unit tests; Terminal OS has no configured test suite.",
+                              "No production broker order was placed."
+                          ],
+    "next_implementation_order_from_audit":  [
+                                                 "Resolve the canonical database/account/order/position/staff contract through an approved read-only schema decision.",
+                                                 "Prove server-side pre-trade risk and order lifecycle with deterministic paper/test adapters.",
+                                                 "Implement and test reconciliation, recovery, SL/TP, fees, calendar and account-state transitions.",
+                                                 "Add Terminal OS tests for auth/RBAC/operations and end-to-end failure cases.",
+                                                 "Certify actual brokers and market-data providers with safe read-only and paper evidence.",
+                                                 "Establish backup/DR, security scans, deployment, CI/CD and production approval gates."
+                                             ],
+    "phase_matrix_source":  "MASTER_ROADMAP_IMPLEMENTATION_MATRIX.csv",
+    "note":  "The CSV contains one row per supplied roadmap requirement with phase name, requirement ID, separate project statuses/evidence, runtime evidence, gap, exact work, and notes. No requirements outside the supplied roadmap were added.",
+    "completion":  {
+                       "formula":  "strict completion percentage = PASS requirement count / total roadmap requirement count * 100",
+                       "total_requirements":  761,
+                       "new_terminal_pass":  0,
+                       "terminal_os_pass":  0,
+                       "combined_pass":  0,
+                       "new_terminal_percent":  0,
+                       "terminal_os_percent":  0,
+                       "combined_percent":  0,
+                       "note":  "Only PASS counts as completed. PARTIAL, FAIL, MISSING, and NOT VERIFIED do not count as complete."
+                   },
+    "phase_completion":  [
+                             {
+                                 "phase":  1,
+                                 "phase_name":  "Infrastructure Foundation",
+                                 "requirement_count":  32,
+                                 "pass":  0,
+                                 "partial":  32,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  2,
+                                 "phase_name":  "Authentication",
+                                 "requirement_count":  20,
+                                 "pass":  0,
+                                 "partial":  20,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  3,
+                                 "phase_name":  "Trading Account Engine",
+                                 "requirement_count":  29,
+                                 "pass":  0,
+                                 "partial":  29,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  4,
+                                 "phase_name":  "Challenge / Rules Engine",
+                                 "requirement_count":  22,
+                                 "pass":  0,
+                                 "partial":  22,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  5,
+                                 "phase_name":  "Market Data / Instrument Master",
+                                 "requirement_count":  24,
+                                 "pass":  0,
+                                 "partial":  24,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  6,
+                                 "phase_name":  "Realtime Market Data",
+                                 "requirement_count":  15,
+                                 "pass":  0,
+                                 "partial":  15,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  7,
+                                 "phase_name":  "Market Data Reliability",
+                                 "requirement_count":  12,
+                                 "pass":  0,
+                                 "partial":  12,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  8,
+                                 "phase_name":  "Chart Engine",
+                                 "requirement_count":  26,
+                                 "pass":  0,
+                                 "partial":  26,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  9,
+                                 "phase_name":  "Option Chain",
+                                 "requirement_count":  16,
+                                 "pass":  0,
+                                 "partial":  16,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  10,
+                                 "phase_name":  "Watchlist",
+                                 "requirement_count":  12,
+                                 "pass":  0,
+                                 "partial":  12,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  11,
+                                 "phase_name":  "Trading UI",
+                                 "requirement_count":  19,
+                                 "pass":  0,
+                                 "partial":  19,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  12,
+                                 "phase_name":  "Pre-Trade Risk",
+                                 "requirement_count":  14,
+                                 "pass":  0,
+                                 "partial":  0,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  14,
+                                 "strict_completion_percent":  0,
+                                 "status":  "NOT VERIFIED"
+                             },
+                             {
+                                 "phase":  13,
+                                 "phase_name":  "Order Management System",
+                                 "requirement_count":  28,
+                                 "pass":  0,
+                                 "partial":  0,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  28,
+                                 "strict_completion_percent":  0,
+                                 "status":  "NOT VERIFIED"
+                             },
+                             {
+                                 "phase":  14,
+                                 "phase_name":  "Execution Engine",
+                                 "requirement_count":  9,
+                                 "pass":  0,
+                                 "partial":  0,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  9,
+                                 "strict_completion_percent":  0,
+                                 "status":  "NOT VERIFIED"
+                             },
+                             {
+                                 "phase":  15,
+                                 "phase_name":  "Broker Abstraction",
+                                 "requirement_count":  25,
+                                 "pass":  0,
+                                 "partial":  25,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  16,
+                                 "phase_name":  "Position Engine",
+                                 "requirement_count":  18,
+                                 "pass":  0,
+                                 "partial":  18,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  17,
+                                 "phase_name":  "P\u0026L",
+                                 "requirement_count":  10,
+                                 "pass":  0,
+                                 "partial":  0,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  10,
+                                 "strict_completion_percent":  0,
+                                 "status":  "NOT VERIFIED"
+                             },
+                             {
+                                 "phase":  18,
+                                 "phase_name":  "Drawdown",
+                                 "requirement_count":  17,
+                                 "pass":  0,
+                                 "partial":  17,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  19,
+                                 "phase_name":  "Risk Events",
+                                 "requirement_count":  12,
+                                 "pass":  0,
+                                 "partial":  12,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  20,
+                                 "phase_name":  "Reconciliation",
+                                 "requirement_count":  16,
+                                 "pass":  0,
+                                 "partial":  0,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  16,
+                                 "strict_completion_percent":  0,
+                                 "status":  "NOT VERIFIED"
+                             },
+                             {
+                                 "phase":  21,
+                                 "phase_name":  "Recovery",
+                                 "requirement_count":  10,
+                                 "pass":  0,
+                                 "partial":  0,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  10,
+                                 "strict_completion_percent":  0,
+                                 "status":  "NOT VERIFIED"
+                             },
+                             {
+                                 "phase":  22,
+                                 "phase_name":  "SL/TP",
+                                 "requirement_count":  10,
+                                 "pass":  0,
+                                 "partial":  0,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  10,
+                                 "strict_completion_percent":  0,
+                                 "status":  "NOT VERIFIED"
+                             },
+                             {
+                                 "phase":  23,
+                                 "phase_name":  "Fees",
+                                 "requirement_count":  1,
+                                 "pass":  0,
+                                 "partial":  0,
+                                 "fail":  0,
+                                 "missing":  1,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "MISSING"
+                             },
+                             {
+                                 "phase":  24,
+                                 "phase_name":  "Trading Calendar",
+                                 "requirement_count":  12,
+                                 "pass":  0,
+                                 "partial":  12,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  25,
+                                 "phase_name":  "Customer Terminal UX",
+                                 "requirement_count":  26,
+                                 "pass":  0,
+                                 "partial":  26,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  26,
+                                 "phase_name":  "Account / Risk UI",
+                                 "requirement_count":  11,
+                                 "pass":  0,
+                                 "partial":  11,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  27,
+                                 "phase_name":  "Terminal OS",
+                                 "requirement_count":  15,
+                                 "pass":  0,
+                                 "partial":  15,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  28,
+                                 "phase_name":  "Staff Operations",
+                                 "requirement_count":  12,
+                                 "pass":  0,
+                                 "partial":  12,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  29,
+                                 "phase_name":  "Audit System",
+                                 "requirement_count":  13,
+                                 "pass":  0,
+                                 "partial":  13,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  30,
+                                 "phase_name":  "Broker Credential Management",
+                                 "requirement_count":  13,
+                                 "pass":  0,
+                                 "partial":  13,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  31,
+                                 "phase_name":  "Kite OAuth",
+                                 "requirement_count":  11,
+                                 "pass":  0,
+                                 "partial":  0,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  11,
+                                 "strict_completion_percent":  0,
+                                 "status":  "NOT VERIFIED"
+                             },
+                             {
+                                 "phase":  32,
+                                 "phase_name":  "Market Data Caching",
+                                 "requirement_count":  11,
+                                 "pass":  0,
+                                 "partial":  11,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  33,
+                                 "phase_name":  "WebSocket Infrastructure",
+                                 "requirement_count":  12,
+                                 "pass":  0,
+                                 "partial":  12,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  34,
+                                 "phase_name":  "API Security",
+                                 "requirement_count":  14,
+                                 "pass":  0,
+                                 "partial":  14,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  35,
+                                 "phase_name":  "Database",
+                                 "requirement_count":  28,
+                                 "pass":  0,
+                                 "partial":  0,
+                                 "fail":  28,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "FAIL"
+                             },
+                             {
+                                 "phase":  36,
+                                 "phase_name":  "Event Architecture",
+                                 "requirement_count":  18,
+                                 "pass":  0,
+                                 "partial":  18,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  37,
+                                 "phase_name":  "Notifications",
+                                 "requirement_count":  10,
+                                 "pass":  0,
+                                 "partial":  10,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  38,
+                                 "phase_name":  "Admin Configuration",
+                                 "requirement_count":  8,
+                                 "pass":  0,
+                                 "partial":  8,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  39,
+                                 "phase_name":  "Observability",
+                                 "requirement_count":  15,
+                                 "pass":  0,
+                                 "partial":  15,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  40,
+                                 "phase_name":  "Alerts",
+                                 "requirement_count":  11,
+                                 "pass":  0,
+                                 "partial":  11,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  41,
+                                 "phase_name":  "Security",
+                                 "requirement_count":  17,
+                                 "pass":  0,
+                                 "partial":  17,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  42,
+                                 "phase_name":  "Backup / Disaster Recovery",
+                                 "requirement_count":  8,
+                                 "pass":  0,
+                                 "partial":  0,
+                                 "fail":  0,
+                                 "missing":  8,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "MISSING"
+                             },
+                             {
+                                 "phase":  43,
+                                 "phase_name":  "Testing",
+                                 "requirement_count":  25,
+                                 "pass":  0,
+                                 "partial":  25,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  44,
+                                 "phase_name":  "Paper Trading",
+                                 "requirement_count":  1,
+                                 "pass":  0,
+                                 "partial":  1,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "PARTIAL"
+                             },
+                             {
+                                 "phase":  45,
+                                 "phase_name":  "Broker Certification",
+                                 "requirement_count":  21,
+                                 "pass":  0,
+                                 "partial":  0,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  21,
+                                 "strict_completion_percent":  0,
+                                 "status":  "NOT VERIFIED"
+                             },
+                             {
+                                 "phase":  46,
+                                 "phase_name":  "Market Data Compliance",
+                                 "requirement_count":  9,
+                                 "pass":  0,
+                                 "partial":  0,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  9,
+                                 "strict_completion_percent":  0,
+                                 "status":  "NOT VERIFIED"
+                             },
+                             {
+                                 "phase":  47,
+                                 "phase_name":  "Compliance / Legal",
+                                 "requirement_count":  17,
+                                 "pass":  0,
+                                 "partial":  0,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  17,
+                                 "strict_completion_percent":  0,
+                                 "status":  "NOT VERIFIED"
+                             },
+                             {
+                                 "phase":  48,
+                                 "phase_name":  "Production Deployment",
+                                 "requirement_count":  10,
+                                 "pass":  0,
+                                 "partial":  0,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  10,
+                                 "strict_completion_percent":  0,
+                                 "status":  "NOT VERIFIED"
+                             },
+                             {
+                                 "phase":  49,
+                                 "phase_name":  "CI/CD",
+                                 "requirement_count":  15,
+                                 "pass":  0,
+                                 "partial":  0,
+                                 "fail":  0,
+                                 "missing":  0,
+                                 "not_verified":  15,
+                                 "strict_completion_percent":  0,
+                                 "status":  "NOT VERIFIED"
+                             },
+                             {
+                                 "phase":  50,
+                                 "phase_name":  "Production Readiness Gates",
+                                 "requirement_count":  1,
+                                 "pass":  0,
+                                 "partial":  0,
+                                 "fail":  1,
+                                 "missing":  0,
+                                 "not_verified":  0,
+                                 "strict_completion_percent":  0,
+                                 "status":  "FAIL"
+                             }
+                         ],
+    "requirement_status_counts":  {
+                                      "new_terminal":  {
+                                                           "PASS":  0,
+                                                           "PARTIAL":  516,
+                                                           "FAIL":  29,
+                                                           "MISSING":  36,
+                                                           "NOT VERIFIED":  180
+                                                       },
+                                      "terminal_os":  {
+                                                          "PASS":  0,
+                                                          "PARTIAL":  346,
+                                                          "FAIL":  29,
+                                                          "MISSING":  217,
+                                                          "NOT VERIFIED":  169
+                                                      },
+                                      "combined":  {
+                                                       "PASS":  0,
+                                                       "PARTIAL":  543,
+                                                       "FAIL":  29,
+                                                       "MISSING":  9,
+                                                       "NOT VERIFIED":  180
+                                                   }
+                                  },
+    "counts_by_project":  {
+                              "New_Terminal":  {
+                                                   "PASS":  0,
+                                                   "PARTIAL":  516,
+                                                   "FAIL":  29,
+                                                   "MISSING":  36,
+                                                   "NOT VERIFIED":  180
+                                               },
+                              "Terminal_OS":  {
+                                                  "PASS":  0,
+                                                  "PARTIAL":  346,
+                                                  "FAIL":  29,
+                                                  "MISSING":  217,
+                                                  "NOT VERIFIED":  169
+                                              },
+                              "Combined":  {
+                                               "PASS":  0,
+                                               "PARTIAL":  543,
+                                               "FAIL":  29,
+                                               "MISSING":  9,
+                                               "NOT VERIFIED":  180
+                                           }
+                          }
+}

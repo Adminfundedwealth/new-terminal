@@ -5,7 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { useFnOStocks, useLiveIndices } from "@/hooks/useMarketData";
+import { useFnOStocks, useLiveIndices, useMarketStatus } from "@/hooks/useMarketData";
+import { isMeaningfulMarketValue } from "@/lib/marketDataState";
 import { useWebSocketStatus } from "@/hooks/useWebSocket";
 import { useNavigate } from "react-router-dom";
 import { Search, Star, TrendingUp, TrendingDown, ExternalLink, Radio, Loader2, Plus, X, BarChart3 } from "lucide-react";
@@ -35,12 +36,18 @@ export default function Watchlist() {
   const [addSymbol, setAddSymbol] = useState("");
   const { data: fnoData, isLoading } = useFnOStocks();
   const { data: indicesResult } = useLiveIndices();
+  const { data: marketStatusData } = useMarketStatus();
   const wsConnected = useWebSocketStatus();
   const [chartSymbol, setChartSymbol] = useState<string | null>(null);
 
   const allStocks = useMemo(() => fnoData?.allStocks ?? [], [fnoData]);
   const indices = useMemo(() => indicesResult?.data ?? [], [indicesResult]);
   const isLive = fnoData?.isLive ?? false;
+  const marketClosed = marketStatusData?.isOpen === false;
+  const statusLabel = isLive ? (marketClosed ? "HISTORICAL" : "LIVE") : "UNAVAILABLE";
+  const statusText = isLive
+    ? marketClosed ? "Showing latest available market snapshot" : "Real-time NSE data"
+    : "Showing last available or unavailable values while market data refreshes";
 
   // Build watchlist rows from live F&O data + indices
   const watchlistRows = useMemo(() => {
@@ -83,15 +90,15 @@ export default function Watchlist() {
         // Symbol not found — show placeholder
         return {
           symbol: sym,
-          ltp: 0,
-          change: 0,
-          changePercent: 0,
-          open: 0,
-          high: 0,
-          low: 0,
-          volume: 0,
-          oi: 0,
-          oiChange: 0,
+          ltp: null,
+          change: null,
+          changePercent: null,
+          open: null,
+          high: null,
+          low: null,
+          volume: null,
+          oi: null,
+          oiChange: null,
           isLive: false,
         };
       })
@@ -131,15 +138,13 @@ export default function Watchlist() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             Watchlist
-            {isLive && (
-              <Badge variant="outline" className="text-[11px] h-5 px-1.5 border-bullish/30 text-bullish">
-                <Radio className="h-2 w-2 mr-1 animate-pulse" />
-                LIVE
-              </Badge>
-            )}
+            <Badge variant="outline" className={`text-[11px] h-5 px-1.5 ${statusLabel === "LIVE" ? "border-bullish/30 text-bullish" : statusLabel === "HISTORICAL" ? "border-amber-500/40 text-amber-400" : "border-border text-muted-foreground"}`}>
+              {statusLabel === "LIVE" && <Radio className="h-2 w-2 mr-1 animate-pulse" />}
+              {statusLabel}
+            </Badge>
           </h1>
           <p className="text-sm text-muted-foreground">
-            {watchedSymbols.length} symbols · {isLive ? "Real-time NSE data" : "Waiting for data..."}
+            {watchedSymbols.length} symbols · {statusText}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -194,10 +199,13 @@ export default function Watchlist() {
               </TableHeader>
               <TableBody>
                 {watchlistRows.map(w => {
-                  const dayRange = w.high - w.low;
-                  const dayPos = dayRange > 0 ? ((w.ltp - w.low) / dayRange) * 100 : 50;
+                  const hasPrice = isMeaningfulMarketValue(w.ltp);
+                  const safeHigh = isMeaningfulMarketValue(w.high) ? w.high : w.ltp ?? 0;
+                  const safeLow = isMeaningfulMarketValue(w.low) ? w.low : w.ltp ?? 0;
+                  const dayRange = Math.max(safeHigh - safeLow, 0);
+                  const dayPos = dayRange > 0 && hasPrice ? ((w.ltp! - safeLow) / dayRange) * 100 : 50;
                   return (
-                  <TableRow key={w.symbol} className={`text-[11px] font-mono transition-all duration-150 group border-l-2 ${w.changePercent >= 0 ? "hover:bg-bullish/[0.03] border-transparent hover:border-bullish/50" : "hover:bg-bearish/[0.03] border-transparent hover:border-bearish/50"}`}>
+                  <TableRow key={w.symbol} className={`text-[11px] font-mono transition-all duration-150 group border-l-2 ${(w.changePercent ?? 0) >= 0 ? "hover:bg-bullish/[0.03] border-transparent hover:border-bullish/50" : "hover:bg-bearish/[0.03] border-transparent hover:border-bearish/50"}`}>
                     <TableCell>
                       <Star
                         className="h-3 w-3 text-warning fill-warning cursor-pointer hover:opacity-60 transition-opacity"
@@ -206,46 +214,46 @@ export default function Watchlist() {
                     </TableCell>
                     <TableCell className="font-sans font-medium">
                       <div className="flex items-center gap-1">
-                        {w.changePercent >= 0 ? <TrendingUp className="h-3 w-3 text-bullish opacity-0 group-hover:opacity-100 transition-opacity" /> : <TrendingDown className="h-3 w-3 text-bearish opacity-0 group-hover:opacity-100 transition-opacity" />}
+                        {(w.changePercent ?? 0) >= 0 ? <TrendingUp className="h-3 w-3 text-bullish opacity-0 group-hover:opacity-100 transition-opacity" /> : <TrendingDown className="h-3 w-3 text-bearish opacity-0 group-hover:opacity-100 transition-opacity" />}
                         {w.symbol}
                       </div>
                     </TableCell>
                     <TableCell className="text-right font-semibold">
-                      {w.ltp > 0 ? `₹${w.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
+                      {hasPrice ? `₹${w.ltp!.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
                     </TableCell>
-                    <TableCell className={`text-right ${w.change >= 0 ? "text-bullish" : "text-bearish"}`}>
-                      {w.ltp > 0 ? `${w.change >= 0 ? "+" : ""}${w.change.toFixed(2)}` : "—"}
+                    <TableCell className={`text-right ${w.change != null && w.change >= 0 ? "text-bullish" : "text-bearish"}`}>
+                      {hasPrice && w.change != null ? `${w.change >= 0 ? "+" : ""}${w.change.toFixed(2)}` : "—"}
                     </TableCell>
                     <TableCell className="text-right">
-                      {w.ltp > 0 ? (
+                      {hasPrice && w.changePercent != null ? (
                         <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${w.changePercent >= 0 ? "bg-bullish/10 text-bullish" : "bg-bearish/10 text-bearish"}`}>
                           {w.changePercent >= 0 ? "+" : ""}{w.changePercent.toFixed(2)}%
                         </span>
                       ) : "—"}
                     </TableCell>
                     <TableCell className="text-right text-muted-foreground">
-                      {w.open > 0 ? w.open.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "—"}
+                      {isMeaningfulMarketValue(w.open) ? w.open.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "—"}
                     </TableCell>
                     <TableCell className="text-right text-muted-foreground">
-                      {w.high > 0 ? w.high.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "—"}
+                      {isMeaningfulMarketValue(w.high) ? w.high.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "—"}
                     </TableCell>
                     <TableCell className="text-right text-muted-foreground">
-                      {w.low > 0 ? w.low.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "—"}
+                      {isMeaningfulMarketValue(w.low) ? w.low.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "—"}
                     </TableCell>
                     <TableCell className="text-right text-muted-foreground">
-                      {w.volume > 0 ? `${(w.volume / 100000).toFixed(1)}L` : "—"}
+                      {isMeaningfulMarketValue(w.volume) ? `${(w.volume! / 100000).toFixed(1)}L` : "—"}
                     </TableCell>
                     <TableCell className="text-right">
-                      {w.oi > 0 ? `${(w.oi / 100000).toFixed(1)}L` : "—"}
+                      {isMeaningfulMarketValue(w.oi) ? `${(w.oi! / 100000).toFixed(1)}L` : "—"}
                     </TableCell>
-                    <TableCell className={`text-right ${(w.oiChange || 0) >= 0 ? "text-bullish" : "text-bearish"}`}>
-                      {w.oiChange !== 0 ? `${w.oiChange >= 0 ? "+" : ""}${(w.oiChange / 100000).toFixed(1)}L` : "—"}
+                    <TableCell className={`text-right ${isMeaningfulMarketValue(w.oiChange) && (w.oiChange ?? 0) >= 0 ? "text-bullish" : "text-bearish"}`}>
+                      {w.oiChange != null && isMeaningfulMarketValue(w.oiChange) ? `${w.oiChange >= 0 ? "+" : ""}${(w.oiChange / 100000).toFixed(1)}L` : "—"}
                     </TableCell>
                     <TableCell className="text-center">
                       <div className="flex flex-col items-center gap-0.5">
                         <MiniChart symbol={w.symbol} width={80} height={24} />
                         {/* Day range indicator */}
-                        {dayRange > 0 && (
+                        {dayRange > 0 && hasPrice && w.changePercent != null && (
                           <div className="relative w-full h-[2px] bg-muted/50 rounded-full">
                             <div className={`absolute top-[-1px] h-[4px] w-[4px] rounded-full ${w.changePercent >= 0 ? "bg-bullish" : "bg-bearish"}`} style={{ left: `${Math.min(dayPos, 95)}%` }} />
                           </div>

@@ -3,6 +3,9 @@ import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const SUPABASE_CONFIGURED = Boolean(SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY);
+const SUPABASE_RUNTIME_URL = SUPABASE_URL || window.location.origin;
+const SUPABASE_RUNTIME_KEY = SUPABASE_PUBLISHABLE_KEY || 'market-data-runtime-without-supabase';
 
 function isNewSupabaseApiKey(value: string): boolean {
   return value.startsWith('sb_publishable_') || value.startsWith('sb_secret_');
@@ -80,9 +83,9 @@ function sharedPreviewStorage() {
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
-export const supabase = createClient<any>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+export const supabase = createClient<any>(SUPABASE_RUNTIME_URL, SUPABASE_RUNTIME_KEY, {
   global: {
-    fetch: createSupabaseFetch(SUPABASE_PUBLISHABLE_KEY),
+    fetch: createSupabaseFetch(SUPABASE_RUNTIME_KEY),
   },
   auth: {
     storage: sharedPreviewStorage(),
@@ -90,3 +93,9 @@ export const supabase = createClient<any>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY
     autoRefreshToken: true,
   }
 });
+
+if (!SUPABASE_CONFIGURED) {
+  console.warn('Supabase is not configured; authenticated terminal features are unavailable.');
+}
+
+export { SUPABASE_CONFIGURED };

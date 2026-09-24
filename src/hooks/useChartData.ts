@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { brokerRouter, getPreferredMarketAdapter } from "@/lib/brokerRouter";
 
 const PROXY_BASE = import.meta.env.VITE_PROXY_URL || "http://localhost:4002";
 
@@ -83,6 +84,40 @@ if (!SECURITY_MAP["M&M"]) SECURITY_MAP["M&M"] = SECURITY_MAP["M_M"];
 
 // ── In-memory cache for dynamically resolved security IDs ──
 const resolvedSecurityIds: Record<string, { securityId: string; exchangeSegment: string; instrument: string }> = {};
+let kiteInstrumentsPromise: Promise<Awaited<ReturnType<NonNullable<ReturnType<typeof brokerRouter.getAdapter>>["getInstruments"]>> | null> | null = null;
+
+async function fetchKiteHistorical(symbol: string, range: string): Promise<OHLCVCandle[]> {
+  const adapter = await getPreferredMarketAdapter();
+  if (!adapter || adapter.id !== "zerodha") return [];
+  kiteInstrumentsPromise ??= adapter.getInstruments().catch(() => null);
+  const result = await kiteInstrumentsPromise;
+  const normalizedSymbol = symbol.toUpperCase();
+  const instrument = result?.data?.find((item) =>
+    (item.exchangeSegment === "NSE_EQ" || item.exchangeSegment === "IDX_I") &&
+    (item.tradingSymbol?.toUpperCase() === normalizedSymbol ||
+      (normalizedSymbol === "NIFTY" && item.tradingSymbol === "NIFTY 50") ||
+      (normalizedSymbol === "BANKNIFTY" && item.tradingSymbol === "NIFTY BANK"))
+  );
+  if (!instrument?.securityId) return [];
+
+  const { interval, daysBack } = rangeToParams(range);
+  const now = new Date();
+  const from = new Date(now);
+  from.setDate(from.getDate() - daysBack);
+  const kiteInterval = interval === "15" ? "15minute" : interval === "60" ? "60minute" : "day";
+  const historical = await adapter.getHistoricalData(instrument.securityId, kiteInterval, {
+    fromDate: from.toISOString().split("T")[0],
+    toDate: now.toISOString().split("T")[0],
+  });
+  return (historical.data || []).map((candle) => ({
+    time: candle.timestamp,
+    open: candle.open,
+    high: candle.high,
+    low: candle.low,
+    close: candle.close,
+    volume: candle.volume,
+  }));
+}
 
 /**
  * Resolve a stock symbol to its Dhan securityId.
@@ -177,7 +212,7 @@ export function parseColumnarCandles(rawData: ColumnarCandleData | null | undefi
   return candles.sort((a, b) => a.time - b.time);
 }
 
-/** Primary source: Dhan historical candles (includes OI, needs broker keys). */
+/** Dhan historical candles for the Dhan provider. */
 async function fetchDhanHistorical(
   resolved: { securityId: string; exchangeSegment: string; instrument: string },
   range: string,
@@ -187,22 +222,22 @@ async function fetchDhanHistorical(
   const from = new Date(now);
   from.setDate(from.getDate() - daysBack);
 
-  const params = new URLSearchParams({
-    endpoint: "historical",
-    securityId: resolved.securityId,
+  const adapter = brokerRouter.getAdapter("dhan");
+  if (!adapter) return [];
+  const result = await adapter.getHistoricalData(resolved.securityId, interval, {
     exchangeSegment: resolved.exchangeSegment,
     instrument: resolved.instrument,
-    interval,
     fromDate: `${from.toISOString().split("T")[0]} 09:15`,
     toDate: `${now.toISOString().split("T")[0]} 15:30`,
   });
-
-  const res = await fetch(`${PROXY_BASE}/api/dhan-proxy?${params}`, {
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!res.ok) return [];
-  const json = await res.json();
-  return parseColumnarCandles(json?.data || json);
+  return (result.data || []).map((candle) => ({
+    time: candle.timestamp,
+    open: candle.open,
+    high: candle.high,
+    low: candle.low,
+    close: candle.close,
+    volume: candle.volume,
+  }));
 }
 
 /**
@@ -237,6 +272,10 @@ async function fetchYahooHistorical(symbol: string, range: string): Promise<OHLC
  * Always returns candles when the proxy is reachable, even without broker keys.
  */
 async function fetchHistorical(symbol: string, range: string): Promise<OHLCVCandle[]> {
+  if ((await getPreferredMarketAdapter())?.id === "zerodha") {
+    return fetchKiteHistorical(symbol, range);
+  }
+
   // Try Dhan first for symbols we can resolve instantly (no 30MB CSV download).
   const mapped = SECURITY_MAP[symbol];
   if (mapped) {

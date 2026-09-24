@@ -32,10 +32,11 @@ const riskColors = {
 export default function StrategyBuilder() {
   const [searchParams] = useSearchParams();
   const { data: indicesResult } = useLiveIndices();
-  const liveNiftyPrice = indicesResult?.data?.find((i: any) => i.symbol === "NIFTY")?.ltp;
-  const spotPrice = liveNiftyPrice || getSpotPrice("NIFTY");
-  const lotSize = getLotSize("NIFTY");
-  const stepSize = getStepSize("NIFTY");
+  const selectedSymbol = searchParams.get("symbol") || "NIFTY";
+  const liveSelectedPrice = indicesResult?.data?.find((i: any) => i.symbol === selectedSymbol)?.ltp;
+  const spotPrice = liveSelectedPrice || getSpotPrice(selectedSymbol);
+  const lotSize = getLotSize(selectedSymbol);
+  const stepSize = getStepSize(selectedSymbol);
 
   const presets = useMemo(() => getPresetStrategies(spotPrice, stepSize), [spotPrice, stepSize]);
   const [legs, setLegs] = useState<StrategyLeg[]>(presets[0].legs);

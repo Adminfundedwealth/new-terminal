@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseDhanOptionChain, parseNSEOptionChain } from "@/lib/marketApi";
+import { parseDhanOptionChain, parseNSEOptionChain, normalizeInstrumentMasterResponse } from "@/lib/marketApi";
 
 describe("parseDhanOptionChain", () => {
   it("returns empty chain for null/undefined input", () => {
@@ -146,5 +146,19 @@ describe("parseNSEOptionChain", () => {
     expect(result.totalPEOI).toBe(1000000);
     expect(result.chain[0].ce.ltp).toBe(150);
     expect(result.chain[0].pe.oiChange).toBe(-5000);
+  });
+});
+
+describe("normalizeInstrumentMasterResponse", () => {
+  it("unwraps the proxy response and exposes the instrument array", () => {
+    expect(normalizeInstrumentMasterResponse({ data: { instruments: [{ securityId: "13", symbol: "NIFTY" }], count: 1 } })).toEqual([
+      { securityId: "13", symbol: "NIFTY" },
+    ]);
+    expect(normalizeInstrumentMasterResponse({ instruments: [{ securityId: "25", symbol: "BANKNIFTY" }] })).toEqual([
+      { securityId: "25", symbol: "BANKNIFTY" },
+    ]);
+    expect(normalizeInstrumentMasterResponse([{ securityId: "27", symbol: "FINNIFTY" }])).toEqual([
+      { securityId: "27", symbol: "FINNIFTY" },
+    ]);
   });
 });
