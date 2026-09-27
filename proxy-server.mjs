@@ -1452,15 +1452,17 @@ server.on("upgrade", (request, socket, head) => {
   }
 });
 
-server.listen(PORT, "127.0.0.1", () => {
+const HOST = process.env.NODE_ENV === "production" || process.env.RAILWAY_ENVIRONMENT ? "0.0.0.0" : "127.0.0.1";
+
+server.listen(PORT, HOST, () => {
   console.log("");
   console.log("  🚀 Mr. Chartist Proxy Server");
-  console.log(`  ├─ HTTP:       http://localhost:${PORT}`);
-  console.log(`  ├─ WebSocket:  ws://localhost:${PORT}/ws`);
-  console.log(`  ├─ Health:     http://localhost:${PORT}/health`);
-  console.log(`  ├─ Dhan (1°):  http://localhost:${PORT}/api/dhan-proxy?endpoint=option-chain&symbol=NIFTY`);
-  console.log(`  ├─ NSE  (2°):  http://localhost:${PORT}/api/nse-proxy?endpoint=indices`);
-  console.log(`  └─ TV Scanner: http://localhost:${PORT}/api/tv-scan?type=stocks`);
+  console.log(`  ├─ HTTP:       http://${HOST === "0.0.0.0" ? "0.0.0.0" : "localhost"}:${PORT}`);
+  console.log(`  ├─ WebSocket:  ws://${HOST === "0.0.0.0" ? "0.0.0.0" : "localhost"}:${PORT}/ws`);
+  console.log(`  ├─ Health:     http://${HOST === "0.0.0.0" ? "0.0.0.0" : "localhost"}:${PORT}/health`);
+  console.log(`  ├─ Dhan (1°):  http://${HOST === "0.0.0.0" ? "0.0.0.0" : "localhost"}:${PORT}/api/dhan-proxy?endpoint=option-chain&symbol=NIFTY`);
+  console.log(`  ├─ NSE  (2°):  http://${HOST === "0.0.0.0" ? "0.0.0.0" : "localhost"}:${PORT}/api/nse-proxy?endpoint=indices`);
+  console.log(`  └─ TV Scanner: http://${HOST === "0.0.0.0" ? "0.0.0.0" : "localhost"}:${PORT}/api/tv-scan?type=stocks`);
   console.log("");
   console.log("  Data Priority: Dhan → NSE → TradingView");
   console.log("  Dhan credentials:", process.env.DHAN_CLIENT_ID ? "✅ Loaded from .env" : "⚠️  Not set (configure in .env or Broker Settings)");

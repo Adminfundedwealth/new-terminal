@@ -10,6 +10,7 @@ RUN rm -rf node_modules package-lock.json \
 
 COPY . .
 
-EXPOSE 4001 4002
+ENV NODE_ENV=production
+EXPOSE 4002
 
-CMD ["npm", "run", "dev", "--", "--host"]
+CMD ["node", "proxy-server.mjs"]
