@@ -3,7 +3,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useAccountContext, accountContextQueryKeys } from "@/hooks/useAccountContext";
 import { useAuth } from "@/hooks/useAuth";
-import { fetchAccountContext, fetchTerminalAccounts, setActiveAccount } from "@/lib/terminalApi";
+import { fetchAccountContext, fetchTerminalAccounts, setActiveAccount, subscribeToAccountContext } from "@/lib/terminalApi";
 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: vi.fn() }));
 vi.mock("@/lib/terminalApi", () => ({

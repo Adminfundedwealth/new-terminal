@@ -65,6 +65,25 @@ for (const [sym, id] of Object.entries(SYMBOL_TO_SECURITY_ID)) {
 
 export { SYMBOL_TO_SECURITY_ID, SECURITY_ID_TO_SYMBOL };
 
+export function resolveWebSocketUrl(url?: string): string {
+  const configuredUrl = url ?? (typeof import.meta !== "undefined" ? import.meta.env?.VITE_WS_URL : undefined);
+  if (configuredUrl && configuredUrl.trim()) {
+    const trimmed = configuredUrl.trim();
+    if (/^wss?:\/\//i.test(trimmed)) {
+      return trimmed.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
+    }
+    if (/^https?:\/\//i.test(trimmed)) {
+      return trimmed.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
+    }
+    return trimmed;
+  }
+
+  const hostname = typeof window !== "undefined" ? window.location.hostname : "localhost";
+  const protocol = typeof window !== "undefined" && window.location.protocol === "https:" ? "wss" : "ws";
+  const host = hostname === "localhost" || hostname === "127.0.0.1" ? `${hostname}:4002` : hostname;
+  return `${protocol}://${host}/ws`;
+}
+
 // ── WebSocket Client Class ──
 
 class MarketWebSocket {
@@ -87,7 +106,7 @@ class MarketWebSocket {
   private latestTickFingerprint = new Map<number, string>();
 
   constructor(url?: string) {
-    this.url = url || `ws://${window.location.hostname}:4002/ws`;
+    this.url = resolveWebSocketUrl(url);
   }
 
   /** Is an authenticated market-data upstream connected? */

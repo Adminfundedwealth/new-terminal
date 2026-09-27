@@ -6,9 +6,14 @@ const instrument = (overrides: Partial<Instrument>): Instrument => ({
   securityId: "1",
   symbol: "RELIANCE",
   tradingSymbol: "RELIANCE-EQ",
+  displayName: "RELIANCE",
+  exchange: "NSE",
   exchangeSegment: "NSE_EQ",
   instrumentType: "EQUITY",
   lotSize: 1,
+  tickSize: 0.05,
+  provider: "test",
+  providerInstrumentId: "1",
   ...overrides,
 });
 

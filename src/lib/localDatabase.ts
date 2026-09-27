@@ -1,4 +1,5 @@
 import { classifyInstrument, isProductionInstrument, type InstrumentCategory } from "./instrumentClassification";
+import { InstrumentMaster } from "./instrumentMaster";
 
 /**
  * Local Database — IndexedDB-based storage for offline market data
@@ -18,12 +19,18 @@ export interface Instrument {
   securityId: string;
   symbol: string;
   tradingSymbol: string;
+  displayName: string;
+  exchange: string;
   exchangeSegment: string;
   instrumentType: string;
   lotSize: number;
+  tickSize: number;
   expiryDate?: string;
   strikePrice?: number;
   optionType?: string;
+  underlyingSecurityId?: string;
+  provider: string;
+  providerInstrumentId: string;
 }
 
 export interface PriceSnapshot {
@@ -198,7 +205,27 @@ async function countItems(storeName: string): Promise<number> {
 // ── Public API ──
 
 // Instruments
-export const saveInstruments = (items: Instrument[]) => putItems("instruments", items);
+export async function saveInstruments(items: Instrument[]): Promise<void> {
+  const master = new InstrumentMaster();
+  const issues = master.addAll(items);
+  if (issues.length > 0) throw new Error(`Instrument master rejected ${issues.length} duplicate or conflicting row(s).`);
+  const existing = await getAllInstruments();
+  const existingById = new Map(existing.map((instrument) => [instrument.securityId, instrument]));
+  const existingBySymbol = new Map(existing.map((instrument) => [`${instrument.exchange}|${instrument.tradingSymbol.toUpperCase()}`, instrument]));
+  const toSave: Instrument[] = [];
+  for (const instrument of items) {
+    const byId = existingById.get(instrument.securityId);
+    if (byId) {
+      if (JSON.stringify(byId) !== JSON.stringify(instrument)) throw new Error(`Instrument ${instrument.securityId} conflicts with persisted metadata.`);
+      continue;
+    }
+    const symbolKey = `${instrument.exchange}|${instrument.tradingSymbol.toUpperCase()}`;
+    const bySymbol = existingBySymbol.get(symbolKey);
+    if (bySymbol && bySymbol.securityId !== instrument.securityId) throw new Error(`Exchange-symbol ${symbolKey} conflicts with persisted instrument ${bySymbol.securityId}.`);
+    toSave.push(instrument);
+  }
+  if (toSave.length > 0) await putItems("instruments", toSave);
+}
 export const getInstrument = (securityId: string) => getItem<Instrument>("instruments", securityId);
 export const getAllInstruments = () => getAllItems<Instrument>("instruments");
 export const getInstrumentsBySegment = (segment: string) => getItemsByIndex<Instrument>("instruments", "exchangeSegment", segment);
@@ -263,6 +290,14 @@ export async function findInstrumentsBySymbol(symbol: string): Promise<Instrumen
 
   const allInstruments = await getAllInstruments();
   return allInstruments.filter((instrument) => matchesInstrumentLookupSymbol(normalizedQuery, instrument));
+}
+
+export async function findInstrumentByExchangeSymbol(exchange: string, tradingSymbol: string): Promise<Instrument | undefined> {
+  const normalizedExchange = exchange.trim().toUpperCase();
+  const normalizedSymbol = tradingSymbol.trim().toUpperCase();
+  if (!normalizedExchange || !normalizedSymbol) return undefined;
+  const instruments = await getAllInstruments();
+  return instruments.find((instrument) => instrument.exchange.toUpperCase() === normalizedExchange && instrument.tradingSymbol.toUpperCase() === normalizedSymbol);
 }
 
 // Get all F&O stocks (unique equity symbols in NSE_FNO segment)

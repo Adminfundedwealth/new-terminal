@@ -378,6 +378,23 @@
     animation: page-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
+  /* Keep chart navigation inside the terminal viewport. */
+  main.dashboard-main:has(.chart-workspace) {
+    overflow: hidden;
+  }
+
+  html:has(.chart-workspace),
+  body:has(.chart-workspace),
+  #root:has(.chart-workspace) {
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .dashboard-shell:has(.chart-workspace) {
+    height: 100dvh;
+    min-height: 0;
+  }
+
   /* Skeleton shimmer effect */
   .skeleton-shimmer {
     position: relative;

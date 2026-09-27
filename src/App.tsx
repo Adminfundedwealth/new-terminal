@@ -24,6 +24,7 @@ const PositionTracker = lazy(() => import("./pages/PositionTracker"));
 const Calendar = lazy(() => import("./pages/Calendar"));
 const MarketNews = lazy(() => import("./pages/MarketNews"));
 const BrokerSettings = lazy(() => import("./pages/BrokerSettings"));
+const RuleCatalog = lazy(() => import("./pages/RuleCatalog"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 function ProtectedLayout() {
@@ -70,6 +71,7 @@ const App = () => (
             <Route path="/calendar" element={<PageSuspense><Calendar /></PageSuspense>} />
             <Route path="/market-news" element={<PageSuspense><MarketNews /></PageSuspense>} />
             <Route path="/broker-settings" element={<PageSuspense><BrokerSettings /></PageSuspense>} />
+            <Route path="/rules/catalog" element={<PageSuspense><RuleCatalog /></PageSuspense>} />
             </Route>
             <Route path="*" element={<Suspense fallback={null}><NotFound /></Suspense>} />
           </Routes>

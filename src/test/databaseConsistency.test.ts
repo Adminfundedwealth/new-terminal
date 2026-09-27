@@ -26,6 +26,7 @@ describe("canonical database consistency", () => {
       "account_phases",
       "rule_versions",
       "account_rule_assignments",
+      "rule_audit_log",
     ]) {
       expect((migrationSql.match(new RegExp(`create table(?: if not exists)? public\\.${table}\\b`, "g")) ?? [])).toHaveLength(1);
     }
@@ -78,5 +79,39 @@ describe("canonical database consistency", () => {
     expect(migrationSql).toContain("insert into public.terminal_activity");
     expect(migrationSql).toContain("'order_lifecycle_transitioned'");
     expect(migrationSql).toContain("grant execute on function public.transition_order_status(uuid, uuid, text, text) to authenticated");
+  });
+
+  it("extends the existing rule and risk control plane without duplicating canonical tables", () => {
+    expect(migrationSql).toContain("create or replace function public.manage_rule_configuration(request jsonb)");
+    expect(migrationSql).toContain("grant execute on function public.manage_rule_configuration(jsonb) to service_role");
+    expect(migrationSql).toContain("create table if not exists public.rule_audit_log");
+    expect(migrationSql).toContain("create or replace function public.evaluate_pre_trade_risk(request jsonb)");
+    expect(migrationSql).toContain("max_position_lots");
+    expect(migrationSql).toContain("weekend_trading_allowed");
+    expect(migrationSql).toContain("news_restrictions");
+    expect(migrationSql).toContain("max_leverage");
+    expect(migrationSql).toContain("consistency_max_daily_profit_percent");
+    expect(migrationSql).toContain("maximum_trading_days");
+    expect(migrationSql).toContain("create trigger executions_apply_canonical_position");
+    expect(migrationSql).toContain("create trigger positions_refresh_canonical_account_metrics");
+    expect(migrationSql).toContain("create or replace function public.expire_due_trading_accounts()");
+    expect(migrationSql).not.toContain("create table public.risk_rules");
+    expect(migrationSql).not.toContain("create table public.account_metrics");
+  });
+
+  it("includes the real fundedwealth plan and rule definitions in the canonical database", () => {
+    expect(migrationSql).toContain("'FLASH'");
+    expect(migrationSql).toContain("'INSTANT'");
+    expect(migrationSql).toContain("'1-STEP'");
+    expect(migrationSql).toContain("'2-STEP'");
+    expect(migrationSql).toContain("'duration_hours'");
+    expect(migrationSql).toContain("max_loss_per_trade_percent");
+    expect(migrationSql).toContain("daily_drawdown_percent");
+    expect(migrationSql).toContain("max_drawdown_percent");
+    expect(migrationSql).toContain("profit_split_percent");
+    expect(migrationSql).toContain("consistency_requirement_percent");
+    expect(migrationSql).toContain("payout_threshold_percent");
+    expect(migrationSql).toContain("max_risk_per_trade_percent");
+    expect(migrationSql).toContain("min_trading_days");
   });
 });

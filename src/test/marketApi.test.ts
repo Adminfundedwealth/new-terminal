@@ -1,5 +1,20 @@
-import { describe, it, expect } from "vitest";
-import { parseDhanOptionChain, parseNSEOptionChain, normalizeInstrumentMasterResponse } from "@/lib/marketApi";
+import { describe, it, expect, vi } from "vitest";
+import { fetchInstrumentMaster, fetchLiveOptionChain, normalizeKiteFnOStockQuotes, parseDhanOptionChain, parseNSEOptionChain, normalizeInstrumentMasterResponse } from "@/lib/marketApi";
+import { resolveAllowedOrigin } from "../../proxy-origin.mjs";
+
+describe("Kite option-chain provider policy", () => {
+  it("requires Kite OAuth and does not fall back to Dhan or NSE", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ authenticated: false }) });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await expect(fetchLiveOptionChain("NIFTY")).rejects.toThrow("Kite OAuth authentication is required");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(fetchMock.mock.calls[0][0])).toContain("/api/kite/status");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
 
 describe("parseDhanOptionChain", () => {
   it("returns empty chain for null/undefined input", () => {
@@ -160,5 +175,46 @@ describe("normalizeInstrumentMasterResponse", () => {
     expect(normalizeInstrumentMasterResponse([{ securityId: "27", symbol: "FINNIFTY" }])).toEqual([
       { securityId: "27", symbol: "FINNIFTY" },
     ]);
+  });
+});
+
+describe("normalizeKiteFnOStockQuotes", () => {
+  it("pairs Kite equity quotes to canonical provider tokens only for futures underlyings", () => {
+    const instruments = [
+      { securityId: "3329", providerInstrumentId: "3329", symbol: "ABB INDIA", tradingSymbol: "ABB", displayName: "ABB India", exchange: "NSE", exchangeSegment: "NSE_EQ", instrumentType: "EQUITY", lotSize: 1, tickSize: 0.05, provider: "zerodha" },
+      { securityId: "17513986", providerInstrumentId: "17513986", symbol: "ABB", tradingSymbol: "ABB26SEPFUT", displayName: "ABB", exchange: "NSE", exchangeSegment: "NSE_FNO", instrumentType: "FUTSTK", lotSize: 125, tickSize: 0.05, expiryDate: "2026-09-29", provider: "zerodha" },
+      { securityId: "738561", providerInstrumentId: "738561", symbol: "RELIANCE", tradingSymbol: "RELIANCE", displayName: "Reliance", exchange: "NSE", exchangeSegment: "NSE_EQ", instrumentType: "EQUITY", lotSize: 1, tickSize: 0.05, provider: "zerodha" },
+    ];
+    const quotes = [{ instrumentId: "3329", providerInstrumentId: "3329", symbol: "ABB", ltp: 7052.5, change: -76.5, changePercent: -1.07, timestamp: new Date().toISOString(), open: 7111, high: 7201.5, low: 7025, previousClose: 7129, volume: 1310, openInterest: 0 }];
+
+    expect(normalizeKiteFnOStockQuotes(instruments, quotes)).toEqual([
+      expect.objectContaining({ symbol: "ABB", ltp: 7052.5, open: 7111, high: 7201.5, low: 7025, previousClose: 7129, volume: 1310 }),
+    ]);
+  });
+});
+
+describe("fetchInstrumentMaster provider priority", () => {
+  it("uses the authenticated Kite instrument master before attempting Dhan", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/api/kite/status")) return Promise.resolve(new Response(JSON.stringify({ authenticated: true }), { status: 200 }));
+      if (url.includes("/api/kite-proxy")) {
+        return Promise.resolve(new Response(JSON.stringify({ status: "success", data: [{ name: "ABB INDIA", tradingsymbol: "ABB", instrument_token: "3329", segment: "NSE", exchange: "NSE", instrument_type: "EQ", lot_size: "1", tick_size: "0.5" }] }), { status: 200 }));
+      }
+      throw new Error(`Unexpected provider request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchInstrumentMaster();
+
+    expect(result.instruments).toEqual([expect.objectContaining({ securityId: "3329", provider: "zerodha", tradingSymbol: "ABB" })]);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("dhan-proxy"))).toBe(false);
+  });
+});
+
+describe("proxy CORS allowlist", () => {
+  it("allows the live app origin and localhost variants while rejecting unrelated origins", () => {
+    expect(resolveAllowedOrigin("http://127.0.0.1:4001")).toBe("http://127.0.0.1:4001");
+    expect(resolveAllowedOrigin("http://localhost:4001")).toBe("http://localhost:4001");
+    expect(resolveAllowedOrigin("https://app.example.com")).toBeUndefined();
   });
 });

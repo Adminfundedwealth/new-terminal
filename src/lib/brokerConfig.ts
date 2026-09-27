@@ -52,7 +52,7 @@ export const BROKERS: BrokerInfo[] = [
     name: "Zerodha (Kite)",
     logo: "🔴",
     color: "hsl(0 84% 60%)",
-    description: "Configuration only: Kite Connect credentials are collected, but no runtime adapter is available in this terminal.",
+    description: "Kite Connect adapter for authenticated quote snapshots, historical candles, instrument lookup, and option chains built from market quotes.",
     docsUrl: "https://kite.trade/docs/connect/v3/",
     features: ["Option Chain", "Live Quotes", "WebSocket Streaming", "Historical Data"],
     fields: [

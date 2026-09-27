@@ -54,6 +54,117 @@ describe("ExecutionService", () => {
     expect(result.reasonCode).toBe("IDEMPOTENCY_KEY_CONFLICT");
   });
 
+  it("uses the canonical risk gate even in simulated trading mode", async () => {
+    const service = new ExecutionService(createBrokerRouter([]), {
+      mode: "SIMULATED",
+      riskRules: {
+        trading_permission: true,
+        allowed_segments: ["NSE"],
+        allowed_instruments: ["NIFTY"],
+        trading_hours: [{ start: "09:15", end: "15:30" }],
+        overnight_allowed: false,
+        daily_loss_limit: 200,
+        maximum_drawdown: 1000,
+        max_open_positions: 5,
+        max_position_quantity: 10,
+        max_daily_trades: 20,
+        risk_per_trade: 500,
+        margin_requirement: 500,
+        stale_market_policy: "reject",
+      },
+      riskState: {
+        status: "active",
+        risk_state: "ACTIVE",
+        initial_balance: 10000,
+        starting_balance: 10000,
+        current_balance: 10000,
+        current_equity: 9000,
+        daily_starting_equity: 10000,
+        realized_pnl_today: 0,
+        unrealized_pnl_today: 0,
+        daily_trade_count: 0,
+        open_positions: [],
+        market_data_fresh: true,
+      },
+    });
+
+    const result = await service.placeOrder({
+      accountId: "acct-1",
+      brokerId: "dhan",
+      symbol: "NIFTY",
+      exchange: "NSE",
+      side: "BUY",
+      quantity: 2,
+      orderType: "MARKET",
+      idempotencyKey: "sim-risk-1",
+      now: new Date("2026-09-22T10:00:00.000Z"),
+    });
+
+    expect(result.state).toBe("REJECTED");
+    expect(result.reasonCode).toBe("DRAWDOWN_EXCEEDED");
+  });
+
+  it("emits a canonical risk event from the authoritative risk decision path", async () => {
+    const emitted: Array<{ accountId: string; reasonCode: string | null; riskEvent?: { accountId: string; eventType: string; metricName: string | null; metricValue: number | string | null; source: string } }> = [];
+    const service = new ExecutionService(createBrokerRouter([]), {
+      mode: "SIMULATED",
+      riskRules: {
+        trading_permission: true,
+        allowed_segments: ["NSE"],
+        allowed_instruments: ["NIFTY"],
+        trading_hours: [{ start: "09:15", end: "15:30" }],
+        overnight_allowed: false,
+        daily_loss_limit: 200,
+        maximum_drawdown: 1000,
+        max_open_positions: 5,
+        max_position_quantity: 10,
+        max_daily_trades: 20,
+        risk_per_trade: 500,
+        margin_requirement: 500,
+        stale_market_policy: "reject",
+      },
+      riskState: {
+        status: "active",
+        risk_state: "ACTIVE",
+        initial_balance: 10000,
+        starting_balance: 10000,
+        current_balance: 10000,
+        current_equity: 9000,
+        daily_starting_equity: 10000,
+        realized_pnl_today: 0,
+        unrealized_pnl_today: 0,
+        daily_trade_count: 0,
+        open_positions: [],
+        market_data_fresh: true,
+      },
+      onRiskEvent: (event) => emitted.push(event as typeof emitted[number]),
+    });
+
+    const result = await service.placeOrder({
+      accountId: "acct-1",
+      brokerId: "dhan",
+      symbol: "NIFTY",
+      exchange: "NSE",
+      side: "BUY",
+      quantity: 2,
+      orderType: "MARKET",
+      idempotencyKey: "risk-event-1",
+      now: new Date("2026-09-22T10:00:00.000Z"),
+    });
+
+    expect(result.state).toBe("REJECTED");
+    expect(result.reasonCode).toBe("DRAWDOWN_EXCEEDED");
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].accountId).toBe("acct-1");
+    expect(emitted[0].reasonCode).toBe("DRAWDOWN_EXCEEDED");
+    expect(emitted[0].riskEvent).toMatchObject({
+      accountId: "acct-1",
+      eventType: "MAX_DRAWDOWN_BREACH",
+      metricName: "maximum_drawdown",
+      source: "execution_service",
+    });
+  });
+
   it("serializes concurrent duplicate requests and submits to the broker once", async () => {
     const runtime = createMockBrokerRuntime({ calls: [] });
     const originalPlace = runtime.placeBrokerOrder;

@@ -1,5 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { parseColumnarCandles } from "@/hooks/useChartData";
+import { KITE_INDEX_TOKEN_MAP, parseColumnarCandles, resolveKiteHistoricalToken } from "@/hooks/useChartData";
+
+describe("Kite index historical instrument mapping", () => {
+  it("uses verified Kite spot-index tokens rather than the Dhan token map", () => {
+    expect(KITE_INDEX_TOKEN_MAP).toEqual({ NIFTY: "256265", BANKNIFTY: "260105", FINNIFTY: "257801" });
+  });
+
+  it("prioritizes the selected derivative contract token over the symbol mapping", () => {
+    expect(resolveKiteHistoricalToken("NIFTY", "991234")).toBe("991234");
+  });
+});
 
 describe("parseColumnarCandles", () => {
   it("returns empty array for null/undefined/malformed input", () => {

@@ -18,6 +18,12 @@ interface StockChartProps {
   inline?: boolean;
   /** Initial height in pixels */
   height?: number;
+  /** Fill the available inline container height. */
+  fill?: boolean;
+  /** Force the existing candlestick rendering for a workspace tab. */
+  candleOnly?: boolean;
+  /** Kite token for a selected derivative contract. */
+  instrumentToken?: string;
   /** If provided, renders as a Sheet (drawer) */
   asSheet?: boolean;
   open?: boolean;
@@ -27,15 +33,21 @@ interface StockChartProps {
 function ChartCore({
   symbol,
   height = 340,
+  fill = false,
+  candleOnly = false,
+  instrumentToken,
 }: {
   symbol: string;
   height?: number;
+  fill?: boolean;
+  candleOnly?: boolean;
+  instrumentToken?: string;
 }) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const [range, setRange] = useState<TimeRange>("3M");
   const [chartType, setChartType] = useState<"candle" | "line">("candle");
-  const { data: candles, isLoading, error } = useChartData(symbol, range);
+  const { data: candles, isLoading, error } = useChartData(symbol, range, true, instrumentToken);
   const isDark = useIsDark();
 
   const buildChart = useCallback(() => {
@@ -54,7 +66,7 @@ function ChartCore({
 
     const chart = createChart(container, {
       width: container.clientWidth,
-      height,
+      height: fill ? container.clientHeight : height,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
         textColor: colors.text,
@@ -95,7 +107,9 @@ function ChartCore({
       close: c.close,
     }));
 
-    if (chartType === "candle") {
+    const renderedChartType = candleOnly ? "candle" : chartType;
+
+    if (renderedChartType === "candle") {
       const candleSeries = chart.addSeries(CandlestickSeries, {
         upColor: colors.bullish,
         downColor: colors.bearish,
@@ -146,8 +160,8 @@ function ChartCore({
 
     // Resize handler
     const resizeObserver = new ResizeObserver((entries) => {
-      const { width: w } = entries[0].contentRect;
-      chart.applyOptions({ width: w });
+      const { width: w, height: h } = entries[0].contentRect;
+      chart.applyOptions({ width: w, height: fill ? h : height });
     });
     resizeObserver.observe(container);
 
@@ -156,7 +170,7 @@ function ChartCore({
       chart.remove();
       chartRef.current = null;
     };
-  }, [candles, height, chartType, range, isDark]);
+  }, [candles, height, fill, candleOnly, chartType, range, isDark]);
 
   useEffect(() => {
     const cleanup = buildChart();
@@ -171,7 +185,7 @@ function ChartCore({
       : 0;
 
   return (
-    <div className="space-y-2">
+    <div className={fill ? "flex h-full min-h-0 flex-col space-y-2" : "space-y-2"}>
       {/* Controls */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
@@ -194,8 +208,8 @@ function ChartCore({
 
           <ToggleGroup
             type="single"
-            value={chartType}
-            onValueChange={(v) => v && setChartType(v as "candle" | "line")}
+            value={candleOnly ? "candle" : chartType}
+            onValueChange={(v) => v && !candleOnly && setChartType(v as "candle" | "line")}
             className="bg-muted rounded-md p-0.5"
           >
             <ToggleGroupItem value="candle" className="h-6 w-7 p-0 data-[state=on]:bg-background data-[state=on]:shadow-sm rounded">
@@ -227,7 +241,7 @@ function ChartCore({
       </div>
 
       {/* Chart Container */}
-      <div className="relative">
+      <div className={fill ? "relative min-h-0 flex flex-1 flex-col" : "relative"}>
         {isLoading && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60 backdrop-blur-sm rounded-lg">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -241,7 +255,7 @@ function ChartCore({
             Chart data unavailable. Start the proxy server for live data.
           </div>
         )}
-        <div ref={chartContainerRef} className="w-full rounded-lg overflow-hidden" />
+        <div ref={chartContainerRef} className={`w-full rounded-lg overflow-hidden ${fill ? "min-h-0 flex-1" : ""}`} />
         {candles && candles.length === 0 && !isLoading && (
           <div className="flex items-center justify-center h-[200px] text-sm text-muted-foreground">
             No historical data available for {symbol}
@@ -260,6 +274,9 @@ export function StockChart({
   symbol,
   inline = false,
   height = 340,
+  fill = false,
+  candleOnly = false,
+  instrumentToken,
   asSheet = false,
   open = false,
   onOpenChange,
@@ -275,7 +292,7 @@ export function StockChart({
             </SheetTitle>
           </SheetHeader>
           <div className="mt-3">
-            <ChartCore symbol={symbol} height={380} />
+            <ChartCore symbol={symbol} height={380} instrumentToken={instrumentToken} />
           </div>
         </SheetContent>
       </Sheet>
@@ -283,7 +300,7 @@ export function StockChart({
   }
 
   if (inline) {
-    return <ChartCore symbol={symbol} height={height} />;
+    return <ChartCore symbol={symbol} height={height} fill={fill} candleOnly={candleOnly} instrumentToken={instrumentToken} />;
   }
 
   return (
@@ -295,7 +312,7 @@ export function StockChart({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <ChartCore symbol={symbol} height={height} />
+        <ChartCore symbol={symbol} height={height} instrumentToken={instrumentToken} />
       </CardContent>
     </Card>
   );

@@ -114,6 +114,33 @@ describe("authoritative cancel and modify lifecycle", () => {
     expect(result.order.price).toBe(21950);
   });
 
+  it("preserves independent protection updates and supports explicit removal", async () => {
+    const result = await modifyOrder({
+      order: makeOrder({ stopLoss: 21000, takeProfit: 23000 }),
+      authUserId: "user-1",
+      accountId: "acct-1",
+      updates: { stopLoss: 21200 },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.order.stopLoss).toBe(21200);
+      expect(result.order.takeProfit).toBe(23000);
+    }
+
+    const removed = await modifyOrder({
+      order: result.ok ? result.order : makeOrder({ stopLoss: 21000, takeProfit: 23000 }),
+      authUserId: "user-1",
+      accountId: "acct-1",
+      updates: { stopLoss: null },
+    });
+    expect(removed.ok).toBe(true);
+    if (removed.ok) {
+      expect(removed.order.stopLoss).toBeNull();
+      expect(removed.order.takeProfit).toBe(23000);
+    }
+  });
+
   it("rejects ownership bypass and invalid modification payloads", async () => {
     await expect(modifyOrder({ order: makeOrder(), authUserId: "user-2", accountId: "acct-1", updates: { quantity: 10 } })).resolves.toMatchObject({ ok: false });
     await expect(modifyOrder({ order: makeOrder(), authUserId: "user-1", accountId: "acct-1", updates: { symbol: "BANKNIFTY" } as any })).resolves.toMatchObject({ ok: false });

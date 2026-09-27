@@ -1,4 +1,4 @@
-import { BarChart3, Briefcase, CalendarDays, CandlestickChart, LayoutDashboard, Layers, Moon, Newspaper, Settings, Star, Sun, TableProperties, TrendingUp } from "lucide-react";
+import { BarChart3, Briefcase, CalendarDays, CandlestickChart, LayoutDashboard, Layers, ListChecks, Moon, Newspaper, Settings, Star, Sun, TableProperties, TrendingUp } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import {
   Sidebar,
@@ -35,6 +35,7 @@ const tradingItems = [
 ];
 
 const settingItems = [
+  { title: "Rule Catalog", url: "/rules/catalog", icon: ListChecks },
   { title: "Broker API Keys", url: "/broker-settings", icon: Settings },
 ];
 

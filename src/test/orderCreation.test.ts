@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createTerminalOrder } from "@/lib/terminalApi";
+
+const { rpcMock } = vi.hoisted(() => ({ rpcMock: vi.fn() }));
+vi.mock("@/integrations/supabase/client", () => ({
+  supabase: { rpc: rpcMock },
+  SUPABASE_CONFIGURED: true,
+}));
 
 const migration = readFileSync(
   resolve(process.cwd(), "supabase/migrations/20260924000300_task12_order_creation.sql"),
@@ -8,6 +15,10 @@ const migration = readFileSync(
 );
 const normalizationMigration = readFileSync(
   resolve(process.cwd(), "supabase/migrations/20260924000100_task9_order_normalization.sql"),
+  "utf8",
+);
+const simulatedDerivativeMigration = readFileSync(
+  resolve(process.cwd(), "supabase/migrations/20260927000100_simulated_kite_derivative_flow.sql"),
   "utf8",
 );
 
@@ -42,5 +53,65 @@ describe("Task 12 authoritative order creation contract", () => {
   it("exposes the RPC only to authenticated callers", () => {
     expect(migration).toContain("revoke all on function public.create_order(jsonb) from public, anon");
     expect(migration).toContain("grant execute on function public.create_order(jsonb) to authenticated");
+  });
+});
+
+describe("simulated Kite derivative order contract", () => {
+  it("registers Kite contracts and executes only for an active simulated account", () => {
+    expect(simulatedDerivativeMigration).toContain("create or replace function public.create_simulated_kite_order(request jsonb)");
+    expect(simulatedDerivativeMigration).toContain("upper(coalesce(account_row.account_type, '')) <> 'SIMULATED'");
+    expect(simulatedDerivativeMigration).toContain("lower(coalesce(instrument_value->>'provider', '')) <> 'zerodha'");
+    expect(simulatedDerivativeMigration).toContain("insert into public.instruments");
+    expect(simulatedDerivativeMigration).toContain("insert into public.executions");
+    expect(simulatedDerivativeMigration).toContain("insert into public.positions");
+    expect(simulatedDerivativeMigration).toContain("'SIM-' || order_id_value::text");
+    expect(simulatedDerivativeMigration).not.toContain("placeBrokerOrder");
+  });
+
+  it("exposes owner-scoped Terminal OS reads only to authenticated callers", () => {
+    expect(simulatedDerivativeMigration).toContain("where owner_user_id = auth.uid()");
+    expect(simulatedDerivativeMigration).toContain("grant execute on function public.get_terminal_orders(uuid) to authenticated");
+    expect(simulatedDerivativeMigration).toContain("grant execute on function public.get_terminal_executions(uuid) to authenticated");
+    expect(simulatedDerivativeMigration).toContain("grant execute on function public.get_terminal_positions(uuid) to authenticated");
+    expect(simulatedDerivativeMigration).toContain("revoke all on function public.create_simulated_kite_order(jsonb) from public, anon");
+  });
+});
+
+describe("Kite derivative order routing", () => {
+  beforeEach(() => rpcMock.mockReset());
+
+  it("sends NRML Kite derivatives only to the simulated RPC", async () => {
+    rpcMock.mockResolvedValue({ data: { ok: true, order: { id: "canonical-order" } }, error: null });
+    const request = {
+      account_id: "sim-account",
+      symbol: "NIFTY26SEP23150CE",
+      exchange: "NSE",
+      segment: "NSE_FNO",
+      side: "BUY" as const,
+      quantity: 65,
+      order_type: "MARKET" as const,
+      price: 119.25,
+      product: "NRML" as const,
+      instrument: {
+        securityId: "18920450",
+        providerInstrumentId: "18920450",
+        symbol: "NIFTY",
+        tradingSymbol: "NIFTY26SEP23150CE",
+        displayName: "NIFTY 23,150 CE",
+        exchange: "NSE",
+        exchangeSegment: "NSE_FNO",
+        instrumentType: "OPTIDX",
+        lotSize: 65,
+        tickSize: 0.05,
+        expiryDate: "2026-09-29",
+        strikePrice: 23150,
+        optionType: "CE",
+        provider: "zerodha",
+      },
+    };
+
+    await createTerminalOrder(request);
+
+    expect(rpcMock).toHaveBeenCalledExactlyOnceWith("create_simulated_kite_order", { request });
   });
 });

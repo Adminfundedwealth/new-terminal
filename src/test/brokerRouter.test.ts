@@ -61,6 +61,43 @@ describe("broker router", () => {
     expect(result.data?.change).toBe(10);
   });
 
+  it("normalizes exchange-qualified Kite futures quotes by canonical provider token", async () => {
+    const adapter = new ZerodhaAdapter({ brokerId: "zerodha", values: { apiKey: "key", accessToken: "token" }, addedAt: "", isActive: true });
+    vi.spyOn(adapter, "getInstruments").mockResolvedValue({
+      provider: "zerodha",
+      capability: "instruments",
+      state: "not_verified",
+      data: [{ securityId: "12345", providerInstrumentId: "12345", symbol: "ABB", tradingSymbol: "ABB26SEP26FUT", displayName: "ABB26SEP26FUT", exchange: "NSE", exchangeSegment: "NFO", instrumentType: "FUTSTK", lotSize: 125, tickSize: 0.05, provider: "zerodha" }],
+    });
+    vi.spyOn(adapter as any, "request").mockResolvedValue({
+      status: "success",
+      data: { "NFO:ABB26SEP26FUT": { last_price: 7050, timestamp: new Date().toISOString(), volume: 1200, oi: 8400, ohlc: { open: 7000, high: 7100, low: 6950, close: 7025 } } },
+    });
+
+    const result = await adapter.getQuotes(["NFO:ABB26SEP26FUT"]);
+
+    expect(result.data).toHaveLength(1);
+    expect(result.data?.[0]).toMatchObject({ instrumentId: "12345", providerInstrumentId: "12345", ltp: 7050, change: 25, open: 7000, high: 7100, low: 6950, volume: 1200, openInterest: 8400 });
+  });
+
+  it("maps Kite index and futures master rows to canonical segments and tokens", async () => {
+    const adapter = new ZerodhaAdapter({ brokerId: "zerodha", values: { apiKey: "index-master-test", accessToken: "token" }, addedAt: "", isActive: true });
+    vi.spyOn(adapter as any, "request").mockResolvedValue({
+      status: "success",
+      data: [
+        { name: "NIFTY 50", tradingsymbol: "NIFTY 50", instrument_token: "256265", segment: "INDICES", instrument_type: "INDEX", lot_size: "1", tick_size: "0.05", exchange: "NSE" },
+        { name: "ABB", tradingsymbol: "ABB26SEP26FUT", instrument_token: "12345", segment: "NFO", instrument_type: "FUT", expiry: "2026-09-24", lot_size: "125", tick_size: "0.05", exchange: "NFO" },
+      ],
+    });
+
+    const result = await adapter.getInstruments();
+
+    expect(result.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({ securityId: "256265", providerInstrumentId: "256265", exchangeSegment: "IDX_I", instrumentType: "INDEX" }),
+      expect.objectContaining({ securityId: "12345", providerInstrumentId: "12345", exchangeSegment: "NSE_FNO", instrumentType: "FUTSTK" }),
+    ]));
+  });
+
   it("normalizes Kite order history and exposes option-chain construction", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: "success", data: [{ order_id: "1", tradingsymbol: "INFY", exchange: "NSE", transaction_type: "BUY", quantity: 1, filled_quantity: 0, status: "OPEN", average_price: 0 }] }), { status: 200 })));
     const adapter = new ZerodhaAdapter({ brokerId: "zerodha", values: { apiKey: "key", accessToken: "token" }, addedAt: "", isActive: true });
@@ -84,7 +121,22 @@ describe("broker router", () => {
     const requestCalls: Array<{ endpoint: string; params: Record<string, string> }> = [];
     class BatchTestAdapter extends ZerodhaAdapter {
       override async getInstruments() {
-        return { provider: "zerodha" as const, capability: "instruments" as const, state: "not_verified" as const, data: instruments.map((item) => ({ symbol: item.name, tradingSymbol: item.tradingsymbol, securityId: item.instrument_token, exchangeSegment: "NFO", instrumentType: item.instrument_type === "CE" || item.instrument_type === "PE" ? "OPTIDX" : item.instrument_type, lotSize: Number(item.lot_size), expiryDate: item.expiry, strikePrice: Number(item.strike), optionType: item.instrument_type })) };
+        return { provider: "zerodha" as const, capability: "instruments" as const, state: "not_verified" as const, data: instruments.map((item) => ({
+          symbol: item.name,
+          tradingSymbol: item.tradingsymbol,
+          securityId: item.instrument_token,
+          displayName: item.tradingsymbol,
+          exchange: "NFO",
+          exchangeSegment: "NFO",
+          instrumentType: item.instrument_type === "CE" || item.instrument_type === "PE" ? "OPTIDX" : item.instrument_type,
+          lotSize: Number(item.lot_size),
+          tickSize: 0.05,
+          expiryDate: item.expiry,
+          strikePrice: Number(item.strike),
+          optionType: item.instrument_type,
+          provider: "zerodha",
+          providerInstrumentId: item.instrument_token,
+        })) };
       }
     }
     const adapter = new BatchTestAdapter({ brokerId: "zerodha", values: { apiKey: "batch-test", accessToken: "token" }, addedAt: "", isActive: true });

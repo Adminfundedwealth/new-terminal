@@ -13,7 +13,7 @@ import {
   type BrokerCapabilities,
   type BrokerId,
 } from "./brokerAdapter";
-import { fetchDhanQuote, fetchHistoricalCandles, fetchInstrumentMaster, fetchLiveOptionChain, testDhanConnection } from "./marketApi";
+import { fetchDhanQuote, fetchHistoricalCandles, fetchInstrumentMaster, testDhanConnection } from "./marketApi";
 import { marketWS } from "./websocketClient";
 import { ZerodhaAdapter } from "./zerodhaAdapter";
 import { AngelOneAdapter } from "./angelOneAdapter";
@@ -72,24 +72,12 @@ export class DhanAdapter extends BaseBrokerAdapter {
     return { provider: this.id, capability: "historical", state: "not_verified", data: candles };
   }
 
-  async getOptionChain(symbol: string, expiry?: string): Promise<BrokerResult<NormalizedOptionChain>> {
-    const response = await fetchLiveOptionChain(symbol, expiry);
+  async getOptionChain(_symbol: string, _expiry?: string): Promise<BrokerResult<NormalizedOptionChain>> {
     return {
       provider: this.id,
       capability: "optionChain",
-      state: response.source === "dhan" ? "not_verified" : "not_supported",
-      data: {
-        symbol,
-        spotPrice: response.spotPrice,
-        expiries: response.expiries.map((item) => item.value),
-        chain: response.chain,
-        totalCEOI: response.totalCEOI,
-        totalPEOI: response.totalPEOI,
-        afterHours: response.afterHours,
-        cachedAt: response.cachedAt,
-        oiChangeAvailable: response.chain.some((row) => row.ce.oiChange !== 0 || row.pe.oiChange !== 0),
-      },
-      message: response.source === "dhan" ? "Dhan response received; runtime authentication is not verified." : "Response came from a non-Dhan fallback.",
+      state: "not_supported",
+      message: "Live option chains require the authenticated Kite provider.",
     };
   }
 
@@ -177,7 +165,7 @@ export const brokerRouter = createBrokerRouter();
 export async function getPreferredMarketAdapter(): Promise<BrokerAdapter | null> {
   if (typeof window !== "undefined") {
     try {
-      const proxyBase = import.meta.env.VITE_PROXY_URL || "http://localhost:4002";
+      const proxyBase = import.meta.env.VITE_PROXY_URL || "";
       const response = await fetch(`${proxyBase}/api/kite/status`, { credentials: "include" });
       const status = await response.json() as { authenticated?: boolean };
       if (status.authenticated) return brokerRouter.getAdapter("zerodha");

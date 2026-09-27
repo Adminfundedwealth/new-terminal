@@ -21,7 +21,6 @@ import { SectorHeatmap } from "@/components/dashboard/SectorHeatmap";
 import { MostActiveFnO } from "@/components/dashboard/MostActiveFnO";
 import { MarketBreadth } from "@/components/dashboard/MarketBreadth";
 import { SectionHeader } from "@/components/dashboard/SectionHeader";
-import { TerminalAccountData } from "@/components/TerminalAccountData";
 
 const EXPIRY_CONTRACTS = [
   { symbol: "NIFTY", exchange: "NSE", lotSize: 25, type: "Weekly" },
@@ -94,7 +93,6 @@ export default function Index() {
         {/* ═══ WELCOME + HEADER ═══ */}
         <MarketHeader isLive={isLive} isOpen={isOpen} marketStatus={marketStatus} />
         <WelcomeBanner />
-        <TerminalAccountData />
 
         {/* ═══ TICKER TAPE ═══ */}
         <TickerTape indices={indices} giftNifty={giftNifty} />

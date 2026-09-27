@@ -30,12 +30,40 @@ export class ExecutionLedger {
 
   getOrder(orderId: string): CanonicalOrder | null { return this.orders.get(orderId) ?? null; }
 
+  getOrders(): CanonicalOrder[] { return [...this.orders.values()].map((order) => ({ ...order })); }
+
   getExecutions(orderId?: string): CanonicalExecution[] {
     return [...this.executions.values()].filter((execution) => !orderId || execution.orderId === orderId);
   }
 
   getCumulativeQuantity(orderId: string): number {
     return Number(this.getExecutions(orderId).reduce((total, execution) => total + execution.quantity, 0).toFixed(8));
+  }
+
+  restore(orders: CanonicalOrder[], executions: CanonicalExecution[]): void {
+    this.orders.clear();
+    this.executions.clear();
+    this.externalIds.clear();
+    for (const order of orders) this.registerOrder(order);
+    for (const execution of executions) {
+      const normalized = normalizeExecution({
+        ...execution,
+        authUserId: execution.ownerUserId,
+      });
+      const order = this.orders.get(normalized.orderId);
+      if (!order || order.accountId !== normalized.accountId || order.ownerUserId !== normalized.ownerUserId) {
+        throw new ExecutionValidationError("UNAUTHORIZED_EXECUTION", "Persisted execution does not belong to its canonical order");
+      }
+      const externalKey = normalized.externalExecutionId ? `${normalized.accountId}:${normalized.externalExecutionId.toUpperCase()}` : null;
+      const existingId = this.executions.has(normalized.id) ? normalized.id : externalKey ? this.externalIds.get(externalKey) : undefined;
+      if (existingId) {
+        const existing = this.executions.get(existingId);
+        if (existing && sameExecution(existing, normalized)) continue;
+        throw new ExecutionValidationError("DUPLICATE_EXECUTION", "Persisted execution identifiers are inconsistent");
+      }
+      this.executions.set(normalized.id, normalized);
+      if (externalKey) this.externalIds.set(externalKey, normalized.id);
+    }
   }
 
   recordExecution(input: ExecutionInput): RecordedExecution {

@@ -190,12 +190,13 @@ interface LiveOptionChainState {
   afterHours: boolean;
   source: string;
   cachedAt: string | number | null;
+  greeksAvailable?: boolean;
   oiChangeAvailable?: boolean;
   errorMessage?: string | null;
   unsupported?: boolean;
 }
 
-export function useLiveOptionChain(symbol: string, expiry?: string) {
+export function useLiveOptionChain(symbol: string, expiry?: string, enabled = true) {
   return useQuery<LiveOptionChainState | null>({
     queryKey: ["live-option-chain", symbol, expiry],
     queryFn: async () => {
@@ -219,6 +220,8 @@ export function useLiveOptionChain(symbol: string, expiry?: string) {
                 isLive: hasChainData && !isAfterHours, afterHours: isAfterHours,
                 source: result.source || "live",
                 cachedAt: (result as any).cachedAt || null,
+                greeksAvailable: result.greeksAvailable,
+                oiChangeAvailable: result.oiChangeAvailable,
               };
             }
           }
@@ -226,6 +229,7 @@ export function useLiveOptionChain(symbol: string, expiry?: string) {
       }
       return null;
     },
+    enabled: enabled && !!symbol,
     refetchInterval: (query) => {
       const data = query.state.data;
       if (data?.isLive) return 3000;         // Live: 3s refresh

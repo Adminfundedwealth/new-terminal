@@ -15,6 +15,7 @@ export type SlTpReasonCode =
   | "MARKET_DATA_UNAVAILABLE"
   | "ACCOUNT_NOT_ACTIVE"
   | "TRADING_PERMISSION_DISABLED"
+  | "INVALID_ORDER_STATE"
   | "INVALID_PROTECTION";
 
 export interface SlTpAccountContext {
@@ -27,21 +28,26 @@ export interface SlTpAccountContext {
 export interface PositionSnapshot {
   accountId: string;
   ownerUserId: string;
+  instrumentId?: string | null;
   symbol: string;
   side: ProtectionSide;
   quantity: number;
   price: number;
   currentPrice: number;
+  status?: "OPEN" | "CLOSED";
+  tickSize?: number;
 }
 
 export interface ProtectionRequest {
   accountId: string;
   ownerUserId: string;
+  instrumentId?: string | null;
   symbol: string;
   side: ProtectionSide;
   type: ProtectionType;
   quantity: number;
   price: number;
+  idempotencyKey?: string;
 }
 
 export interface ProtectionRecord {
@@ -56,6 +62,8 @@ export interface ProtectionRecord {
   createdAt: string;
   updatedAt: string;
   status: SlTpStatus;
+  brokerOrderId?: string | null;
+  idempotencyKey?: string | null;
   triggeredAt?: string | null;
 }
 
@@ -137,11 +145,17 @@ export class SlTpEngine {
     if (!this.position) {
       return this.reject(request, "NO_POSITION", "No position is available for protection", timestamp);
     }
+    if (this.position.status === "CLOSED" || this.position.quantity <= 0) {
+      return this.reject(request, "NO_POSITION", "Closed positions cannot be protected", timestamp);
+    }
     if (this.position.accountId !== request.accountId || this.position.ownerUserId !== request.ownerUserId) {
       return this.reject(request, "UNAUTHORIZED_POSITION", "Position does not belong to the requesting account owner", timestamp);
     }
     if (request.symbol !== this.position.symbol) {
       return this.reject(request, "NO_POSITION", "Protection symbol does not match the open position", timestamp);
+    }
+    if (request.instrumentId != null && this.position.instrumentId != null && request.instrumentId !== this.position.instrumentId) {
+      return this.reject(request, "NO_POSITION", "Protection instrument does not match the open position", timestamp);
     }
     if (this.position.side !== request.side) {
       return this.reject(request, "INVALID_SIDE", "Protection side does not match the current position side", timestamp);
@@ -154,6 +168,9 @@ export class SlTpEngine {
     }
     if (!Number.isFinite(request.price) || request.price <= 0) {
       return this.reject(request, "INVALID_PRICE", "Protection price must be a valid positive number", timestamp);
+    }
+    if (this.position.tickSize != null && (!Number.isFinite(this.position.tickSize) || this.position.tickSize <= 0 || Math.abs((request.price / this.position.tickSize) - Math.round(request.price / this.position.tickSize)) > 1e-8)) {
+      return this.reject(request, "INVALID_PRICE", "Protection price does not match the instrument tick size", timestamp);
     }
     if (request.type === "STOP_LOSS" && request.side === "LONG" && request.price >= this.position.price) {
       return this.reject(request, "INVALID_STOP_PRICE", "Long stop loss must be below the entry price", timestamp);
@@ -168,6 +185,15 @@ export class SlTpEngine {
       return this.reject(request, "INVALID_TARGET_PRICE", "Short take profit must be below the entry price", timestamp);
     }
 
+    const existing = [...this.protections.values()].find((protection) => protection.type === request.type && protection.status === "ACTIVE" && protection.symbol === request.symbol);
+    if (request.idempotencyKey && existing?.idempotencyKey === request.idempotencyKey && existing.price === request.price && existing.quantity === request.quantity) {
+      return { decision: "ALLOW", reasonCode: null, reason: `${request.type} protection request replayed`, protection: { ...existing }, timestamp };
+    }
+    const sibling = [...this.protections.values()].find((protection) => protection.type !== request.type && protection.status === "ACTIVE" && protection.symbol === request.symbol);
+    if (sibling && ((request.side === "LONG" && request.type === "STOP_LOSS" && request.price >= sibling.price) || (request.side === "LONG" && request.type === "TAKE_PROFIT" && request.price <= sibling.price) || (request.side === "SHORT" && request.type === "STOP_LOSS" && request.price <= sibling.price) || (request.side === "SHORT" && request.type === "TAKE_PROFIT" && request.price >= sibling.price))) {
+      return this.reject(request, "INVALID_PROTECTION", "Stop loss and take profit levels cross", timestamp);
+    }
+
     const protection: ProtectionRecord = {
       id: `sltp:${request.accountId}:${request.symbol}:${request.type}:${Date.now()}`,
       accountId: request.accountId,
@@ -180,6 +206,8 @@ export class SlTpEngine {
       createdAt: timestamp,
       updatedAt: timestamp,
       status: "ACTIVE",
+      brokerOrderId: null,
+      idempotencyKey: request.idempotencyKey ?? null,
       triggeredAt: null,
     };
     this.protections.set(protection.id, protection);
@@ -193,11 +221,26 @@ export class SlTpEngine {
     }
     if (this.account.status === "LOCKED") return { decision: "REJECT", reasonCode: "ACCOUNT_LOCKED", reason: "Account is locked", protection: null, timestamp: this.now().toISOString() };
     if (this.account.status === "BREACHED") return { decision: "REJECT", reasonCode: "ACCOUNT_BREACHED", reason: "Account has breached a configured rule", protection: null, timestamp: this.now().toISOString() };
+    if (this.position?.status === "CLOSED" || this.position?.quantity === 0 || protection.status !== "ACTIVE") return { decision: "REJECT", reasonCode: "INVALID_ORDER_STATE", reason: "Only active protections on open positions can be modified", protection: null, timestamp: this.now().toISOString() };
     if (patch.quantity != null && (!Number.isFinite(patch.quantity) || patch.quantity <= 0)) {
       return { decision: "REJECT", reasonCode: "INVALID_QUANTITY", reason: "Protection quantity must be greater than zero", protection: null, timestamp: this.now().toISOString() };
     }
     if (patch.price != null && (!Number.isFinite(patch.price) || patch.price <= 0)) {
       return { decision: "REJECT", reasonCode: protection.type === "STOP_LOSS" ? "INVALID_STOP_PRICE" : "INVALID_TARGET_PRICE", reason: "Protection price must be a valid positive number", protection: null, timestamp: this.now().toISOString() };
+    }
+    if (patch.quantity != null && patch.quantity > this.position.quantity) {
+      return { decision: "REJECT", reasonCode: "INVALID_QUANTITY", reason: "Protection quantity exceeds the open position quantity", protection: null, timestamp: this.now().toISOString() };
+    }
+    if (patch.price != null && this.position.tickSize != null && Math.abs((patch.price / this.position.tickSize) - Math.round(patch.price / this.position.tickSize)) > 1e-8) {
+      return { decision: "REJECT", reasonCode: "INVALID_PRICE", reason: "Protection price does not match the instrument tick size", protection: null, timestamp: this.now().toISOString() };
+    }
+    const nextPrice = patch.price ?? protection.price;
+    if ((protection.type === "STOP_LOSS" && protection.side === "LONG" && nextPrice >= this.position.price) || (protection.type === "STOP_LOSS" && protection.side === "SHORT" && nextPrice <= this.position.price) || (protection.type === "TAKE_PROFIT" && protection.side === "LONG" && nextPrice <= this.position.price) || (protection.type === "TAKE_PROFIT" && protection.side === "SHORT" && nextPrice >= this.position.price)) {
+      return { decision: "REJECT", reasonCode: protection.type === "STOP_LOSS" ? "INVALID_STOP_PRICE" : "INVALID_TARGET_PRICE", reason: "Protection price does not match the position direction", protection: null, timestamp: this.now().toISOString() };
+    }
+    const sibling = [...this.protections.values()].find((candidate) => candidate.id !== id && candidate.type !== protection.type && candidate.status === "ACTIVE" && candidate.symbol === protection.symbol);
+    if (sibling && ((protection.side === "LONG" && protection.type === "STOP_LOSS" && nextPrice >= sibling.price) || (protection.side === "LONG" && protection.type === "TAKE_PROFIT" && nextPrice <= sibling.price) || (protection.side === "SHORT" && protection.type === "STOP_LOSS" && nextPrice <= sibling.price) || (protection.side === "SHORT" && protection.type === "TAKE_PROFIT" && nextPrice >= sibling.price))) {
+      return { decision: "REJECT", reasonCode: "INVALID_PROTECTION", reason: "Stop loss and take profit levels cross", protection: null, timestamp: this.now().toISOString() };
     }
     const updated = { ...protection, ...patch, updatedAt: this.now().toISOString() };
     this.protections.set(id, updated);
@@ -209,6 +252,7 @@ export class SlTpEngine {
     if (!protection) {
       return { removed: false, reason: "Protection does not exist", timestamp: this.now().toISOString() };
     }
+    if (protection.status === "INACTIVE") return { removed: true, reason: "Protection was already removed", timestamp: this.now().toISOString() };
     const updated = { ...protection, status: "INACTIVE" as const, updatedAt: this.now().toISOString() };
     this.protections.set(id, updated);
     return { removed: true, reason: "Protection removed", timestamp: this.now().toISOString() };

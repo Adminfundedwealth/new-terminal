@@ -1,9 +1,10 @@
 import { supabase, SUPABASE_CONFIGURED } from "@/integrations/supabase/client";
 import type { AccountStatus } from "@/lib/accountLifecycle";
 import type { RiskRequest } from "@/lib/riskEngine";
+import type { Instrument } from "@/lib/localDatabase";
 import { deserializeCanonicalOrder, type CanonicalOrderRow, type CanonicalOrder } from "@/lib/orderModel";
 
-const TERMINAL_OS_BASE = (import.meta.env.VITE_TERMINAL_OS_URL || "http://localhost:3001").replace(/\/$/, "");
+const TERMINAL_OS_BASE = (import.meta.env.VITE_TERMINAL_OS_URL || "").replace(/\/$/, "");
 
 export interface TerminalAccount {
   id: string;
@@ -68,9 +69,12 @@ export interface CreateOrderRequest {
   order_type: "MARKET" | "LIMIT" | "SL" | "SL-M" | "STOP" | "STOP-LIMIT";
   price?: number;
   trigger_price?: number;
+  stop_loss?: number;
+  take_profit?: number;
   time_in_force?: "DAY" | "IOC" | "GTC";
   product?: "CNC" | "MIS" | "NRML";
   is_overnight?: boolean;
+  instrument?: Instrument;
 }
 
 export interface CreateOrderResponse {
@@ -123,13 +127,37 @@ interface PaginatedResponse<T> {
 export interface TerminalPosition {
   id: string;
   trading_account_id: string;
+  account_id?: string;
+  instrument_id?: string | null;
   symbol: string;
-  qty: number;
-  avg_price: number;
-  current_price: number | null;
-  realized_pnl: number;
-  unrealized_pnl: number;
-  is_open: boolean;
+  exchange?: string | null;
+  side?: "LONG" | "SHORT" | "BUY" | "SELL" | "long" | "short" | "buy" | "sell" | null;
+  qty?: number;
+  quantity?: number;
+  avg_price?: number;
+  average_price?: number;
+  averageEntryPrice?: number;
+  current_price?: number | null;
+  currentPrice?: number | null;
+  last_price?: number | null;
+  lastPrice?: number | null;
+  realized_pnl?: number | null;
+  unrealized_pnl?: number | null;
+  stop_loss?: number | null;
+  take_profit?: number | null;
+  tick_size?: number | null;
+  stopLoss?: number | null;
+  takeProfit?: number | null;
+  stop_loss_removed?: boolean;
+  take_profit_removed?: boolean;
+  is_open?: boolean | null;
+  isOpen?: boolean | null;
+  position_status?: "open" | "closed" | string | null;
+  opened_at?: string | null;
+  closed_at?: string | null;
+  updated_at?: string | null;
+  updatedAt?: string | null;
+  created_at?: string | null;
 }
 
 export type TerminalOrder = CanonicalOrder;
@@ -210,12 +238,45 @@ export async function fetchTerminalAccounts(): Promise<AccountsResponse> {
   return { data: accounts, meta: { total: accounts.length, page: 1, page_size: accounts.length, has_more: false } };
 }
 
+export interface RuleVersionRecord {
+  id: string;
+  product_id: string;
+  phase_id: string | null;
+  version: string;
+  status: string;
+  rules: Record<string, unknown>;
+  created_at: string;
+  created_by_email?: string | null;
+}
+
 export async function fetchAccountContext(accountId?: string): Promise<AccountContext> {
   const { data, error } = await supabase.rpc("get_active_account_context", {
     requested_account_id: accountId || null,
   });
   if (error) throw new Error(`Account context request failed: ${error.message}`);
   return data as AccountContext;
+}
+
+export async function fetchCanonicalPlans(): Promise<{ data: Array<{ id: string; code: string; name: string; description: string | null; status: string }> }> {
+  const { data, error } = await supabase.from("products").select("id, code, name, description, status").order("name", { ascending: true });
+  if (error) throw new Error(`Plan catalog request failed: ${error.message}`);
+  return { data: (data ?? []) as Array<{ id: string; code: string; name: string; description: string | null; status: string }> };
+}
+
+export async function fetchCanonicalRuleVersions(productId?: string): Promise<{ data: RuleVersionRecord[] }> {
+  const query = supabase.from("rule_versions").select("id, product_id, phase_id, version, status, rules, created_at, created_by_email");
+  const filtered = productId ? query.eq("product_id", productId) : query;
+  const { data, error } = await filtered.order("created_at", { ascending: false });
+  if (error) throw new Error(`Rule version request failed: ${error.message}`);
+  return { data: (data ?? []) as RuleVersionRecord[] };
+}
+
+export async function saveRuleConfiguration(action: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const { data, error } = await supabase.rpc("manage_rule_configuration", {
+    request: { action, ...payload, actor_email: payload.actor_email ?? "system@fundedwealth.local" },
+  });
+  if (error) throw new Error(`Rule configuration update failed: ${error.message}`);
+  return data as Record<string, unknown>;
 }
 
 export async function transitionTradingAccount(accountId: string, status: AccountStatus, reason?: string): Promise<AccountContext["account"]> {
@@ -255,7 +316,10 @@ export function createServerPreTradeRiskGate() {
 }
 
 export async function createTerminalOrder(request: CreateOrderRequest): Promise<CreateOrderResponse> {
-  const { data, error } = await supabase.rpc("create_order", { request });
+  const instrumentType = request.instrument?.instrumentType?.toUpperCase();
+  const isKiteDerivative = request.product === "NRML" && request.instrument?.provider === "zerodha" &&
+    ["OPTIDX", "OPTSTK", "FUTIDX", "FUTSTK"].includes(instrumentType ?? "");
+  const { data, error } = await supabase.rpc(isKiteDerivative ? "create_simulated_kite_order" : "create_order", { request });
   if (error) throw new Error("Order creation request failed");
   const result = data as CreateOrderResponse;
   if (!result.ok) throw new Error(result.error?.message ?? "Order creation was rejected");
@@ -272,14 +336,19 @@ export async function setActiveAccount(accountId: string): Promise<void> {
   if (error) throw new Error(`Active account update failed: ${error.message}`);
 }
 
+function createRealtimeChannel(baseName: string) {
+  return `${baseName}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function subscribeToAccountContext(onChange: () => void) {
   if (!SUPABASE_CONFIGURED) return () => undefined;
 
   const channel = supabase
-    .channel("canonical-account-context")
+    .channel(createRealtimeChannel("canonical-account-context"))
     .on("postgres_changes", { event: "*", schema: "public", table: "trading_accounts" }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "account_permissions" }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "rule_versions" }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "risk_events" }, onChange)
     .subscribe();
   return () => { void supabase.removeChannel(channel); };
 }
@@ -293,7 +362,36 @@ function accountQuery(accountId?: string): string {
 }
 
 export function fetchTerminalPositions(accountId?: string) {
-  return fetchTerminalJson<PaginatedResponse<TerminalPosition>>(`/api/terminal/positions?page_size=100${accountQuery(accountId)}`);
+  return (async (): Promise<PaginatedResponse<TerminalPosition>> => {
+    const { data, error } = await supabase.rpc("get_terminal_positions", { requested_account_id: accountId ?? null });
+    if (error) throw new Error(`Positions request failed: ${error.message}`);
+    const positions = (data ?? []).map((row) => ({
+      ...row,
+      trading_account_id: row.account_id,
+      qty: Number(row.quantity ?? 0),
+      avg_price: Number(row.average_price ?? 0),
+      current_price: row.last_price == null ? null : Number(row.last_price),
+      is_open: row.position_status === "open",
+    })) as TerminalPosition[];
+    return { data: positions, meta: { total: positions.length, page: 1, page_size: positions.length, has_more: false } };
+  })();
+}
+
+export type PositionProtectionField = "stop_loss" | "take_profit";
+
+export async function modifyTerminalPositionProtection(
+  positionId: string,
+  field: PositionProtectionField,
+  price: number,
+): Promise<TerminalPosition> {
+  if (!Number.isFinite(price) || price <= 0) throw new Error("Protection price must be greater than zero.");
+  const { data, error } = await supabase.rpc("modify_position_protection", {
+    requested_position_id: positionId,
+    requested_field: field,
+    requested_price: price,
+  });
+  if (error) throw new Error(error.message || "Position protection update failed.");
+  return data as TerminalPosition;
 }
 
 export function fetchTerminalDashboard(accountId?: string) {
@@ -302,17 +400,7 @@ export function fetchTerminalDashboard(accountId?: string) {
 
 export function fetchTerminalOrders(accountId?: string) {
   return (async (): Promise<PaginatedResponse<TerminalOrder>> => {
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) throw new Error("Authentication required to load orders");
-
-    let query = supabase
-      .from("orders")
-      .select("*")
-      .eq("owner_user_id", user.id)
-      .order("created_at", { ascending: false });
-    if (accountId) query = query.eq("account_id", accountId);
-
-    const { data, error } = await query;
+    const { data, error } = await supabase.rpc("get_terminal_orders", { requested_account_id: accountId ?? null });
     if (error) throw new Error(`Orders request failed: ${error.message}`);
     const orders = (data ?? []).map((row) => deserializeCanonicalOrder(row as CanonicalOrderRow));
     return { data: orders, meta: { total: orders.length, page: 1, page_size: orders.length, has_more: false } };
@@ -323,14 +411,29 @@ export function subscribeToTerminalOrders(accountId: string, onChange: () => voi
   if (!SUPABASE_CONFIGURED) return () => undefined;
 
   const channel = supabase
-    .channel(`customer-orders-${accountId}`)
+    .channel(createRealtimeChannel(`customer-orders-${accountId}`))
     .on("postgres_changes", { event: "*", schema: "public", table: "orders", filter: `account_id=eq.${accountId}` }, onChange)
     .subscribe();
   return () => { void supabase.removeChannel(channel); };
 }
 
+export function subscribeToTerminalPositions(accountId: string, onChange: () => void) {
+  if (!SUPABASE_CONFIGURED) return () => undefined;
+
+  const channel = supabase
+    .channel(createRealtimeChannel(`customer-positions-${accountId}`))
+    .on("postgres_changes", { event: "*", schema: "public", table: "positions", filter: `account_id=eq.${accountId}` }, onChange)
+    .subscribe();
+  return () => { void supabase.removeChannel(channel); };
+}
+
 export function fetchTerminalExecutions(accountId?: string) {
-  return fetchTerminalJson<PaginatedResponse<TerminalExecution>>(`/api/terminal/executions?page_size=100${accountQuery(accountId)}`);
+  return (async (): Promise<PaginatedResponse<TerminalExecution>> => {
+    const { data, error } = await supabase.rpc("get_terminal_executions", { requested_account_id: accountId ?? null });
+    if (error) throw new Error(`Executions request failed: ${error.message}`);
+    const executions = (data ?? []) as TerminalExecution[];
+    return { data: executions, meta: { total: executions.length, page: 1, page_size: executions.length, has_more: false } };
+  })();
 }
 
 export function fetchTerminalRisk(accountId?: string) {

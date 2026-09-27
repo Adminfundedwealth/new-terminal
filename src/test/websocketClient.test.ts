@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { marketWS, type TickData } from "@/lib/websocketClient";
+import { marketWS, resolveWebSocketUrl, type TickData } from "@/lib/websocketClient";
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
@@ -46,6 +46,12 @@ describe("market websocket lifecycle", () => {
   afterEach(() => {
     marketWS.stop();
     vi.useRealTimers();
+  });
+
+  it("resolves a production websocket URL from the deployed environment", () => {
+    vi.stubEnv("VITE_WS_URL", "https://terminal-production.up.railway.app/ws");
+    expect(resolveWebSocketUrl()).toBe("wss://terminal-production.up.railway.app/ws");
+    vi.unstubAllEnvs();
   });
 
   it("does not connect when the module is imported", () => {

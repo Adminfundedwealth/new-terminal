@@ -115,24 +115,56 @@ function inTradingHours(now: Date, hours: NonNullable<RiskRules["trading_hours"]
   });
 }
 
+function canonicalStartBalance(state: RiskStateInput): number {
+  if (Number.isFinite(state.starting_balance)) return state.starting_balance;
+  if (Number.isFinite(state.initial_balance)) return state.initial_balance;
+  if (Number.isFinite(state.daily_starting_equity)) return state.daily_starting_equity;
+  return 0;
+}
+
+function canonicalEquity(state: RiskStateInput): number {
+  const realizedPnl = Number.isFinite(state.realized_pnl_today) ? state.realized_pnl_today : 0;
+  const unrealizedPnl = Number.isFinite(state.unrealized_pnl_today) ? state.unrealized_pnl_today : 0;
+  const fees = Number.isFinite(state.fees_today) ? state.fees_today : 0;
+  const balanceBase = Number.isFinite(state.current_balance) ? state.current_balance : canonicalStartBalance(state);
+  const derivedEquity = balanceBase + realizedPnl + unrealizedPnl - fees;
+
+  if (!Number.isFinite(state.current_equity)) return derivedEquity;
+  if (Number.isFinite(state.current_balance) && Math.abs(state.current_equity - state.current_balance) <= 1e-9 && (realizedPnl !== 0 || unrealizedPnl !== 0 || fees !== 0)) {
+    return derivedEquity;
+  }
+  return state.current_equity;
+}
+
 export function calculateDailyLoss(state: RiskStateInput): number {
-  if (state.account_metrics?.dailyLoss != null) return state.account_metrics.dailyLoss;
-  const unrealized = state.unrealized_pnl_today ?? 0;
-  return Math.max(0, state.daily_starting_equity - (state.daily_starting_equity + state.realized_pnl_today + unrealized - (state.fees_today ?? 0)));
+  if (state.account_metrics?.dailyLoss != null && Number.isFinite(state.account_metrics.dailyLoss)) return state.account_metrics.dailyLoss;
+  const dailyStartingEquity = Number.isFinite(state.daily_starting_equity) ? state.daily_starting_equity : canonicalStartBalance(state);
+  const currentEquity = canonicalEquity(state);
+  if (Number.isFinite(dailyStartingEquity) && Number.isFinite(currentEquity)) {
+    return Math.max(0, dailyStartingEquity - currentEquity);
+  }
+  const netDailyPnl = (Number.isFinite(state.realized_pnl_today) ? state.realized_pnl_today : 0)
+    + (Number.isFinite(state.unrealized_pnl_today) ? state.unrealized_pnl_today : 0)
+    - (Number.isFinite(state.fees_today) ? state.fees_today : 0);
+  return Math.max(0, -netDailyPnl);
 }
 
 export function calculateDrawdown(state: RiskStateInput, rules: RiskRules): { amount: number; percentage: number; base: number } {
-  if (state.account_metrics?.drawdown != null && state.account_metrics.drawdownPercentage != null) {
+  if (state.account_metrics?.drawdown != null && Number.isFinite(state.account_metrics.drawdown) && state.account_metrics.drawdownPercentage != null && Number.isFinite(state.account_metrics.drawdownPercentage)) {
     return { amount: state.account_metrics.drawdown, percentage: state.account_metrics.drawdownPercentage, base: state.account_metrics.drawdownBase };
   }
-  const base = rules.drawdown_model === "trailing" ? (state.peak_equity ?? state.initial_balance) : state.initial_balance;
-  const amount = Math.max(0, base - state.current_equity);
+  const startBalance = canonicalStartBalance(state);
+  const peakEquity = Number.isFinite(state.peak_equity) ? state.peak_equity : startBalance;
+  const currentEquity = canonicalEquity(state);
+  const base = rules.drawdown_model === "trailing" ? peakEquity : startBalance;
+  const amount = Number.isFinite(base) && Number.isFinite(currentEquity) ? Math.max(0, base - currentEquity) : 0;
   return { amount, percentage: base > 0 ? amount / base * 100 : 0, base };
 }
 
 export function calculateProfitTarget(state: RiskStateInput, rules: RiskRules) {
   const target = rules.profit_target;
-  const currentProfit = state.account_metrics?.totalProfit ?? state.current_equity - state.initial_balance;
+  const startBalance = canonicalStartBalance(state);
+  const currentProfit = state.account_metrics?.totalProfit ?? (Number.isFinite(state.current_equity) ? state.current_equity - startBalance : canonicalEquity(state) - startBalance);
   if (target == null) return { configured: false, currentProfit, target: null, remaining: null, progressPercentage: null, reached: false };
   return { configured: true, currentProfit, target, remaining: Math.max(0, target - currentProfit), progressPercentage: target > 0 ? Math.max(0, currentProfit / target * 100) : 0, reached: currentProfit >= target };
 }
@@ -166,12 +198,12 @@ export function evaluateRisk(input: RiskRequest, state: RiskStateInput, rules: R
   if (rules.max_daily_trades == null) return missing(input, state, "max_daily_trades");
   if (state.daily_trade_count >= rules.max_daily_trades) return reject(input, state, "MAX_DAILY_TRADES_EXCEEDED", "Maximum daily trades reached", "max_daily_trades", state.daily_trade_count, rules.max_daily_trades);
   if (!state.market_data_fresh && state.unrealized_pnl_today == null && rules.stale_market_policy !== "allow_without_unrealized") return reject(input, state, "MARKET_DATA_STALE", "Market data is stale and unrealized P&L cannot be evaluated safely", "stale_market_policy", "reject", rules.stale_market_policy ?? null);
-  if (rules.daily_loss_limit == null) return missing(input, state, "daily_loss_limit");
-  const dailyLoss = calculateDailyLoss(state);
-  if (dailyLoss >= rules.daily_loss_limit) return reject(input, state, "DAILY_LOSS_EXCEEDED", "Daily loss limit reached", "daily_loss_limit", dailyLoss, rules.daily_loss_limit);
   if (rules.maximum_drawdown == null) return missing(input, state, "maximum_drawdown");
   const drawdown = calculateDrawdown(state, rules);
   if (drawdown.amount >= rules.maximum_drawdown) return reject(input, state, "DRAWDOWN_EXCEEDED", "Maximum drawdown reached", "maximum_drawdown", drawdown.amount, rules.maximum_drawdown);
+  if (rules.daily_loss_limit == null) return missing(input, state, "daily_loss_limit");
+  const dailyLoss = calculateDailyLoss(state);
+  if (dailyLoss >= rules.daily_loss_limit) return reject(input, state, "DAILY_LOSS_EXCEEDED", "Daily loss limit reached", "daily_loss_limit", dailyLoss, rules.daily_loss_limit);
   if (rules.risk_per_trade == null) return missing(input, state, "risk_per_trade");
   if (input.estimated_loss == null) return missing(input, state, "estimated_loss");
   if (input.estimated_loss > rules.risk_per_trade) return reject(input, state, "RISK_PER_TRADE_EXCEEDED", "Estimated trade risk exceeds the configured limit", "risk_per_trade", input.estimated_loss, rules.risk_per_trade);

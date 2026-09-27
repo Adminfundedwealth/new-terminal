@@ -20,6 +20,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
+import { resolveAllowedOrigin } from "./proxy-origin.mjs";
 
 // ── Load .env manually (no external deps needed) ──
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -501,15 +502,15 @@ async function handleDhanProxy(params) {
         "NSE:E": "NSE_EQ",
         "NSE:D": "NSE_FNO",
         "NSE:I": "IDX_I",
-        "NSE:C": "NSE_CUR",
+        "NSE:C": "NSE_CDS",
         "NSE:M": "NSE_MF",
         "BSE:E": "BSE_EQ",
         "BSE:D": "BSE_FNO",
         "BSE:I": "BSE_IDX",
-        "BSE:C": "BSE_CUR",
+        "BSE:C": "BSE_CDS",
         "MCX:M": "MCX_COMM",
       };
-      const ALLOWED_SEGMENTS = new Set(["NSE_EQ", "NSE_FNO", "IDX_I"]);
+      const ALLOWED_SEGMENTS = new Set(["NSE_EQ", "NSE_FNO", "IDX_I", "NSE_CDS", "BSE_EQ", "BSE_FNO", "BSE_IDX", "BSE_CDS", "MCX_COMM"]);
 
       const lines = csvText.split(/\r?\n/).filter(Boolean);
       const header = parseCsvLine(lines[0]).map(h => h.trim());
@@ -531,6 +532,7 @@ async function handleDhanProxy(params) {
         const expiryDate = cols[header.indexOf("SEM_EXPIRY_DATE")]?.trim();
         const strikePrice = parseFloat(cols[header.indexOf("SEM_STRIKE_PRICE")]?.trim()) || 0;
         const optionType = cols[header.indexOf("SEM_OPTION_TYPE")]?.trim();
+        const tickSize = parseFloat(cols[header.indexOf("SEM_TICK_SIZE")]?.trim()) || 0;
 
         // Map exchange + segment code → combined segment name
         const exchangeSegment = SEGMENT_MAP[`${exchId}:${segCode}`];
@@ -546,6 +548,7 @@ async function handleDhanProxy(params) {
           exchangeSegment,
           instrumentType: instrName,
           lotSize,
+          tickSize,
           expiryDate: expiryDate && expiryDate !== "0001-01-01" ? expiryDate : undefined,
           strikePrice: strikePrice || undefined,
           optionType: optionType && optionType !== "XX" ? optionType : undefined,
@@ -904,6 +907,7 @@ const YAHOO_SYMBOL_MAP = {
   "BANKNIFTY": "^NSEBANK",
   "FINNIFTY": "NIFTY_FIN_SERVICE.NS",
   "MIDCPNIFTY": "NIFTY_MID_SELECT.NS",
+  "NIFTY_MIDCAP_50": "^NSEMDCP50",
   "INDIAVIX": "^INDIAVIX",
   "SENSEX": "^BSESN",
   // F&O Stocks — append .NS for NSE
@@ -1326,23 +1330,26 @@ localWSS.on("connection", (ws) => {
 // ══════════════════════════════════════════════
 
 const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "http://localhost:4001",
   "Access-Control-Allow-Credentials": "true",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
+function corsHeaders(origin) {
+  const allowedOrigin = resolveAllowedOrigin(origin);
+  return { ...CORS_HEADERS, ...(allowedOrigin ? { "Access-Control-Allow-Origin": allowedOrigin } : {}) };
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
-    res.writeHead(204, CORS_HEADERS);
+    res.writeHead(204, corsHeaders(req.headers.origin));
     return res.end();
   }
 
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const params = url.searchParams;
-
   res.setHeader("Content-Type", "application/json");
-  Object.entries(CORS_HEADERS).forEach(([k, v]) => res.setHeader(k, v));
+  Object.entries(corsHeaders(req.headers.origin)).forEach(([k, v]) => res.setHeader(k, v));
 
   try {
     if (url.pathname === "/api/kite/login") {

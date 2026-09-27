@@ -14,9 +14,11 @@ import {
   type HistoricalDataRequest,
 } from "./brokerAdapter";
 import { marketWS } from "./websocketClient";
+import { InstrumentMaster, normalizeProviderInstrument } from "./instrumentMaster";
+import { normalizeQuote, toLegacyQuote } from "./quoteService";
 import type { OptionData, OptionLegData } from "./mockData";
 
-const KITE_INDEX_NAMES = new Set(["NIFTY", "NIFTY 50", "BANKNIFTY", "NIFTY BANK", "FINNIFTY", "NIFTY FIN SERVICE", "MIDCPNIFTY", "NIFTY MID SELECT", "INDIA VIX", "SENSEX"]);
+const KITE_INDEX_NAMES = new Set(["NIFTY", "NIFTY 50", "BANKNIFTY", "NIFTY BANK", "FINNIFTY", "NIFTY FIN SERVICE", "MIDCPNIFTY", "NIFTY MID SELECT", "NIFTY MIDCAP 50", "INDIA VIX", "SENSEX"]);
 
 const PROXY_BASE = import.meta.env.VITE_PROXY_URL || "";
 
@@ -28,15 +30,18 @@ type KiteQuote = {
   ohlc?: { open?: number; high?: number; low?: number; close?: number };
   depth?: { buy?: Array<{ price?: number; quantity?: number }>; sell?: Array<{ price?: number; quantity?: number }> };
   timestamp?: string;
+  last_trade_time?: string;
 };
 
 const KITE_UNDERLYING_NAMES: Record<string, string> = {
   NIFTY: "NIFTY",
   BANKNIFTY: "BANKNIFTY",
+  FINNIFTY: "FINNIFTY",
 };
 const KITE_UNDERLYING_SYMBOLS: Record<string, string> = {
   NIFTY: "NIFTY 50",
   BANKNIFTY: "NIFTY BANK",
+  FINNIFTY: "NIFTY FIN SERVICE",
 };
 const KITE_QUOTE_BATCH_SIZE = 75;
 const KITE_QUOTE_CONCURRENCY = 3;
@@ -146,17 +151,15 @@ export class ZerodhaAdapter extends BaseBrokerAdapter {
   private async loadInstruments(cacheKey: string): Promise<NormalizedInstrument[]> {
     try {
       const response = await this.request<Array<Record<string, string>>>("instruments");
-      const data = response.data.map((item) => ({
-        symbol: item.name || item.tradingsymbol,
-        tradingSymbol: item.tradingsymbol,
-        securityId: item.instrument_token,
-        exchangeSegment: item.instrument_type === "INDEX" ? "IDX_I" : item.exchange === "NSE" ? "NSE_EQ" : item.exchange,
+      const data = response.data.map((item, index) => normalizeProviderInstrument({
+        ...item,
+        exchangeSegment: item.instrument_type === "INDEX" || item.segment === "INDICES"
+          ? "IDX_I"
+          : item.segment === "NSE" ? "NSE_EQ" : item.segment?.startsWith("NFO") ? "NFO" : item.segment?.startsWith("BFO") ? "BFO" : item.segment,
         instrumentType: normalizeKiteInstrumentType(item),
-        lotSize: Number(item.lot_size || 0),
-        expiryDate: item.expiry || undefined,
-        strikePrice: Number(item.strike || 0) || undefined,
-        optionType: item.instrument_type === "CE" || item.instrument_type === "PE" ? item.instrument_type : undefined,
-      }));
+        optionType: item.instrument_type,
+        tickSize: item.tick_size,
+      }, "zerodha", index).instrument).filter((item): item is NormalizedInstrument => !!item);
       kiteInstrumentCache.set(cacheKey, { data, expiresAt: Date.now() + KITE_INSTRUMENT_CACHE_TTL });
       return data;
     } finally {
@@ -166,12 +169,74 @@ export class ZerodhaAdapter extends BaseBrokerAdapter {
 
   async getQuote(symbol: string): Promise<BrokerResult<NormalizedQuote>> {
     try {
-      const response = await this.request<Record<string, { last_price: number; ohlc?: { close?: number }; timestamp?: string }>>("quote", { instrument: `NSE:${symbol.toUpperCase()}` });
+      const quoteSymbol = KITE_UNDERLYING_SYMBOLS[symbol.toUpperCase()] || symbol.toUpperCase();
+      const response = await this.request<Record<string, { last_price: number; ohlc?: { close?: number }; timestamp?: string }>>("quote", { instrument: `NSE:${quoteSymbol}` });
       const quote = Object.values(response.data)[0];
       if (!quote) throw new Error(`Kite returned no quote for ${symbol}`);
       const close = quote.ohlc?.close ?? quote.last_price;
       return { provider: this.id, capability: "quote", state: "not_verified", data: { symbol: symbol.toUpperCase(), ltp: quote.last_price, change: quote.last_price - close, changePercent: close ? ((quote.last_price - close) / close) * 100 : 0, timestamp: quote.timestamp || new Date().toISOString() } };
     } catch (error) { return { provider: this.id, capability: "quote", state: "not_verified", message: error instanceof Error ? error.message : "Kite quote unavailable." }; }
+  }
+
+  async getQuotes(symbols: string[]): Promise<BrokerResult<NormalizedQuote[]> & { data: NormalizedQuote[] }> {
+    if (symbols.length === 0) return { provider: this.id, capability: "quote", state: "not_verified", data: [] };
+    try {
+      const instrumentResult = await this.getInstruments();
+      if (!instrumentResult.data) throw new Error(instrumentResult.message || "Kite instrument master unavailable.");
+
+      const master = new InstrumentMaster();
+      master.addAll(instrumentResult.data);
+      const requested = symbols.map((value) => {
+        const separator = value.indexOf(":");
+        const exchange = separator < 0 ? "NSE" : value.slice(0, separator).toUpperCase();
+        const tradingSymbol = separator < 0 ? value : value.slice(separator + 1);
+        return { key: `${exchange}:${tradingSymbol}`, exchange, tradingSymbol };
+      });
+      const batches: string[][] = [];
+      for (let offset = 0; offset < requested.length; offset += KITE_QUOTE_BATCH_SIZE) {
+        batches.push(requested.slice(offset, offset + KITE_QUOTE_BATCH_SIZE).map((item) => item.key));
+      }
+
+      const rawQuotes: Record<string, KiteQuote> = {};
+      let nextBatch = 0;
+      const worker = async () => {
+        while (nextBatch < batches.length) {
+          const batch = batches[nextBatch++];
+          const response = await this.request<Record<string, KiteQuote>>("quote", { instruments: batch.join(",") });
+          Object.assign(rawQuotes, response.data || {});
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(KITE_QUOTE_CONCURRENCY, batches.length) }, () => worker()));
+
+      const quotes = requested.flatMap(({ key, exchange, tradingSymbol }) => {
+        const instrument = instrumentResult.data!.find((item) => {
+          const quoteExchange = item.exchangeSegment === "NFO" || item.exchangeSegment === "NSE_FNO" ? "NFO" : item.exchange;
+          return quoteExchange === exchange && item.tradingSymbol.toUpperCase() === tradingSymbol.toUpperCase();
+        });
+        const rawQuote = rawQuotes[key];
+        if (!instrument || !rawQuote) return [];
+        const normalized = normalizeQuote({
+          provider: this.id,
+          payload: { ...rawQuote, timestamp: rawQuote.timestamp ?? rawQuote.last_trade_time },
+          instrumentId: instrument.securityId,
+          providerInstrumentId: instrument.providerInstrumentId,
+          exchange: instrument.exchange,
+          symbol: instrument.tradingSymbol,
+        }, master);
+        const quote = normalized.quote ? toLegacyQuote(normalized.quote) : undefined;
+        return quote ? [quote] : [];
+      });
+
+      return {
+        provider: this.id,
+        capability: "quote",
+        state: "not_verified",
+        data: quotes,
+        message: quotes.length < requested.length ? "Kite omitted one or more requested quotes." : undefined,
+      };
+    } catch (error) {
+      return { provider: this.id, capability: "quote", state: "not_verified", data: [], message: error instanceof Error ? error.message : "Kite quotes unavailable." };
+    }
   }
 
   async getOptionChain(symbol: string, expiry?: string): Promise<BrokerResult<NormalizedOptionChain>> {
@@ -180,7 +245,7 @@ export class ZerodhaAdapter extends BaseBrokerAdapter {
       if (!instruments.data) throw new Error("Kite instrument master unavailable.");
       const underlyingName = KITE_UNDERLYING_NAMES[symbol.toUpperCase()] || symbol.toUpperCase();
       const contracts = instruments.data.filter((item) =>
-        item.exchangeSegment === "NFO" &&
+        (item.exchangeSegment === "NFO" || item.exchangeSegment === "NSE_FNO") &&
         (item.instrumentType === "OPTIDX" || item.instrumentType === "OPTSTK") &&
         item.symbol === underlyingName &&
         (!expiry || item.expiryDate === expiry)

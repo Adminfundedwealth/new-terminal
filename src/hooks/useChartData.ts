@@ -1,7 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
 import { brokerRouter, getPreferredMarketAdapter } from "@/lib/brokerRouter";
+import { buildInstrumentMasterFromRows, normalizeCandlePayload, resolveHistoricalInstrument } from "@/lib/historicalData";
 
-const PROXY_BASE = import.meta.env.VITE_PROXY_URL || "http://localhost:4002";
+const PROXY_BASE = import.meta.env.VITE_PROXY_URL || "";
+export const KITE_INDEX_TOKEN_MAP: Record<string, string> = {
+  NIFTY: "256265",
+  BANKNIFTY: "260105",
+  FINNIFTY: "257801",
+};
+const KITE_HISTORICAL_SYMBOL_ALIASES: Record<string, string[]> = {
+  NIFTY: ["NIFTY 50"],
+  BANKNIFTY: ["NIFTY BANK"],
+  FINNIFTY: ["NIFTY FIN SERVICE"],
+  MIDCPNIFTY: ["NIFTY MID SELECT", "NIFTY MIDCAP 50"],
+  NIFTY_MIDCAP_50: ["NIFTY MIDCAP 50"],
+};
 
 export interface OHLCVCandle {
   time: number; // Unix timestamp in seconds
@@ -21,6 +34,7 @@ const SECURITY_MAP: Record<string, { secId: string; exchSeg: string; instrument:
   BANKNIFTY:   { secId: "25",    exchSeg: "IDX_I",  instrument: "INDEX" },
   FINNIFTY:    { secId: "27",    exchSeg: "IDX_I",  instrument: "INDEX" },
   MIDCPNIFTY:  { secId: "442",   exchSeg: "IDX_I",  instrument: "INDEX" },
+  NIFTY_MIDCAP_50: { secId: "NIFTY_MIDCAP_50", exchSeg: "IDX_I", instrument: "INDEX" },
   INDIAVIX:    { secId: "26",    exchSeg: "IDX_I",  instrument: "INDEX" },
   SENSEX:      { secId: "1",     exchSeg: "IDX_I",  instrument: "INDEX" },
   // ─── NIFTY 50 Stocks ───
@@ -82,30 +96,54 @@ const SECURITY_MAP: Record<string, { secId: string; exchSeg: string; instrument:
 // Alias: M&M uses underscore in our map
 if (!SECURITY_MAP["M&M"]) SECURITY_MAP["M&M"] = SECURITY_MAP["M_M"];
 
+const CHART_INSTRUMENT_MASTER = buildInstrumentMasterFromRows(
+  Object.entries(SECURITY_MAP).map(([symbol, value]) => ({
+    securityId: value.secId,
+    symbol: symbol.toUpperCase(),
+    tradingSymbol: symbol.toUpperCase(),
+    displayName: symbol.toUpperCase(),
+    exchange: value.exchSeg.startsWith("IDX") ? "NSE" : "NSE",
+    exchangeSegment: value.exchSeg,
+    instrumentType: value.instrument,
+    lotSize: 1,
+    tickSize: 0.05,
+    provider: "dhan",
+    providerInstrumentId: value.secId,
+  })),
+);
+
 // ── In-memory cache for dynamically resolved security IDs ──
 const resolvedSecurityIds: Record<string, { securityId: string; exchangeSegment: string; instrument: string }> = {};
 let kiteInstrumentsPromise: Promise<Awaited<ReturnType<NonNullable<ReturnType<typeof brokerRouter.getAdapter>>["getInstruments"]>> | null> | null = null;
 
-async function fetchKiteHistorical(symbol: string, range: string): Promise<OHLCVCandle[]> {
+export function resolveKiteHistoricalToken(symbol: string, instrumentToken?: string): string | undefined {
+  return instrumentToken?.trim() || KITE_INDEX_TOKEN_MAP[symbol.toUpperCase()];
+}
+
+async function fetchKiteHistorical(symbol: string, range: string, instrumentToken?: string): Promise<OHLCVCandle[]> {
   const adapter = await getPreferredMarketAdapter();
   if (!adapter || adapter.id !== "zerodha") return [];
-  kiteInstrumentsPromise ??= adapter.getInstruments().catch(() => null);
-  const result = await kiteInstrumentsPromise;
   const normalizedSymbol = symbol.toUpperCase();
-  const instrument = result?.data?.find((item) =>
-    (item.exchangeSegment === "NSE_EQ" || item.exchangeSegment === "IDX_I") &&
-    (item.tradingSymbol?.toUpperCase() === normalizedSymbol ||
-      (normalizedSymbol === "NIFTY" && item.tradingSymbol === "NIFTY 50") ||
-      (normalizedSymbol === "BANKNIFTY" && item.tradingSymbol === "NIFTY BANK"))
-  );
-  if (!instrument?.securityId) return [];
+  let securityId = resolveKiteHistoricalToken(normalizedSymbol, instrumentToken);
+  if (!securityId) {
+    kiteInstrumentsPromise ??= adapter.getInstruments().catch(() => null);
+    const result = await kiteInstrumentsPromise;
+    const aliases = KITE_HISTORICAL_SYMBOL_ALIASES[normalizedSymbol] ?? [];
+    const instrument = result?.data?.find((item) =>
+      (["NSE_EQ", "IDX_I", "NFO", "NSE_FNO"].includes(item.exchangeSegment)) &&
+      (item.tradingSymbol?.toUpperCase() === normalizedSymbol ||
+        aliases.includes(item.tradingSymbol?.toUpperCase() ?? ""))
+    );
+    securityId = instrument?.securityId;
+  }
+  if (!securityId) return [];
 
   const { interval, daysBack } = rangeToParams(range);
   const now = new Date();
   const from = new Date(now);
   from.setDate(from.getDate() - daysBack);
   const kiteInterval = interval === "15" ? "15minute" : interval === "60" ? "60minute" : "day";
-  const historical = await adapter.getHistoricalData(instrument.securityId, kiteInterval, {
+  const historical = await adapter.getHistoricalData(securityId, kiteInterval, {
     fromDate: from.toISOString().split("T")[0],
     toDate: now.toISOString().split("T")[0],
   });
@@ -182,34 +220,21 @@ interface ColumnarCandleData {
  * Exported for unit testing.
  */
 export function parseColumnarCandles(rawData: ColumnarCandleData | null | undefined): OHLCVCandle[] {
-  if (!rawData || !Array.isArray(rawData.close)) return [];
+  const normalized = normalizeCandlePayload(rawData as any, {
+    instrumentId: "chart-data",
+    symbol: "UNKNOWN",
+    exchange: "NSE",
+    interval: "D",
+  });
 
-  const opens = rawData.open || [];
-  const highs = rawData.high || [];
-  const lows = rawData.low || [];
-  const closes = rawData.close || [];
-  const volumes = rawData.volume || [];
-  const timestamps = rawData.start_Time || rawData.timestamp || [];
-
-  const candles: OHLCVCandle[] = [];
-  for (let i = 0; i < closes.length; i++) {
-    if (closes[i] == null) continue; // Yahoo emits null gaps on non-trading slots
-    const ts = timestamps[i];
-    const time = typeof ts === "string"
-      ? Math.floor(new Date(ts).getTime() / 1000)
-      : typeof ts === "number"
-        ? (ts > 1e12 ? Math.floor(ts / 1000) : ts) // handle ms vs s timestamps
-        : Math.floor(Date.now() / 1000);
-    candles.push({
-      time,
-      open: opens[i] ?? closes[i],
-      high: highs[i] ?? closes[i],
-      low: lows[i] ?? closes[i],
-      close: closes[i],
-      volume: volumes[i] || 0,
-    });
-  }
-  return candles.sort((a, b) => a.time - b.time);
+  return normalized.map((candle) => ({
+    time: candle.timestamp,
+    open: candle.open,
+    high: candle.high,
+    low: candle.low,
+    close: candle.close,
+    volume: candle.volume,
+  }));
 }
 
 /** Dhan historical candles for the Dhan provider. */
@@ -230,7 +255,25 @@ async function fetchDhanHistorical(
     fromDate: `${from.toISOString().split("T")[0]} 09:15`,
     toDate: `${now.toISOString().split("T")[0]} 15:30`,
   });
-  return (result.data || []).map((candle) => ({
+
+  const normalized = normalizeCandlePayload(
+    {
+      close: (result.data || []).map((candle) => candle.close),
+      open: (result.data || []).map((candle) => candle.open),
+      high: (result.data || []).map((candle) => candle.high),
+      low: (result.data || []).map((candle) => candle.low),
+      volume: (result.data || []).map((candle) => candle.volume),
+      timestamp: (result.data || []).map((candle) => candle.timestamp),
+    },
+    {
+      instrumentId: resolved.securityId,
+      symbol: (resolveHistoricalInstrument({ instrumentId: resolved.securityId }, CHART_INSTRUMENT_MASTER)?.symbol ?? "UNKNOWN").toUpperCase(),
+      exchange: "NSE",
+      interval,
+    },
+  );
+
+  return normalized.map((candle) => ({
     time: candle.timestamp,
     open: candle.open,
     high: candle.high,
@@ -271,12 +314,12 @@ async function fetchYahooHistorical(symbol: string, range: string): Promise<OHLC
  *   Dhan (when symbol is known + broker keys configured) → Yahoo Finance fallback.
  * Always returns candles when the proxy is reachable, even without broker keys.
  */
-async function fetchHistorical(symbol: string, range: string): Promise<OHLCVCandle[]> {
+async function fetchHistorical(symbol: string, range: string, instrumentToken?: string): Promise<OHLCVCandle[]> {
   if ((await getPreferredMarketAdapter())?.id === "zerodha") {
-    return fetchKiteHistorical(symbol, range);
+    return fetchKiteHistorical(symbol, range, instrumentToken);
   }
 
-  // Try Dhan first for symbols we can resolve instantly (no 30MB CSV download).
+  // Try Dhan first for symbols we can resolve instantly using the canonical instrument master.
   const mapped = SECURITY_MAP[symbol];
   if (mapped) {
     try {
@@ -287,6 +330,19 @@ async function fetchHistorical(symbol: string, range: string): Promise<OHLCVCand
       if (candles.length > 0) return candles;
     } catch {
       // Dhan unavailable (no keys / rate limit) — fall through to Yahoo.
+    }
+  }
+
+  const resolvedMasterInstrument = resolveHistoricalInstrument({ exchange: "NSE", symbol: symbol.toUpperCase() }, CHART_INSTRUMENT_MASTER);
+  if (resolvedMasterInstrument) {
+    try {
+      const candles = await fetchDhanHistorical(
+        { securityId: resolvedMasterInstrument.instrumentId, exchangeSegment: resolvedMasterInstrument.exchangeSegment, instrument: resolvedMasterInstrument.instrumentType },
+        range,
+      );
+      if (candles.length > 0) return candles;
+    } catch {
+      // continue to Yahoo fallback
     }
   }
 
@@ -314,10 +370,10 @@ async function fetchHistorical(symbol: string, range: string): Promise<OHLCVCand
 /**
  * React Query hook for chart data. Fetches OHLCV candles from Dhan API.
  */
-export function useChartData(symbol: string, range: string = "3M", enabled: boolean = true) {
+export function useChartData(symbol: string, range: string = "3M", enabled: boolean = true, instrumentToken?: string) {
   return useQuery({
-    queryKey: ["chart-data", symbol, range],
-    queryFn: () => fetchHistorical(symbol, range),
+    queryKey: ["chart-data", symbol, range, instrumentToken],
+    queryFn: () => fetchHistorical(symbol, range, instrumentToken),
     enabled: !!symbol && enabled,
     staleTime: 5 * 60 * 1000, // 5 min cache
     refetchOnWindowFocus: false,

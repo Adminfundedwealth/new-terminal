@@ -1,17 +1,20 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLiveIndices } from "@/hooks/useMarketData";
+import { useAccountContext } from "@/hooks/useAccountContext";
 import { InstrumentExplorer } from "@/components/InstrumentExplorer";
 import { getSavedWatchlist, saveWatchlist } from "@/lib/watchlist";
 
 export default function Indices() {
   const navigate = useNavigate();
+  const { activeAccountId } = useAccountContext();
   const [watchedSymbols, setWatchedSymbols] = useState<string[]>(() => getSavedWatchlist());
   const { data, isLoading } = useLiveIndices();
 
   const rows = useMemo(() => {
     return (data?.data || []).map((index) => ({
       symbol: index.symbol,
+      chartSymbol: index.name === "NIFTY MIDCAP 50" ? "NIFTY_MIDCAP_50" : undefined,
       label: index.name || index.symbol,
       ltp: index.ltp,
       change: index.change,
@@ -31,7 +34,7 @@ export default function Indices() {
   };
 
   return (
-    <main className="mx-auto w-full max-w-[1500px] p-3 sm:p-5">
+    <main className="mx-auto flex h-full min-h-0 w-full max-w-[1500px] flex-col p-3 sm:p-5">
       <InstrumentExplorer
         title="Indices"
         subtitle="NIFTY, BANKNIFTY, FINNIFTY and other cash index quotes."
@@ -40,6 +43,7 @@ export default function Indices() {
         isLoading={isLoading}
         watchedSymbols={watchedSymbols}
         onToggleWatchlist={handleWatchlistToggle}
+        activeAccountId={activeAccountId}
         onTradeOpen={(symbol) => navigate(`/option-chain?symbol=${symbol}`)}
         footerLabel="indices"
         searchPlaceholder="Search indices..."

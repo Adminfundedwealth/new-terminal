@@ -115,6 +115,10 @@ export async function cancelOrder(request: CancelOrderRequest): Promise<Lifecycl
     return fail(error.code, error.message, order);
   }
 
+  if (order.status === "cancelled" || order.status === "cancel_requested") {
+    return { ok: true, order, brokerOutcome: "already_requested", message: "Order cancellation was already requested or confirmed" };
+  }
+
   if (!canCancelStatus(order.status)) {
     return fail("INVALID_ORDER_STATE", `Order ${order.id} cannot be cancelled from state ${order.status}`, order);
   }
@@ -198,13 +202,13 @@ export async function modifyOrder(request: ModifyOrderRequest): Promise<Lifecycl
   }
 
   const normalizedPatch: LifecycleOrderPatch = {
-    quantity: patch.quantity ?? order.quantity,
-    price: patch.price ?? order.price,
-    triggerPrice: patch.triggerPrice ?? order.triggerPrice,
-    stopLoss: patch.stopLoss ?? order.stopLoss,
-    takeProfit: patch.takeProfit ?? order.takeProfit,
-    timeInForce: patch.timeInForce ?? order.timeInForce,
-    orderType: patch.orderType ?? order.orderType,
+    quantity: Object.prototype.hasOwnProperty.call(patch, "quantity") ? patch.quantity : order.quantity,
+    price: Object.prototype.hasOwnProperty.call(patch, "price") ? patch.price : order.price,
+    triggerPrice: Object.prototype.hasOwnProperty.call(patch, "triggerPrice") ? patch.triggerPrice : order.triggerPrice,
+    stopLoss: Object.prototype.hasOwnProperty.call(patch, "stopLoss") ? patch.stopLoss : order.stopLoss,
+    takeProfit: Object.prototype.hasOwnProperty.call(patch, "takeProfit") ? patch.takeProfit : order.takeProfit,
+    timeInForce: Object.prototype.hasOwnProperty.call(patch, "timeInForce") ? patch.timeInForce : order.timeInForce,
+    orderType: Object.prototype.hasOwnProperty.call(patch, "orderType") ? patch.orderType : order.orderType,
   };
 
   const nextOrder = normalizeOrder({

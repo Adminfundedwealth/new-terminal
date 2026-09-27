@@ -9,8 +9,10 @@ import {
   fetchTerminalRisk,
   fetchTerminalWatchlists,
   subscribeToTerminalOrders,
+  subscribeToTerminalPositions,
 } from "@/lib/terminalApi";
 import { CustomerOrderTable } from "@/components/CustomerOrderTable";
+import { CustomerPositionTable } from "@/components/CustomerPositionTable";
 import { useAccountContext, accountContextQueryKeys } from "@/hooks/useAccountContext";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -53,6 +55,13 @@ export function TerminalAccountData() {
       { queryKey: accountContextQueryKeys.terminal(userId, "watchlists", activeAccountId ?? "none"), queryFn: fetchTerminalWatchlists, retry: false, staleTime: 30_000, enabled: Boolean(user?.id) },
     ],
   });
+
+  useEffect(() => {
+    if (!activeAccountId || !user?.id) return;
+    return subscribeToTerminalPositions(activeAccountId, () => {
+      void positions.refetch();
+    });
+  }, [activeAccountId, user?.id, positions.refetch]);
 
   useEffect(() => {
     if (!activeAccountId || !user?.id) return;
@@ -115,6 +124,20 @@ export function TerminalAccountData() {
             <p className="mt-1 text-lg font-semibold">{watchlistsTotal}</p>
           </DataState>
         </div>
+      </div>
+      <div className="mt-3 border-t border-border/60 pt-3">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h3 className="text-xs font-semibold">Positions</h3>
+          {positions.data && <span className="text-[10px] text-muted-foreground">Canonical public.positions · account scoped</span>}
+        </div>
+        <CustomerPositionTable
+          positions={positions.data?.data ?? []}
+          isLoading={positions.isLoading}
+          isError={positions.isError}
+          isFetching={positions.isFetching && !positions.isLoading}
+          errorMessage={positions.error instanceof Error ? positions.error.message : undefined}
+          onRetry={() => void positions.refetch()}
+        />
       </div>
       <div className="mt-3 border-t border-border/60 pt-3">
         <div className="mb-2 flex items-center justify-between gap-2">

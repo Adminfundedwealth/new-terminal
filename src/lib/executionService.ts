@@ -8,8 +8,27 @@ import type { Instrument } from "./localDatabase";
 import type { BrokerAccountMapping, BrokerRuntime, BrokerRuntimeAccount } from "./brokerRuntime";
 import { handleBrokerResponse } from "./brokerResponseHandler";
 import type { CanonicalOrder } from "./orderModel";
+import type { CanonicalExecution } from "./executionModel";
 import { ExecutionLedger } from "./executionLedger";
 import { ingestBrokerExecution } from "./executionIngestion";
+import { RiskEventLedger, createRiskEventFromRiskEvaluation } from "./riskEvent";
+import { fromEnginePosition, type CanonicalPositionRow } from "./positionPersistence";
+import { recoverRiskState, type RecoveredRiskState } from "./riskRecovery";
+
+function positionsAgree(persisted: CanonicalPositionRow | null, reconstructed: CanonicalPositionRow | null): boolean {
+  if (!persisted || !reconstructed) return persisted === reconstructed;
+  return [
+    persisted.account_id === reconstructed.account_id,
+    persisted.symbol === reconstructed.symbol,
+    persisted.instrument_id === reconstructed.instrument_id,
+    persisted.quantity === reconstructed.quantity,
+    persisted.side === reconstructed.side,
+    persisted.average_price === reconstructed.average_price,
+    persisted.unrealized_pnl === reconstructed.unrealized_pnl,
+    persisted.realized_pnl === reconstructed.realized_pnl,
+    persisted.position_status === reconstructed.position_status,
+  ].every(Boolean);
+}
 
 export type ExecutionState = "SIMULATED" | "REAL" | "PENDING" | "REJECTED";
 export type ExecutionReasonCode = string;
@@ -49,7 +68,9 @@ export interface ExecutionServiceOptions {
   instrumentResolver?: (request: ExecutionRequest) => Promise<Instrument | null> | Instrument | null;
   allowedProducts?: string[];
   preTradeRiskGate?: (request: RiskRequest) => Promise<ReturnType<typeof evaluateRisk> | null>;
-  onRiskEvent?: (event: { accountId: string; decision: "ALLOW" | "REJECT"; reasonCode: string | null; reason: string; timestamp: string }) => void;
+  onRiskEvent?: (event: { accountId: string; decision: "ALLOW" | "REJECT"; reasonCode: string | null; reason: string; timestamp: string; riskEvent?: unknown }) => void;
+  canonicalState?: CanonicalTradingStatePersistence;
+  recoverUncertainOrder?: (order: CanonicalOrder, context: RestartRecoveryContext) => Promise<RestartRecoveryResult> | RestartRecoveryResult;
 }
 
 export interface ExecutionReceipt {
@@ -70,6 +91,41 @@ export interface ExecutionReceipt {
   canonicalOrder?: CanonicalOrder;
 }
 
+export interface CanonicalTradingState {
+  orders: CanonicalOrder[];
+  executions: CanonicalExecution[];
+  positions: CanonicalPositionRow[];
+}
+
+export interface CanonicalTradingStatePersistence {
+  load(accountId?: string, ownerUserId?: string): Promise<CanonicalTradingState>;
+  save(state: CanonicalTradingState): Promise<void>;
+}
+
+export type PositionRecoveryStatus = "MATCH" | "MISMATCH";
+
+export interface PositionRecoveryMismatch {
+  accountId: string;
+  symbol: string;
+  persisted: CanonicalPositionRow | null;
+  reconstructed: CanonicalPositionRow | null;
+}
+
+export interface PositionRecoveryResult {
+  status: PositionRecoveryStatus;
+  mismatches: PositionRecoveryMismatch[];
+  persistedPositionCount: number;
+  reconstructedPositionCount: number;
+}
+
+export interface RestartRecoveryContext {
+  accountId: string;
+  ownerUserId: string | null;
+  reason: "restart";
+}
+
+export type RestartRecoveryResult = "resolved" | "unresolved" | "skipped";
+
 export class ExecutionService {
   private readonly router: BrokerRouter;
   private readonly options: Required<Pick<ExecutionServiceOptions, "mode" | "realOrderEnabled" | "authUserId" | "riskRules" | "riskState" | "accountResolver" | "brokerMappingResolver" | "brokerRuntime" | "instrumentResolver" | "allowedProducts">>;
@@ -81,6 +137,16 @@ export class ExecutionService {
   private readonly accountLocks = new Map<string, Promise<void>>();
   private readonly preTradeRiskGate: ExecutionServiceOptions["preTradeRiskGate"];
   private readonly onRiskEvent: ExecutionServiceOptions["onRiskEvent"];
+  private readonly riskEventLedger = new RiskEventLedger();
+  private readonly canonicalState?: CanonicalTradingStatePersistence;
+  private readonly recoverUncertainOrder?: ExecutionServiceOptions["recoverUncertainOrder"];
+  private readonly recoveredRiskStates = new Map<string, RecoveredRiskState>();
+  private lastPositionRecovery: PositionRecoveryResult = {
+    status: "MATCH",
+    mismatches: [],
+    persistedPositionCount: 0,
+    reconstructedPositionCount: 0,
+  };
 
   constructor(router: BrokerRouter, options: ExecutionServiceOptions = {}) {
     this.router = router;
@@ -98,6 +164,178 @@ export class ExecutionService {
     };
     this.preTradeRiskGate = options.preTradeRiskGate;
     this.onRiskEvent = options.onRiskEvent;
+    this.canonicalState = options.canonicalState;
+    this.recoverUncertainOrder = options.recoverUncertainOrder;
+  }
+
+  async recoverFromCanonicalState(accountId?: string, ownerUserId?: string): Promise<CanonicalTradingState> {
+    if (!this.canonicalState) throw new Error("Canonical trading state persistence is not configured");
+    const loaded = await this.canonicalState.load(accountId, ownerUserId ?? this.options.authUserId);
+    const orders = loaded.orders.filter((order) => (!accountId || order.accountId === accountId) && (!ownerUserId || order.ownerUserId === ownerUserId));
+    const orderIds = new Set(orders.map((order) => order.id));
+    const executions = loaded.executions
+      .filter((execution) => orderIds.has(execution.orderId) && (!accountId || execution.accountId === accountId) && (!ownerUserId || execution.ownerUserId === ownerUserId))
+      .sort((left, right) => left.executedAt.localeCompare(right.executedAt) || left.id.localeCompare(right.id));
+
+    this.idempotency.clear();
+    this.idempotencyFingerprints.clear();
+    this.positionEngines.clear();
+    this.executionLedger.restore(orders, executions);
+    for (const execution of executions) {
+      const engine = this.positionEngines.get(execution.accountId) ?? new PositionEngine(execution.accountId);
+      this.positionEngines.set(execution.accountId, engine);
+      engine.applyCanonicalExecution(execution);
+    }
+      for (const persistedPosition of loaded.positions) {
+        if (persistedPosition.last_price == null) continue;
+        const engine = this.positionEngines.get(persistedPosition.account_id);
+        if (!engine) continue;
+        engine.valueMarketPrice({
+          instrumentKey: persistedPosition.instrument_id ?? persistedPosition.symbol,
+          symbol: persistedPosition.symbol,
+          price: persistedPosition.last_price,
+          asOf: persistedPosition.updated_at,
+          staleAfterMs: Number.MAX_SAFE_INTEGER,
+          preserveUpdatedAt: true,
+        });
+      }
+    const persistedPositions = loaded.positions.filter((position) =>
+      (!accountId || position.account_id === accountId) &&
+      (!ownerUserId || position.owner_user_id === ownerUserId) &&
+      (position.position_status === "open" || position.quantity > 0),
+    );
+    const reconstructedPositions = this.reconstructPositions(loaded.positions, executions, accountId, ownerUserId);
+    this.lastPositionRecovery = this.compareRecoveredPositions(persistedPositions, reconstructedPositions);
+    for (const order of orders) {
+      if (order.clientOrderId) {
+        this.idempotencyFingerprints.set(order.clientOrderId, order.idempotencyFingerprint ?? this.fingerprintFromOrder(order));
+        this.idempotency.set(order.clientOrderId, this.receiptFromOrder(order));
+      }
+      if (["pending", "open", "cancel_requested"].includes(order.status) && this.recoverUncertainOrder) {
+        await this.recoverUncertainOrder(order, { accountId: order.accountId, ownerUserId: order.ownerUserId, reason: "restart" });
+      }
+    }
+    const accounts = new Set(orders.map((order) => order.accountId));
+    for (const recoveredAccountId of accounts) {
+      const accountRiskState = this.options.riskState;
+      const rules = this.options.riskRules;
+      const engine = this.positionEngines.get(recoveredAccountId);
+      if (!accountRiskState || !rules || !engine) continue;
+      const valuation = engine.accountValuation(accountRiskState.current_balance);
+      const latestExecution = executions.filter((execution) => execution.accountId === recoveredAccountId).at(-1);
+      const recovered = recoverRiskState({ accountId: recoveredAccountId, accountState: accountRiskState, rules, valuation, positions: engine.riskSnapshot(), asOf: latestExecution ? new Date(latestExecution.executedAt) : new Date(0) });
+      this.recoveredRiskStates.set(recoveredAccountId, recovered);
+      const recordedRiskEvent = recovered.riskEvent ? this.riskEventLedger.recordRiskEvent(recovered.riskEvent) : null;
+      if (recovered.riskEvent && !recordedRiskEvent?.replayed) this.onRiskEvent?.({ accountId: recoveredAccountId, decision: "REJECT", reasonCode: recovered.breachReasonCode, reason: recovered.riskEvent.reason, timestamp: recovered.riskEvent.occurredAt, riskEvent: recordedRiskEvent?.event ?? recovered.riskEvent });
+    }
+    const state = { ...this.exportCanonicalState(), positions: reconstructedPositions };
+    if (this.lastPositionRecovery.status === "MATCH" || persistedPositions.length === 0) await this.canonicalState.save(state);
+    return state;
+  }
+
+  getRecoveredRiskState(accountId: string): RecoveredRiskState | null {
+    return this.recoveredRiskStates.get(accountId) ?? null;
+  }
+
+  getLastPositionRecovery(): PositionRecoveryResult {
+    return {
+      ...this.lastPositionRecovery,
+      mismatches: this.lastPositionRecovery.mismatches.map((mismatch) => ({ ...mismatch })),
+    };
+  }
+
+  getRecoveredAccountValuation(accountId: string, balance: number): ReturnType<PositionEngine["accountValuation"]> | null {
+    return this.positionEngines.get(accountId)?.accountValuation(balance) ?? null;
+  }
+
+  private reconstructPositions(
+    persistedPositions: CanonicalPositionRow[],
+    executions: CanonicalExecution[],
+    accountId?: string,
+    ownerUserId?: string,
+  ): CanonicalPositionRow[] {
+    const persistedBySymbol = new Map(persistedPositions.map((position) => [`${position.account_id}:${position.symbol}`, position]));
+    return [...this.positionEngines.entries()].flatMap(([currentAccountId, engine]) => engine.getPositions().map((position) => {
+      const matchingExecution = executions.find((execution) => execution.accountId === currentAccountId && (execution.instrumentId ?? execution.symbol) === position.instrumentKey && execution.symbol === position.symbol);
+      const persisted = persistedBySymbol.get(`${currentAccountId}:${position.symbol}`);
+      const owner = persisted?.owner_user_id ?? matchingExecution?.ownerUserId ?? ownerUserId ?? "recovered";
+      const reconstructed = fromEnginePosition(position, owner, { accountId: currentAccountId, ownerUserId: owner, instrumentId: matchingExecution?.instrumentId ?? null });
+      return persisted ? { ...reconstructed, id: persisted.id } : reconstructed;
+    })).filter((position) => !accountId || position.account_id === accountId);
+  }
+
+  private compareRecoveredPositions(persistedPositions: CanonicalPositionRow[], reconstructedPositions: CanonicalPositionRow[]): PositionRecoveryResult {
+    if (persistedPositions.length === 0) {
+      return { status: "MATCH", mismatches: [], persistedPositionCount: 0, reconstructedPositionCount: reconstructedPositions.length };
+    }
+    const persistedByKey = new Map(persistedPositions.map((position) => [`${position.account_id}:${position.symbol}`, position]));
+    const reconstructedByKey = new Map(reconstructedPositions.map((position) => [`${position.account_id}:${position.symbol}`, position]));
+    const keys = [...new Set([...persistedByKey.keys(), ...reconstructedByKey.keys()])].sort();
+    const mismatches = keys.flatMap((key) => {
+      const persisted = persistedByKey.get(key) ?? null;
+      const reconstructed = reconstructedByKey.get(key) ?? null;
+      if (positionsAgree(persisted, reconstructed)) return [];
+      return [{ accountId: reconstructed?.account_id ?? persisted?.account_id ?? "", symbol: reconstructed?.symbol ?? persisted?.symbol ?? "", persisted, reconstructed }];
+    });
+    return {
+      status: mismatches.length === 0 ? "MATCH" : "MISMATCH",
+      mismatches,
+      persistedPositionCount: persistedPositions.length,
+      reconstructedPositionCount: reconstructedPositions.length,
+    };
+  }
+
+  exportCanonicalState(): CanonicalTradingState {
+    const positions = [...this.positionEngines.entries()].flatMap(([accountId, engine]) => {
+      const ownerUserId = this.executionLedger.getOrders().find((order) => order.accountId === accountId)?.ownerUserId ?? "recovered";
+      return engine.getPositions().map((position) => fromEnginePosition(position, ownerUserId, { accountId, ownerUserId }));
+    });
+    return { orders: this.executionLedger.getOrders(), executions: this.executionLedger.getExecutions(), positions };
+  }
+
+  getPositions(accountId: string) {
+    return this.positionEngines.get(accountId)?.getPositions() ?? [];
+  }
+
+  getAccountValuation(accountId: string, balance: number) {
+    return this.positionEngines.get(accountId)?.accountValuation(balance) ?? {
+      accountId,
+      balance,
+      equity: balance,
+      realizedPnl: 0,
+      unrealizedPnl: 0,
+      fees: 0,
+      exposure: 0,
+      openPositionCount: 0,
+      marketDataStatus: "VALUED" as const,
+    };
+  }
+
+  private fingerprintFromOrder(order: CanonicalOrder): string {
+    return JSON.stringify([order.accountId, order.symbol, order.exchange, order.segment, order.side, order.quantity, order.orderType, order.price, order.triggerPrice, order.timeInForce, order.stopLoss, order.takeProfit, order.instrumentId]);
+  }
+
+  private receiptFromOrder(order: CanonicalOrder): ExecutionReceipt {
+    return {
+      state: order.status === "rejected" ? "REJECTED" : order.status === "pending" || order.status === "open" || order.status === "partially_filled" ? "PENDING" : "REAL",
+      reasonCode: order.rejectionReason,
+      reason: "Recovered from canonical trading state",
+      replay: true,
+      orderId: order.id,
+      brokerOrderId: order.brokerOrderId ?? `pending:${order.clientOrderId ?? order.id}`,
+      accountId: order.accountId,
+      brokerId: "dhan",
+      symbol: order.symbol,
+      side: order.side,
+      quantity: order.quantity,
+      executedAt: order.createdAt,
+      executionMode: this.options.mode,
+      canonicalOrder: order,
+    };
+  }
+
+  private async persistCanonicalState(): Promise<void> {
+    if (this.canonicalState) await this.canonicalState.save(this.exportCanonicalState());
   }
 
   async syncBrokerOrder(brokerOrderId: string, accountId: string, authUserId: string): Promise<{ status: string; position: { quantity: number; symbol: string; side: string; averageEntryPrice: number } | null; pnl: number; reconciled: boolean; fills: unknown[]; }> {
@@ -118,7 +356,7 @@ export class ExecutionService {
       const normalized = this.options.brokerRuntime.normalizeBrokerExecution(fill as any);
       if (receipt?.canonicalOrder?.ownerUserId === authUserId) {
         const thisLedger = this.executionLedger;
-        await ingestBrokerExecution({
+        const ingested = await ingestBrokerExecution({
           ...normalized,
           localOrderId: receipt.canonicalOrder.id,
           brokerOrderId: normalized.brokerOrderId || brokerOrderId,
@@ -129,6 +367,11 @@ export class ExecutionService {
             return { execution: result.execution, replayed: result.replayed };
           },
         });
+        const updatedOrder = this.executionLedger.getOrder(ingested.execution.orderId);
+        if (updatedOrder) this.executionLedger.registerOrder(updatedOrder);
+        if (ingested.replayed) continue;
+      } else {
+        continue;
       }
       engine.applyExecution({
         id: normalized.brokerExecutionId,
@@ -141,6 +384,8 @@ export class ExecutionService {
         executedAt: normalized.executedAt,
       });
     }
+
+    await this.persistCanonicalState();
 
     const position = engine.getPositions().find((entry) => entry.quantity > 0) ?? null;
     const pnl = position ? Number(position.totalPnl ?? (position.realizedPnl + (position.unrealizedPnl ?? 0) - position.fees)) : 0;
@@ -243,6 +488,7 @@ export class ExecutionService {
   private async placeOrderSerialized(request: ExecutionRequest): Promise<ExecutionReceipt> {
     const now = request.now ?? new Date();
     const idempotencyKey = request.idempotencyKey ?? `${request.accountId}:${request.brokerId}:${request.symbol}:${request.side}:${request.quantity}:${request.orderType}`;
+    const fingerprint = this.requestFingerprint(request);
     const existing = this.idempotency.get(idempotencyKey);
     if (existing) {
       return { ...existing, replay: true };
@@ -302,7 +548,7 @@ export class ExecutionService {
         riskEvaluation = {
           decision: "ALLOW",
           reason_code: null,
-          reason: "Simulation mode does not enforce the live pre-trade gate",
+          reason: "Simulation mode uses the canonical risk path when configured and otherwise defaults to the project’s permissive local simulation behavior",
           account_id: request.accountId,
           rule_evaluated: "simulated_mode",
           current_value: null,
@@ -315,7 +561,16 @@ export class ExecutionService {
       }
     }
     const riskDecision = riskEvaluation.decision;
-    this.onRiskEvent?.({ accountId: request.accountId, decision: riskDecision, reasonCode: riskEvaluation.reason_code, reason: riskEvaluation.reason, timestamp: riskEvaluation.timestamp });
+    const riskEvent = createRiskEventFromRiskEvaluation(riskEvaluation, { source: "execution_service", metadata: { idempotencyKey, symbol: request.symbol, segment: request.segment, side: request.side, quantity: request.quantity } });
+    const recordedRiskEvent = riskEvent ? this.riskEventLedger.recordRiskEvent(riskEvent) : null;
+    this.onRiskEvent?.({
+      accountId: request.accountId,
+      decision: riskDecision,
+      reasonCode: riskEvaluation.reason_code,
+      reason: riskEvaluation.reason,
+      timestamp: riskEvaluation.timestamp,
+      riskEvent: recordedRiskEvent?.event ?? riskEvent,
+    });
     if (riskDecision === "REJECT") {
       return this.reject(request, riskEvaluation.reason_code as ExecutionReasonCode ?? "RISK_REJECTED", riskEvaluation.reason, idempotencyKey, false, now, riskEvaluation);
     }
@@ -324,6 +579,17 @@ export class ExecutionService {
     if (!brokerAdapter && !this.options.brokerRuntime) {
       return this.reject(request, "BROKER_NOT_AVAILABLE", `No broker adapter is configured for ${request.brokerId}`, idempotencyKey, false, now);
     }
+
+    const pendingCanonicalOrder: CanonicalOrder = {
+      ...validation.order,
+      clientOrderId: idempotencyKey,
+      idempotencyFingerprint: fingerprint,
+      status: "pending",
+      submittedAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+    this.executionLedger.registerOrder(pendingCanonicalOrder);
+    await this.persistCanonicalState();
 
     if (mode === "REAL") {
       const realContext = await this.resolveRealExecutionContext(request);
@@ -376,6 +642,7 @@ export class ExecutionService {
       }
 
       const realOrderId = brokerResponse.order.brokerOrderId ?? `pending:${idempotencyKey}`;
+      const canonicalOrder = { ...brokerResponse.order, clientOrderId: idempotencyKey, idempotencyFingerprint: fingerprint };
       const receipt: ExecutionReceipt = {
         state: brokerResponse.response.outcome === "rejected" ? "REJECTED" : brokerResponse.response.outcome === "accepted" ? "REAL" : "PENDING",
         reasonCode: brokerResponse.response.outcome === "rejected" ? "BROKER_REJECTED" : null,
@@ -391,9 +658,11 @@ export class ExecutionService {
         executedAt: now.toISOString(),
         executionMode: "REAL",
         riskEvaluation: null,
-        canonicalOrder: brokerResponse.order,
+        canonicalOrder,
       };
       this.idempotency.set(idempotencyKey, receipt);
+      this.executionLedger.registerOrder(canonicalOrder);
+      await this.persistCanonicalState();
       return receipt;
     }
 
@@ -415,6 +684,8 @@ export class ExecutionService {
       riskEvaluation: null,
       canonicalOrder: {
         ...validation.order,
+        clientOrderId: idempotencyKey,
+        idempotencyFingerprint: fingerprint,
         brokerOrderId: simulatedOrderId,
         status: "pending",
         submittedAt: now.toISOString(),
@@ -422,6 +693,8 @@ export class ExecutionService {
       },
     };
     this.idempotency.set(idempotencyKey, receipt);
+    this.executionLedger.registerOrder(receipt.canonicalOrder);
+    await this.persistCanonicalState();
     return receipt;
   }
 

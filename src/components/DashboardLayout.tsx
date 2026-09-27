@@ -131,7 +131,7 @@ export default function DashboardLayout() {
 
   return (
     <SidebarProvider>
-      <div className="min-h-screen flex w-full bg-background relative overflow-hidden">
+      <div className="dashboard-shell min-h-screen flex w-full bg-background relative overflow-hidden">
         <div className="absolute inset-0 bg-[linear-gradient(180deg,hsl(var(--primary)/0.035)_0%,transparent_22rem),linear-gradient(90deg,hsl(var(--primary)/0.025)_0%,transparent_36rem)] pointer-events-none" />
         <div className="bg-noise" />
 
@@ -332,23 +332,53 @@ export default function DashboardLayout() {
             </div>
           </header>
 
-          <main className="flex-1 overflow-auto p-2.5 sm:p-3 lg:p-4 pb-14 sm:pb-12">
+          <main className="dashboard-main flex min-h-0 flex-1 flex-col overflow-auto p-2.5 sm:p-3 lg:p-4 pb-14 sm:pb-12">
             {accountContext && (
-              <section className="mb-3 grid gap-2 rounded-lg border border-border/70 bg-card/70 p-3 sm:grid-cols-4" aria-label="Server-authoritative account risk context">
-                <div className="sm:col-span-4 flex items-center justify-between gap-2">
-                  <div>
-                    <h2 className="text-sm font-semibold">Account risk context</h2>
-                    <p className="text-[11px] text-muted-foreground">Server-resolved rules and risk state. No order execution is performed.</p>
-                  </div>
-                  <span className="rounded border border-border px-2 py-1 text-[10px] font-semibold tracking-wide">{accountContext.risk_state.status ?? "UNKNOWN"}</span>
-                </div>
-                <div><p className="text-[10px] uppercase text-muted-foreground">Daily loss</p><p className="font-mono text-sm">{accountContext.risk_state.daily_loss == null ? "--" : accountContext.risk_state.daily_loss.toFixed(2)}</p></div>
-                <div><p className="text-[10px] uppercase text-muted-foreground">Drawdown</p><p className="font-mono text-sm">{accountContext.risk_state.drawdown_amount == null ? "--" : accountContext.risk_state.drawdown_amount.toFixed(2)}</p></div>
-                <div><p className="text-[10px] uppercase text-muted-foreground">Profit target</p><p className="font-mono text-sm">{accountContext.risk_state.profit_target == null ? "--" : accountContext.risk_state.profit_target.toFixed(2)}</p></div>
-                <div><p className="text-[10px] uppercase text-muted-foreground">Open risk events</p><p className="font-mono text-sm">{accountContext.risk_state.open_events}</p></div>
+              <section className="mb-3 overflow-x-auto rounded-lg border border-border/70 bg-card/70 px-3 py-2" aria-label="Account status">
+                {(() => {
+                  const account = accountContext.account;
+                  const risk = accountContext.risk_state;
+                  const rules = accountContext.rules;
+                  const formatCurrency = (value: unknown) => typeof value === "number" && Number.isFinite(value)
+                    ? `₹${value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    : "—";
+                  const formatPnl = (value: unknown) => typeof value === "number" && Number.isFinite(value)
+                    ? `${value > 0 ? "+" : value < 0 ? "−" : ""}${formatCurrency(Math.abs(value))}`
+                    : "—";
+                  const accountType = account.account_type ?? account.challenge_type ?? accountContext.product.name ?? "—";
+                  const accountStatus = account.status === "active"
+                    ? risk.status ?? account.status
+                    : account.status ?? risk.status ?? "UNKNOWN";
+                  const metrics = [
+                    ["Account Type", String(accountType).replace(/[_-]+/g, " ")],
+                    ["Balance", formatCurrency(account.current_balance)],
+                    ["Equity", formatCurrency(account.equity)],
+                    ["Available Funds", formatCurrency(account.available_margin)],
+                    ["Total P&L", formatPnl(risk.profit_current)],
+                    ["Daily Loss", `${formatCurrency(risk.daily_loss)} / ${formatCurrency(rules.daily_loss_limit)}`],
+                    ["Max Drawdown", `${formatCurrency(risk.drawdown_amount)} / ${formatCurrency(rules.maximum_drawdown)}`],
+                    ["Profit Target", risk.profit_target == null ? "—" : `${formatCurrency(risk.profit_current)} / ${formatCurrency(risk.profit_target)}`],
+                    ["Open Risk Events", String(risk.open_events)],
+                  ];
+                  return (
+                    <div className="grid min-w-[1250px] grid-cols-[1.1fr_1fr_1fr_1.15fr_1fr_1.5fr_1.6fr_1.5fr_1fr_auto] items-center">
+                      {metrics.map(([label, value], index) => (
+                        <div key={label} className={`min-w-0 flex-1 px-2 first:pl-0 ${index > 0 ? "border-l border-border/70" : ""}`}>
+                          <p className="whitespace-nowrap text-[9px] leading-3 uppercase text-muted-foreground">{label}</p>
+                          <p className={`whitespace-nowrap font-mono text-xs leading-4 tabular-nums ${label === "Total P&L" && typeof risk.profit_current === "number" ? risk.profit_current >= 0 ? "text-bullish" : "text-bearish" : ""}`}>
+                            {value}
+                          </p>
+                        </div>
+                      ))}
+                      <div className="shrink-0 border-l border-border/70 pl-3">
+                        <span className="rounded border border-border px-2 py-1 text-[10px] font-semibold tracking-wide">{String(accountStatus).toUpperCase()}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </section>
             )}
-            <div className="page-transition" key={location.pathname}>
+            <div className="page-transition min-h-0 flex-1" key={location.pathname}>
               <Outlet />
             </div>
           </main>

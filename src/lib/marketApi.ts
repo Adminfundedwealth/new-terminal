@@ -1,8 +1,12 @@
 import type { OptionData, ExpiryDate, IndexData } from "./mockData";
 import { ZerodhaAdapter } from "./zerodhaAdapter";
+import { InstrumentMaster, normalizeInstrumentMaster } from "./instrumentMaster";
+import { normalizeQuote, toLegacyQuote } from "./quoteService";
+import { classifyInstrument, isProductionInstrument } from "./instrumentClassification";
+import type { NormalizedQuote } from "./brokerAdapter";
 
 // Local proxy base URL — override via VITE_PROXY_URL if deploying proxy elsewhere
-const PROXY_BASE = import.meta.env.VITE_PROXY_URL || "http://localhost:4002";
+const PROXY_BASE = import.meta.env.VITE_PROXY_URL || "";
 
 export interface IndianNewsArticle {
   headline: string;
@@ -262,75 +266,28 @@ export function parseNSEOptionChain(raw: NSEOptionChainResponse, selectedExpiry?
 
 // ── Exported fetch functions ──
 
-// Dhan Option Chain (primary) with NSE fallback
+// Live option-chain data is Kite-only; unavailable Kite sessions must not be masked by another provider.
 export async function fetchLiveOptionChain(symbol: string, expiry?: string) {
-  try {
-    const kiteStatus = await fetch(`${PROXY_BASE}/api/kite/status`, { credentials: "include" });
-    if (kiteStatus.ok && (await kiteStatus.json()).authenticated) {
-      const { ZerodhaAdapter } = await import("./zerodhaAdapter");
-      const result = await new ZerodhaAdapter().getOptionChain(symbol, expiry);
-      if (result.data) {
-        return {
-          chain: result.data.chain,
-          spotPrice: result.data.spotPrice,
-          expiries: result.data.expiries.map((value) => ({ label: value, value, daysToExpiry: 0 })),
-          totalCEOI: result.data.totalCEOI || 0,
-          totalPEOI: result.data.totalPEOI || 0,
-          source: "zerodha" as const,
-          afterHours: result.data.afterHours || false,
-          cachedAt: result.data.cachedAt || null,
-        };
-      }
-    }
-  } catch (error) {
-    console.warn("Kite option chain unavailable, trying Dhan/NSE:", error);
+  const kiteStatus = await fetch(`${PROXY_BASE}/api/kite/status`, { credentials: "include" });
+  if (!kiteStatus.ok || !(await kiteStatus.json()).authenticated) {
+    throw new Error("Kite OAuth authentication is required for live option-chain data.");
   }
 
-  // Try Dhan first
-  try {
-    const params: Record<string, string> = { symbol: symbol.toUpperCase() };
-    if (expiry) params.expiry = expiry;
-    const raw = await fetchDhanProxy("option-chain", params);
-    if (raw?.status === "success" && raw?.data?.oc) {
-      const parsed = parseDhanOptionChain(raw);
-      // Also fetch expiry list
-      let expiries: ExpiryDate[] = [];
-      try {
-        const expiryRaw = await fetchDhanProxy("expiry-list", { symbol: symbol.toUpperCase() });
-        if (expiryRaw?.data) {
-          expiries = expiryRaw.data.map((dateStr: string) => {
-            const d = new Date(dateStr);
-            const days = Math.max(0, Math.ceil((d.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
-            return {
-              label: d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }),
-              value: dateStr,
-              daysToExpiry: days,
-            };
-
-          });
-        }
-      } catch {
-        // Expiry fetch failed, continue with chain data
-      }
-      return {
-        ...parsed, expiries, source: "dhan" as const,
-        afterHours: raw.afterHours || false,
-        cachedAt: raw.cachedAt || null,
-      };
-    }
-  } catch (e) {
-    console.warn("Dhan option chain fetch failed, trying NSE:", e);
-  }
-
-  // Fallback to NSE
-  try {
-    const raw = await fetchNSEProxy("option-chain", symbol);
-    const parsed = parseNSEOptionChain(raw, expiry);
-    return { ...parsed, source: "nse" as const, afterHours: false, cachedAt: null };
-  } catch (e) {
-    console.warn("NSE option chain also failed:", e);
-    throw e;
-  }
+  const { ZerodhaAdapter } = await import("./zerodhaAdapter");
+  const result = await new ZerodhaAdapter().getOptionChain(symbol, expiry);
+  if (!result.data) throw new Error(result.message || "Kite option-chain data is unavailable.");
+  return {
+    chain: result.data.chain,
+    spotPrice: result.data.spotPrice,
+    expiries: result.data.expiries.map((value) => ({ label: value, value, daysToExpiry: 0 })),
+    totalCEOI: result.data.totalCEOI || 0,
+    totalPEOI: result.data.totalPEOI || 0,
+    source: "zerodha" as const,
+    afterHours: result.data.afterHours || false,
+    cachedAt: result.data.cachedAt || null,
+    greeksAvailable: result.data.greeksAvailable,
+    oiChangeAvailable: result.data.oiChangeAvailable,
+  };
 }
 
 export async function fetchDhanQuote(symbol: string) {
@@ -346,6 +303,12 @@ export async function fetchDhanQuote(symbol: string) {
     changePercent: previousClose ? ((ltp - previousClose) / previousClose) * 100 : 0,
     timestamp: new Date().toISOString(),
   };
+}
+
+export function normalizeDhanQuotePayload(raw: unknown, symbol: string, master: import("./instrumentMaster").InstrumentMaster, now = Date.now()) {
+  const instrument = master.getByExchangeSymbol("NSE", symbol) || master.getByExchangeSymbol("NSE", `${symbol} 50`);
+  const result = normalizeQuote({ provider: "dhan", payload: raw, providerInstrumentId: instrument?.providerInstrumentId, exchange: instrument?.exchange, symbol: instrument?.tradingSymbol, now }, master);
+  return { ...result, quote: result.quote ? toLegacyQuote(result.quote) : undefined };
 }
 
 // Dhan expiry list
@@ -457,12 +420,128 @@ export interface FnOStockData {
   sector?: string;
 }
 
+export function normalizeKiteFnOStockQuotes(
+  instruments: import("./localDatabase").Instrument[],
+  quotes: NormalizedQuote[],
+): FnOStockData[] {
+  const quotesByToken = new Map(quotes.map((quote) => [quote.providerInstrumentId ?? quote.instrumentId ?? "", quote]));
+  const futuresSymbols = new Set(instruments
+    .filter((instrument) => isProductionInstrument(instrument) && classifyInstrument(instrument) === "futures")
+    .map((instrument) => instrument.symbol.toUpperCase()));
+
+  return instruments.flatMap((instrument) => {
+    if (classifyInstrument(instrument) !== "stocks" || ![instrument.symbol, instrument.tradingSymbol].some((symbol) => futuresSymbols.has(symbol.toUpperCase()))) return [];
+    const quote = quotesByToken.get(instrument.providerInstrumentId) ?? quotesByToken.get(instrument.securityId);
+    if (!quote || quote.ltp <= 0) return [];
+    return [{
+      symbol: instrument.tradingSymbol,
+      ltp: quote.ltp,
+      change: quote.change,
+      changePercent: quote.changePercent,
+      open: quote.open ?? quote.ltp,
+      high: quote.high ?? quote.ltp,
+      low: quote.low ?? quote.ltp,
+      previousClose: quote.previousClose ?? quote.ltp - quote.change,
+      volume: quote.volume ?? 0,
+      totalTradedVolume: quote.volume ?? 0,
+      openInterest: 0,
+      oiChange: 0,
+      sector: "",
+    }];
+  });
+}
+
+let quoteInstrumentMasterPromise: Promise<InstrumentMaster | undefined> | undefined;
+
+async function getQuoteInstrumentMaster(): Promise<InstrumentMaster | undefined> {
+  if (!quoteInstrumentMasterPromise) {
+    quoteInstrumentMasterPromise = fetchInstrumentMaster()
+      .then(({ instruments }) => {
+        const master = new InstrumentMaster();
+        master.addAll(instruments);
+        return master;
+      })
+      .catch((error) => {
+        quoteInstrumentMasterPromise = undefined;
+        console.warn("Canonical quote instrument master unavailable:", error);
+        return undefined;
+      });
+  }
+  return quoteInstrumentMasterPromise;
+}
+
+async function canonicalizeFnOStocks(stocks: FnOStockData[], provider: string): Promise<FnOStockData[]> {
+  const master = await Promise.race([
+    getQuoteInstrumentMaster(),
+    new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 3000)),
+  ]);
+  if (!master) return stocks;
+
+  return stocks.flatMap((stock) => {
+    const instrument = master.getByExchangeSymbol("NSE", stock.symbol)
+      ?? master.values().find((candidate) => candidate.exchange === "NSE" && candidate.symbol.toUpperCase() === stock.symbol.toUpperCase());
+    if (!instrument) return [];
+    const result = normalizeQuote({
+      provider,
+      payload: {
+        ltp: stock.ltp,
+        previousClose: stock.previousClose,
+        open: stock.open,
+        high: stock.high,
+        low: stock.low,
+        volume: stock.volume,
+        timestamp: new Date().toISOString(),
+      },
+      instrumentId: instrument.securityId,
+      providerInstrumentId: instrument.providerInstrumentId,
+      exchange: instrument.exchange,
+      symbol: instrument.symbol,
+    }, master);
+    const quote = result.quote ? toLegacyQuote(result.quote) : undefined;
+    if (!quote) return [];
+    return [{
+      ...stock,
+      symbol: stock.symbol,
+      ltp: quote.ltp,
+      change: quote.change,
+      changePercent: quote.changePercent,
+      open: quote.open ?? stock.open,
+      high: quote.high ?? stock.high,
+      low: quote.low ?? stock.low,
+      previousClose: quote.previousClose ?? stock.previousClose,
+      volume: quote.volume ?? stock.volume,
+    }];
+  });
+}
+
 export async function fetchLiveFnOStocks(): Promise<FnOStockData[]> {
+  try {
+    const kiteStatus = await fetch(`${PROXY_BASE}/api/kite/status`, { credentials: "include" });
+    if (kiteStatus.ok && (await kiteStatus.json()).authenticated) {
+      const adapter = new ZerodhaAdapter();
+      const instrumentResult = await adapter.getInstruments();
+      if (!instrumentResult.data) throw new Error(instrumentResult.message || "Kite instrument master unavailable.");
+
+      const futuresSymbols = new Set(instrumentResult.data
+        .filter((instrument) => isProductionInstrument(instrument) && classifyInstrument(instrument) === "futures")
+        .map((instrument) => instrument.symbol.toUpperCase()));
+      const eligibleEquities = instrumentResult.data.filter((instrument) =>
+        classifyInstrument(instrument) === "stocks" && [instrument.symbol, instrument.tradingSymbol].some((symbol) => futuresSymbols.has(symbol.toUpperCase()))
+      );
+      const quoteResult = await adapter.getQuotes(eligibleEquities.map((instrument) => instrument.tradingSymbol));
+      const kiteStocks = normalizeKiteFnOStockQuotes(instrumentResult.data, quoteResult.data ?? []);
+      if (kiteStocks.length > 0) return kiteStocks;
+      throw new Error("Kite returned no quotes for F&O equity instruments.");
+    }
+  } catch (error) {
+    console.warn("Kite F&O equity quotes unavailable, trying public sources:", error);
+  }
+
   // Try NSE first (has OI data)
   try {
     const raw = await fetchNSEProxy("equity-derivatives");
     if (raw?.data?.length > 0) {
-      return raw.data
+      const stocks = raw.data
         .filter((d: any) => d.symbol && d.symbol !== "NIFTY 50" && d.lastPrice)
         .map((d: any) => ({
           symbol: d.symbol,
@@ -479,6 +558,7 @@ export async function fetchLiveFnOStocks(): Promise<FnOStockData[]> {
           oiChange: d.changeinOpenInterest || 0,
           sector: d.meta?.industry || "",
         }));
+      return canonicalizeFnOStocks(stocks, "nse");
     }
   } catch (e) {
     console.warn("NSE F&O stocks fetch failed, trying TradingView:", e);
@@ -487,7 +567,7 @@ export async function fetchLiveFnOStocks(): Promise<FnOStockData[]> {
   // Fallback to TradingView Scanner (no OI but great LTP/volume data)
   try {
     const tvData = await fetchTradingViewStocks();
-    if (tvData.length > 0) return tvData;
+    if (tvData.length > 0) return canonicalizeFnOStocks(tvData, "tradingview");
   } catch (e) {
     console.warn("TradingView stocks fetch also failed:", e);
   }
@@ -567,24 +647,43 @@ export async function fetchProxyHealth(): Promise<any> {
 // ── Instrument Master Download ──
 
 export async function fetchInstrumentMaster(): Promise<{
-  instruments: any[];
+  instruments: import("./localDatabase").Instrument[];
   count: number;
 }> {
+  let kiteAuthenticated = false;
+  try {
+    const kiteStatus = await fetch(`${PROXY_BASE}/api/kite/status`, { credentials: "include" });
+    kiteAuthenticated = kiteStatus.ok && (await kiteStatus.json()).authenticated;
+    if (kiteAuthenticated) {
+      const result = await new ZerodhaAdapter().getInstruments();
+      if (result.data?.length) return { instruments: result.data, count: result.data.length };
+      throw new Error(result.message || "Kite instrument master is empty.");
+    }
+  } catch (error) {
+    console.warn("Kite instrument master unavailable, trying Dhan:", error);
+  }
+
   try {
     const result = await fetchDhanProxy("instruments");
-    if (Array.isArray(result?.instruments) && result.instruments.length > 0) return result;
+    if (Array.isArray(result?.instruments) && result.instruments.length > 0) {
+      const report = normalizeInstrumentMaster(result.instruments, "dhan");
+      if (report.instruments.length > 0) return { instruments: report.instruments, count: report.instruments.length };
+      throw new Error(`Dhan instrument master contained no valid instruments (${report.issues.length} rejected).`);
+    }
   } catch (error) {
-    console.warn("Dhan instrument master unavailable, trying Kite:", error);
+    console.warn("Dhan instrument master unavailable:", error);
   }
 
-  const kiteStatus = await fetch(`${PROXY_BASE}/api/kite/status`, { credentials: "include" });
-  if (!kiteStatus.ok || !(await kiteStatus.json()).authenticated) {
-    throw new Error("No provider instrument master is available.");
+  if (!kiteAuthenticated) {
+    const kiteStatus = await fetch(`${PROXY_BASE}/api/kite/status`, { credentials: "include" });
+    if (kiteStatus.ok && (await kiteStatus.json()).authenticated) {
+      const result = await new ZerodhaAdapter().getInstruments();
+      if (result.data?.length) return { instruments: result.data, count: result.data.length };
+      throw new Error(result.message || "Kite instrument master is empty.");
+    }
   }
 
-  const result = await new ZerodhaAdapter().getInstruments();
-  if (!result.data?.length) throw new Error(result.message || "Kite instrument master is empty.");
-  return { instruments: result.data, count: result.data.length };
+  throw new Error("No provider instrument master is available.");
 }
 
 // ── Historical Candle Data ──

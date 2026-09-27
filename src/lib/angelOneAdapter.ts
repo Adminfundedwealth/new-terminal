@@ -12,6 +12,7 @@ import {
   type NormalizedPosition,
   type NormalizedQuote,
 } from "./brokerAdapter";
+import { normalizeProviderInstrument } from "./instrumentMaster";
 
 const PROXY_BASE = import.meta.env.VITE_PROXY_URL || "http://localhost:4002";
 
@@ -73,7 +74,8 @@ export class AngelOneAdapter extends BaseBrokerAdapter {
       const response = await fetch("https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json");
       if (!response.ok) throw new Error(`Angel One instrument master failed (${response.status})`);
       const data = await response.json() as Array<Record<string, string>>;
-      return { provider: this.id, capability: "instruments", state: "not_verified", data: data.map((item) => ({ symbol: item.name || item.symbol, tradingSymbol: item.symbol, securityId: item.token, exchangeSegment: item.exch_seg, instrumentType: item.instrumenttype })) };
+      const normalized = data.map((item, index) => normalizeProviderInstrument({ ...item, symbol: item.name || item.symbol, tradingSymbol: item.symbol, securityId: item.token, exchangeSegment: item.exch_seg, instrumentType: item.instrumenttype, lotSize: item.lotsize, tickSize: item.tick_size }, "angel_one", index));
+      return { provider: this.id, capability: "instruments", state: "not_verified", data: normalized.flatMap((result) => result.instrument ? [result.instrument] : []) };
     } catch (error) {
       return { provider: this.id, capability: "instruments", state: "not_verified", message: error instanceof Error ? error.message : "Angel One instruments unavailable." };
     }
