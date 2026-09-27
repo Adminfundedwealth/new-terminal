@@ -2,23 +2,37 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 
+const localApiProxy = {
+  "/api/kite/login": { target: "http://127.0.0.1:4002", changeOrigin: true },
+  "/api/kite/callback": { target: "http://127.0.0.1:4002", changeOrigin: true },
+  "/api/kite-proxy": { target: "http://127.0.0.1:4002", changeOrigin: true },
+  "/api/kite/status": { target: "http://127.0.0.1:4002", changeOrigin: true },
+  "/api/dhan-proxy": { target: "http://127.0.0.1:4002", changeOrigin: true },
+  "/api/nse-proxy": { target: "http://127.0.0.1:4002", changeOrigin: true },
+  "/api/tv-scan": { target: "http://127.0.0.1:4002", changeOrigin: true },
+  "/api/yahoo-chart": { target: "http://127.0.0.1:4002", changeOrigin: true },
+  "/api/indian-news": { target: "http://127.0.0.1:4002", changeOrigin: true },
+  "/api/test-connection": { target: "http://127.0.0.1:4002", changeOrigin: true },
+  "/health": { target: "http://127.0.0.1:4002", changeOrigin: true },
+  "/api/terminal": { target: "http://127.0.0.1:4011", changeOrigin: true },
+};
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   server: {
     host: "0.0.0.0",
     port: 4001,
-    proxy: {
-      "/api/kite/login": { target: "http://localhost:4002", changeOrigin: true },
-      "/api/kite/callback": { target: "http://localhost:4002", changeOrigin: true },
-      "/api/kite-proxy": { target: "http://localhost:4002", changeOrigin: true },
-      "/api/kite/status": { target: "http://localhost:4002", changeOrigin: true },
-    },
+    proxy: localApiProxy,
     hmr: {
       overlay: false,
     },
   },
+  preview: {
+    proxy: localApiProxy,
+  },
   plugins: [react()],
   resolve: {
+    extensions: [".mjs", ".mts", ".ts", ".tsx", ".js", ".jsx", ".json"],
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
