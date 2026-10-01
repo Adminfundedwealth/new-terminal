@@ -14,7 +14,7 @@ import {
   type BrokerId,
 } from "./brokerAdapter";
 import { fetchDhanQuote, fetchHistoricalCandles, fetchInstrumentMaster, testDhanConnection } from "./marketApi";
-import { marketWS } from "./websocketClient";
+import { marketWS } from "./terminalRealtimeClient";
 import { ZerodhaAdapter } from "./zerodhaAdapter";
 import { AngelOneAdapter } from "./angelOneAdapter";
 import { UpstoxAdapter } from "./upstoxAdapter";

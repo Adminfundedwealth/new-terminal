@@ -19,9 +19,8 @@ import { StockChart } from "@/components/StockChart";
 import { toast } from "sonner";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { classifyInstrument } from "@/lib/instrumentClassification";
-import { getPreferredMarketAdapter } from "@/lib/brokerRouter";
-
-const PROXY_BASE = import.meta.env.VITE_PROXY_URL || "http://localhost:4002";
+import { requestTerminalMarketData, resolveTerminalMarketDataProvider, type TerminalMarketDataOptionChain } from "@/lib/terminalApi";
+import { useAccountContext } from "@/hooks/useAccountContext";
 
 // ── Symbol categories for organized browsing ──
 const SYMBOL_CATEGORIES: { label: string; symbols: { label: string; value: string }[] }[] = [
@@ -259,6 +258,7 @@ function OIBar({ value, max, side }: { value: number; max: number; side: "call" 
 export default function OptionChain({ defaultMarketView = "stocks" }: { defaultMarketView?: "stocks" | "indices" }) {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { activeAccountId, accounts } = useAccountContext();
   const { instruments: masterInstruments, isLoaded: isMasterLoaded } = useInstrumentLookup();
   const indexSymbols = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]);
   const stockSymbols = new Set(ALL_SYMBOLS.filter(s => !indexSymbols.has(s.value)).map(s => s.value));
@@ -321,6 +321,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
   }, [symbol, navigate]);
 
   const { data, isLoading, refetch } = useLiveOptionChain(symbol, selectedExpiry);
+  const marketDataProvider = resolveTerminalMarketDataProvider(accounts.find((account) => account.id === activeAccountId)?.broker_provider);
 
   const chain = useMemo(() => data?.chain ?? [], [data]);
   const expiries = useMemo(() => data?.expiries ?? [], [data]);
@@ -347,16 +348,16 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
       instrument.optionType === type;
 
     try {
-      const adapter = await getPreferredMarketAdapter();
-      if (adapter?.id !== "zerodha") {
-        toast.error("Connect Kite OAuth to chart live option contracts");
+      if (!marketDataProvider) {
+        toast.error("Connect a Terminal OS market-data account to chart live option contracts");
         return;
       }
-      const result = await adapter.getInstruments();
-      if (!result.data) throw new Error(result.message || "Kite instrument master unavailable.");
-      const contract = result.data.find(matchesContract);
+      const contract = masterInstruments.find((instrument) =>
+        matchesContract(instrument) &&
+        (instrument.provider === marketDataProvider || (marketDataProvider === "kite" && instrument.provider === "zerodha"))
+      );
       if (!contract?.tradingSymbol) {
-        toast.error(`Kite instrument master has no ${symbol} ${strike} ${type} contract for ${expiry}`);
+        toast.error(`Terminal OS instrument cache has no ${symbol} ${strike} ${type} contract for ${expiry}`);
         return;
       }
       const params = new URLSearchParams({
@@ -370,7 +371,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to resolve the option contract");
     }
-  }, [selectedExpiry, expiries, masterInstruments, symbol, navigate]);
+  }, [selectedExpiry, expiries, masterInstruments, symbol, navigate, marketDataProvider]);
 
   const atmStrike = useMemo(() => Math.round(spotPrice / stepSize) * stepSize, [spotPrice, stepSize]);
   const totalCEOI = chain.reduce((s, o) => s + o.ce.oi, 0);
@@ -502,74 +503,29 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     toast.success(`Exported ${enrichedChain.length} strikes to CSV`);
   }, [enrichedChain, symbol, expiries, selectedExpiry]);
 
-  // ── Download Past Option Chain from Dhan API ──
+  // ── Download a past option chain through Terminal OS ──
   const downloadPastOC = useCallback(async (pastExpiry: string) => {
     setIsDownloadingPast(true);
     try {
-      const res = await fetch(`${PROXY_BASE}/api/dhan-proxy?endpoint=option-chain&symbol=${symbol}&expiry=${pastExpiry}`, {
-        signal: AbortSignal.timeout(15000),
-      });
-      if (!res.ok) throw new Error(`API error: ${res.status}`);
-      const json = await res.json();
-      const chainData = json?.data || json;
-
-      // Parse Dhan option chain response into CSV
-      if (chainData && typeof chainData === "object") {
-        const headers = ["Strike","CE_LTP","CE_IV","CE_OI","CE_Volume","CE_Delta","CE_Bid","CE_Ask","PE_LTP","PE_IV","PE_OI","PE_Volume","PE_Delta","PE_Bid","PE_Ask"];
-        const rows: string[] = [];
-        
-        // Dhan returns data keyed by strike price
-        const oc = chainData.oc || chainData;
-        if (Array.isArray(oc)) {
-          oc.forEach((row: any) => {
-            rows.push([
-              row.strikePrice || row.strike_price || "",
-              row.ce_ltp || row.call_ltp || "",
-              row.ce_iv || row.call_iv || "",
-              row.ce_oi || row.call_oi || "",
-              row.ce_volume || row.call_volume || "",
-              row.ce_delta || "",
-              row.ce_bid || "",
-              row.ce_ask || "",
-              row.pe_ltp || row.put_ltp || "",
-              row.pe_iv || row.put_iv || "",
-              row.pe_oi || row.put_oi || "",
-              row.pe_volume || row.put_volume || "",
-              row.pe_delta || "",
-              row.pe_bid || "",
-              row.pe_ask || "",
-            ].join(","));
-          });
-        }
-
-        if (rows.length === 0) {
-          // Fallback: dump raw JSON as CSV
-          const blob = new Blob([JSON.stringify(chainData, null, 2)], { type: "application/json" });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = `${symbol}_${pastExpiry}_option_chain_raw.json`;
-          a.click();
-          URL.revokeObjectURL(url);
-          toast.success(`Downloaded raw option chain data for ${pastExpiry}`);
-        } else {
-          const csv = [headers.join(","), ...rows].join("\n");
-          const blob = new Blob([csv], { type: "text/csv" });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = `${symbol}_${pastExpiry}_option_chain.csv`;
-          a.click();
-          URL.revokeObjectURL(url);
-          toast.success(`Exported ${rows.length} strikes for ${pastExpiry}`);
-        }
-      }
+      if (!activeAccountId || !marketDataProvider) throw new Error("An active Terminal OS market-data account is required.");
+      const chainData = await requestTerminalMarketData<TerminalMarketDataOptionChain>(activeAccountId, marketDataProvider, { operation: "getOptionChain", underlying: symbol, expiry: pastExpiry });
+      const headers = ["Strike","CE_LTP","CE_IV","CE_OI","CE_Volume","CE_Delta","CE_Bid","CE_Ask","PE_LTP","PE_IV","PE_OI","PE_Volume","PE_Delta","PE_Bid","PE_Ask"];
+      const rows = chainData.chain.map((row) => [row.strikePrice, row.ce.ltp, row.ce.iv, row.ce.oi, row.ce.volume, row.ce.delta, row.ce.bidPrice, row.ce.askPrice, row.pe.ltp, row.pe.iv, row.pe.oi, row.pe.volume, row.pe.delta, row.pe.bidPrice, row.pe.askPrice].join(","));
+      const csv = [headers.join(","), ...rows].join("\n");
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${symbol}_${pastExpiry}_option_chain.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${rows.length} strikes for ${pastExpiry}`);
     } catch (err: any) {
       toast.error(`Failed to download: ${err.message}`);
     } finally {
       setIsDownloadingPast(false);
     }
-  }, [symbol]);
+  }, [activeAccountId, marketDataProvider, symbol]);
 
   // Active columns count for colSpan
   const callCols = [columnConfig.iv, columnConfig.intrinsic, columnConfig.timeValue, columnConfig.rho, columnConfig.vega, columnConfig.theta, columnConfig.gamma, columnConfig.delta, columnConfig.price, columnConfig.ask, columnConfig.bid, columnConfig.volume].filter(Boolean).length;

@@ -17,24 +17,29 @@ export default function Futures() {
   const { instruments, isLoaded } = useInstrumentLookup();
   const { activeAccountId, accounts } = useAccountContext();
   const activeAccountProvider = accounts.find((account) => account.id === activeAccountId)?.broker_provider;
-  const [providerInstruments, setProviderInstruments] = useState<Instrument[]>([]);
+  const activeProvider = resolveTerminalMarketDataProvider(activeAccountProvider);
   const kiteMarketQuery = useQuery({
-    queryKey: ["futures-market-data", "kite"],
+    queryKey: ["futures-market-data", activeAccountId, activeProvider],
     queryFn: async () => {
-      const adapter = await getPreferredMarketAdapter();
-      if (adapter?.id !== "zerodha") return null;
-
-      const instrumentResult = await adapter.getInstruments();
-      if (!instrumentResult.data) throw new Error(instrumentResult.message || "Kite instrument master unavailable.");
-      const futures = instrumentResult.data.filter((instrument) => isProductionInstrument(instrument) && classifyInstrument(instrument) === "futures");
-      const quoteResult = await adapter.getQuotes(futures.map((instrument) => `${["NFO", "NSE_FNO"].includes(instrument.exchangeSegment) ? "NFO" : instrument.exchange}:${instrument.tradingSymbol}`));
-      return { instruments: futures, quotes: quoteResult.data ?? [] };
+      if (!activeAccountId || !activeProvider) return null;
+      const futures = instruments.filter((instrument) => isProductionInstrument(instrument) && classifyInstrument(instrument) === "futures" && (instrument.provider === activeProvider || (activeProvider === "kite" && instrument.provider === "zerodha")));
+      const quotes = [];
+      for (let offset = 0; offset < futures.length; offset += 10) {
+        const batch = futures.slice(offset, offset + 10);
+        const results = await Promise.allSettled(batch.map(async (instrument) => {
+          const terminalInstrument = toTerminalMarketDataInstrument(instrument, activeProvider);
+          const quote = await requestTerminalMarketData(activeAccountId, activeProvider, { operation: "getQuote", instrument: terminalInstrument });
+          return normalizeTerminalMarketQuote(quote, terminalInstrument, instrument.securityId);
+        }));
+        for (const result of results) if (result.status === "fulfilled") quotes.push(result.value);
+      }
+      return { instruments: futures, quotes };
     },
     staleTime: 10_000,
     refetchInterval: 15_000,
     retry: false,
   });
-  const availableInstruments = kiteMarketQuery.data?.instruments ?? (instruments.length > 0 ? instruments : providerInstruments);
+  const availableInstruments = kiteMarketQuery.data?.instruments ?? [];
   const quotesByInstrumentId = useMemo(
     () => new Map((kiteMarketQuery.data?.quotes ?? []).map((quote) => [quote.instrumentId ?? quote.providerInstrumentId ?? "", quote])),
     [kiteMarketQuery.data?.quotes],

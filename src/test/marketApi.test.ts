@@ -2,17 +2,34 @@ import { describe, it, expect, vi } from "vitest";
 import { fetchInstrumentMaster, fetchLiveOptionChain, normalizeKiteFnOStockQuotes, normalizeTerminalMarketQuote, parseDhanOptionChain, parseNSEOptionChain, normalizeInstrumentMasterResponse } from "@/lib/marketApi";
 import { resolveAllowedOrigin } from "../../proxy-origin.mjs";
 
-describe("Kite option-chain provider policy", () => {
-  it("requires Kite OAuth and does not fall back to Dhan or NSE", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ authenticated: false }) });
-    vi.stubGlobal("fetch", fetchMock);
-    try {
-      await expect(fetchLiveOptionChain("NIFTY")).rejects.toThrow("Kite OAuth authentication is required");
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      expect(String(fetchMock.mock.calls[0][0])).toContain("/api/kite/status");
-    } finally {
-      vi.unstubAllGlobals();
-    }
+const { requestTerminalMarketData } = vi.hoisted(() => ({ requestTerminalMarketData: vi.fn() }));
+vi.mock("@/lib/terminalApi", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/terminalApi")>(),
+  requestTerminalMarketData,
+}));
+
+describe("Terminal OS option-chain routing", () => {
+  it("requests the selected account/provider chain from the gateway", async () => {
+    requestTerminalMarketData.mockResolvedValueOnce({
+      provider: "dhan",
+      underlying: "NIFTY",
+      expiry: "2026-10-01",
+      expiries: ["2026-10-01"],
+      spotPrice: 25000,
+      chain: [],
+      totalCEOI: 0,
+      totalPEOI: 0,
+      greeksAvailable: false,
+    });
+
+    const result = await fetchLiveOptionChain("NIFTY", "2026-10-01", "test-account", "dhan");
+
+    expect(requestTerminalMarketData).toHaveBeenCalledWith("test-account", "dhan", {
+      operation: "getOptionChain",
+      underlying: "NIFTY",
+      expiry: "2026-10-01",
+    });
+    expect(result).toMatchObject({ spotPrice: 25000, source: "dhan", expiries: [{ value: "2026-10-01" }] });
   });
 });
 

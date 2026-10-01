@@ -9,7 +9,6 @@ import {
   type TerminalMarketDataInstrument,
 } from "@/lib/terminalApi";
 
-const PROXY_BASE = import.meta.env.VITE_PROXY_URL || "";
 export const KITE_INDEX_TOKEN_MAP: Record<string, string> = {
   NIFTY: "256265",
   BANKNIFTY: "260105",
@@ -227,37 +226,7 @@ async function fetchGatewayHistorical(
   return toChartCandles(result);
 }
 
-/**
- * Universal fallback: Yahoo Finance candles via the proxy. Free, no auth,
- * covers all indices + any NSE equity (.NS). This is what keeps charts alive
- * for users who haven't configured Dhan broker keys.
- */
-async function fetchYahooHistorical(symbol: string, range: string): Promise<OHLCVCandle[]> {
-  const { interval, daysBack } = rangeToParams(range);
-  const now = new Date();
-  const from = new Date(now);
-  from.setDate(from.getDate() - daysBack);
-
-  const params = new URLSearchParams({
-    symbol: symbol.toUpperCase(),
-    interval,
-    fromDate: from.toISOString().split("T")[0],
-    toDate: now.toISOString().split("T")[0],
-  });
-
-  const res = await fetch(`${PROXY_BASE}/api/yahoo-chart?${params}`, {
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!res.ok) return [];
-  const json = await res.json();
-  return parseColumnarCandles(json?.data || json);
-}
-
-/**
- * Fetches OHLCV candle data with graceful degradation:
- *   Dhan (when symbol is known + broker keys configured) → Yahoo Finance fallback.
- * Always returns candles when the proxy is reachable, even without broker keys.
- */
+/** Fetch OHLCV candles only through the account-scoped Terminal OS gateway. */
 async function fetchHistorical(
   symbol: string,
   range: string,
@@ -274,7 +243,7 @@ async function fetchHistorical(
     }
   }
 
-  return fetchYahooHistorical(symbol, range);
+  return [];
 }
 
 /**

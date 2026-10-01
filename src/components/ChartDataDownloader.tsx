@@ -13,8 +13,8 @@ import {
   Download, Loader2, CheckCircle2, AlertCircle, Search, CandlestickChart,
   FileDown, Clock, BarChart3, TrendingUp, Database, XCircle, CheckSquare, Square,
 } from "lucide-react";
-import { fetchYahooChart } from "@/lib/marketApi";
-import { brokerRouter } from "@/lib/brokerRouter";
+import { useAccountContext } from "@/hooks/useAccountContext";
+import { requestTerminalMarketData, resolveTerminalMarketDataProvider, toTerminalMarketDataInstrument, type TerminalMarketDataCandle, type TerminalMarketDataInstrument } from "@/lib/terminalApi";
 import {
   saveCandleHistory, setMetadata,
   type CandleHistory, type CandleData,
@@ -106,6 +106,8 @@ interface DownloadResult {
 }
 
 export function ChartDataDownloader() {
+  const { activeAccountId, accounts } = useAccountContext();
+  const provider = resolveTerminalMarketDataProvider(accounts.find((account) => account.id === activeAccountId)?.broker_provider);
   const [search, setSearch] = useState("");
   const [selectedSymbols, setSelectedSymbols] = useState<Set<string>>(new Set(ALL_SYMBOLS.map(s => s.symbol)));
   const [timeframe, setTimeframe] = useState("3M");
@@ -183,8 +185,6 @@ export function ChartDataDownloader() {
     setCurrentIndex(0);
 
     const { fromDate, toDate } = getDateRange();
-    // Send "D" as-is — the proxy will route to /charts/historical for daily candles
-    const dhanInterval = interval;
     const newResults: DownloadResult[] = [];
 
     for (let i = 0; i < symbols.length; i++) {
@@ -193,52 +193,26 @@ export function ChartDataDownloader() {
       setCurrentSymbol(sym.symbol);
 
       try {
-        let rawData: any = null;
-        let source = "yahoo";
-
-        // ── Try Yahoo Finance first (free, no API key, no rate limits) ──
-        try {
-          const yahooResult = await fetchYahooChart(
-            sym.symbol,
-            dhanInterval,
-            fromDate,
-            toDate,
-          );
-          const yd = yahooResult?.data || yahooResult;
-          if (yd && 'close' in yd && Array.isArray(yd.close) && yd.close.filter((v: any) => v != null).length > 0) {
-            rawData = yd;
-            source = "yahoo";
-          }
-        } catch (yahooErr: any) {
-          console.warn(`Yahoo failed for ${sym.symbol}:`, yahooErr.message);
-        }
-
-        // ── Fallback to Dhan if Yahoo didn't return data ──
-        if (!rawData) {
-          try {
-            const adapter = brokerRouter.getAdapter("dhan");
-            if (!adapter) throw new Error("Dhan adapter unavailable");
-            const dhanResult = await adapter.getHistoricalData(sym.securityId, dhanInterval, {
-              exchangeSegment: sym.segment,
-              instrument: sym.instrument,
-              fromDate,
-              toDate,
-            });
-            if (dhanResult.data && dhanResult.data.length > 0) {
-              rawData = {
-                timestamp: dhanResult.data.map((candle) => candle.timestamp),
-                open: dhanResult.data.map((candle) => candle.open),
-                high: dhanResult.data.map((candle) => candle.high),
-                low: dhanResult.data.map((candle) => candle.low),
-                close: dhanResult.data.map((candle) => candle.close),
-                volume: dhanResult.data.map((candle) => candle.volume),
-              };
-              source = "dhan";
-            }
-          } catch (dhanErr: any) {
-            console.warn(`Dhan also failed for ${sym.symbol}:`, dhanErr.message);
-          }
-        }
+        if (!activeAccountId || !provider) throw new Error("An active Terminal OS market-data account is required.");
+        const instruments = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(activeAccountId, provider, { operation: "searchInstruments", query: sym.symbol });
+        const instrument = instruments.find((item) => item.provider === provider && (item.symbol.toUpperCase() === sym.symbol || item.tradingSymbol.toUpperCase() === sym.symbol));
+        if (!instrument) throw new Error(`Terminal OS instrument not found for ${sym.symbol}`);
+        const apiInterval = interval === "D" ? "day" : provider === "kite" ? (interval === "15" ? "15minute" : "60minute") : `${interval}m`;
+        const candles = await requestTerminalMarketData<TerminalMarketDataCandle[]>(activeAccountId, provider, {
+          operation: "getHistoricalCandles",
+          instrument: toTerminalMarketDataInstrument(instrument, provider),
+          interval: apiInterval,
+          fromDate,
+          toDate,
+        });
+        const rawData = {
+          timestamp: candles.map((candle) => candle.timestamp),
+          open: candles.map((candle) => candle.open),
+          high: candles.map((candle) => candle.high),
+          low: candles.map((candle) => candle.low),
+          close: candles.map((candle) => candle.close),
+          volume: candles.map((candle) => candle.volume),
+        };
 
         if (rawData?.close && Array.isArray(rawData.close) && rawData.close.filter((v: any) => v != null).length > 0) {
           const candles: CandleData[] = rawData.close
@@ -273,7 +247,7 @@ export function ChartDataDownloader() {
 
           newResults.push({ symbol: sym.symbol, status: "done", candles: candles.length });
         } else {
-          newResults.push({ symbol: sym.symbol, status: "skipped", candles: 0, error: "No data from Yahoo or Dhan" });
+          newResults.push({ symbol: sym.symbol, status: "skipped", candles: 0, error: "No data from Terminal OS" });
         }
       } catch (err: any) {
         newResults.push({ symbol: sym.symbol, status: "error", candles: 0, error: err.message || "Fetch failed" });

@@ -3,8 +3,16 @@ import { ZerodhaAdapter } from "./zerodhaAdapter";
 import { InstrumentMaster, normalizeInstrumentMaster } from "./instrumentMaster";
 import { normalizeQuote, toLegacyQuote } from "./quoteService";
 import { classifyInstrument, isProductionInstrument } from "./instrumentClassification";
+import { getFnOStockList, type Instrument } from "./localDatabase";
 import type { NormalizedQuote } from "./brokerAdapter";
-import type { TerminalMarketDataInstrument, TerminalMarketDataQuote } from "./terminalApi";
+import {
+  requestTerminalMarketData,
+  toTerminalMarketDataInstrument,
+  type TerminalMarketDataInstrument,
+  type TerminalMarketDataOptionChain,
+  type TerminalMarketDataProvider,
+  type TerminalMarketDataQuote,
+} from "./terminalApi";
 
 // Local proxy base URL — override via VITE_PROXY_URL if deploying proxy elsewhere
 const PROXY_BASE = import.meta.env.VITE_PROXY_URL || "";
@@ -267,27 +275,28 @@ export function parseNSEOptionChain(raw: NSEOptionChainResponse, selectedExpiry?
 
 // ── Exported fetch functions ──
 
-// Live option-chain data is Kite-only; unavailable Kite sessions must not be masked by another provider.
-export async function fetchLiveOptionChain(symbol: string, expiry?: string) {
-  const kiteStatus = await fetch(`${PROXY_BASE}/api/kite/status`, { credentials: "include" });
-  if (!kiteStatus.ok || !(await kiteStatus.json()).authenticated) {
-    throw new Error("Kite OAuth authentication is required for live option-chain data.");
-  }
-
-  const { ZerodhaAdapter } = await import("./zerodhaAdapter");
-  const result = await new ZerodhaAdapter().getOptionChain(symbol, expiry);
-  if (!result.data) throw new Error(result.message || "Kite option-chain data is unavailable.");
+export async function fetchLiveOptionChain(
+  symbol: string,
+  expiry: string | undefined,
+  accountId: string,
+  provider: TerminalMarketDataProvider,
+) {
+  const result = await requestTerminalMarketData<TerminalMarketDataOptionChain>(accountId, provider, {
+    operation: "getOptionChain",
+    underlying: symbol,
+    expiry,
+  });
   return {
-    chain: result.data.chain,
-    spotPrice: result.data.spotPrice,
-    expiries: result.data.expiries.map((value) => ({ label: value, value, daysToExpiry: 0 })),
-    totalCEOI: result.data.totalCEOI || 0,
-    totalPEOI: result.data.totalPEOI || 0,
-    source: "zerodha" as const,
-    afterHours: result.data.afterHours || false,
-    cachedAt: result.data.cachedAt || null,
-    greeksAvailable: result.data.greeksAvailable,
-    oiChangeAvailable: result.data.oiChangeAvailable,
+    chain: result.chain,
+    spotPrice: result.spotPrice,
+    expiries: result.expiries.map((value) => ({ label: value, value, daysToExpiry: 0 })),
+    totalCEOI: result.totalCEOI,
+    totalPEOI: result.totalPEOI,
+    source: result.provider === "kite" ? "zerodha" as const : "dhan" as const,
+    afterHours: result.afterHours ?? false,
+    cachedAt: result.cachedAt ?? null,
+    greeksAvailable: result.greeksAvailable,
+    oiChangeAvailable: result.oiChangeAvailable ?? false,
   };
 }
 
@@ -344,11 +353,14 @@ export function normalizeTerminalMarketQuote(
 }
 
 // Dhan expiry list
-export async function fetchExpiryList(symbol: string): Promise<ExpiryDate[]> {
+export async function fetchExpiryList(symbol: string, accountId: string, provider: TerminalMarketDataProvider): Promise<ExpiryDate[]> {
   try {
-    const raw = await fetchDhanProxy("expiry-list", { symbol: symbol.toUpperCase() });
-    if (raw?.data) {
-      return raw.data.map((dateStr: string) => {
+    const result = await requestTerminalMarketData<TerminalMarketDataOptionChain>(accountId, provider, {
+      operation: "getOptionChain",
+      underlying: symbol.toUpperCase(),
+    });
+    if (result.expiries) {
+      return result.expiries.map((dateStr) => {
         const d = new Date(dateStr);
         const days = Math.max(0, Math.ceil((d.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
         return {
@@ -365,9 +377,37 @@ export async function fetchExpiryList(symbol: string): Promise<ExpiryDate[]> {
 }
 
 // NSE Indices (Dhan doesn't provide broad index overview the same way)
-export async function fetchLiveIndices() {
-  const raw = await fetchNSEProxy("indices");
-  return parseNSEIndices(raw);
+export async function fetchLiveIndices(accountId: string, provider: TerminalMarketDataProvider): Promise<IndexData[]> {
+  const symbols = [
+    { symbol: "NIFTY", name: "NIFTY 50" },
+    { symbol: "BANKNIFTY", name: "BANK NIFTY" },
+    { symbol: "FINNIFTY", name: "FIN NIFTY" },
+    { symbol: "MIDCPNIFTY", name: "MIDCAP NIFTY" },
+  ];
+  return Promise.all(symbols.map(async ({ symbol, name }) => {
+    const instruments = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(accountId, provider, {
+      operation: "searchInstruments",
+      query: symbol,
+    });
+    const normalized = symbol.replace(/[^A-Z0-9]/g, "");
+    const instrument = instruments.find((item) => item.provider === provider && (
+      item.symbol.toUpperCase().replace(/[^A-Z0-9]/g, "") === normalized ||
+      item.tradingSymbol.toUpperCase().replace(/[^A-Z0-9]/g, "") === normalized
+    ));
+    if (!instrument) return null;
+    const quote = await requestTerminalMarketData<TerminalMarketDataQuote>(accountId, provider, { operation: "getQuote", instrument });
+    return {
+      name,
+      symbol,
+      ltp: quote.ltp,
+      change: quote.change ?? 0,
+      changePercent: quote.changePercent ?? 0,
+      high: quote.high ?? quote.ltp,
+      low: quote.low ?? quote.ltp,
+      open: quote.open ?? quote.ltp,
+      prevClose: quote.previousClose ?? quote.ltp,
+    };
+  })).then((items) => items.filter((item): item is IndexData => item !== null));
 }
 
 export async function fetchMarketStatus() {
@@ -546,65 +586,23 @@ async function canonicalizeFnOStocks(stocks: FnOStockData[], provider: string): 
   });
 }
 
-export async function fetchLiveFnOStocks(): Promise<FnOStockData[]> {
-  try {
-    const kiteStatus = await fetch(`${PROXY_BASE}/api/kite/status`, { credentials: "include" });
-    if (kiteStatus.ok && (await kiteStatus.json()).authenticated) {
-      const adapter = new ZerodhaAdapter();
-      const instrumentResult = await adapter.getInstruments();
-      if (!instrumentResult.data) throw new Error(instrumentResult.message || "Kite instrument master unavailable.");
-
-      const futuresSymbols = new Set(instrumentResult.data
-        .filter((instrument) => isProductionInstrument(instrument) && classifyInstrument(instrument) === "futures")
-        .map((instrument) => instrument.symbol.toUpperCase()));
-      const eligibleEquities = instrumentResult.data.filter((instrument) =>
-        classifyInstrument(instrument) === "stocks" && [instrument.symbol, instrument.tradingSymbol].some((symbol) => futuresSymbols.has(symbol.toUpperCase()))
-      );
-      const quoteResult = await adapter.getQuotes(eligibleEquities.map((instrument) => instrument.tradingSymbol));
-      const kiteStocks = normalizeKiteFnOStockQuotes(instrumentResult.data, quoteResult.data ?? []);
-      if (kiteStocks.length > 0) return kiteStocks;
-      throw new Error("Kite returned no quotes for F&O equity instruments.");
-    }
-  } catch (error) {
-    console.warn("Kite F&O equity quotes unavailable, trying public sources:", error);
+export async function fetchLiveFnOStocks(accountId: string, provider: TerminalMarketDataProvider): Promise<FnOStockData[]> {
+  const instruments = await getFnOStockList();
+  const providerInstruments = instruments.filter((instrument) =>
+    isProductionInstrument(instrument) &&
+    (instrument.provider === provider || (provider === "kite" && instrument.provider === "zerodha"))
+  );
+  const quotes: NormalizedQuote[] = [];
+  for (let offset = 0; offset < providerInstruments.length; offset += 10) {
+    const batch = providerInstruments.slice(offset, offset + 10);
+    const results = await Promise.allSettled(batch.map(async (instrument) => {
+      const terminalInstrument = toTerminalMarketDataInstrument(instrument, provider);
+      const quote = await requestTerminalMarketData<TerminalMarketDataQuote>(accountId, provider, { operation: "getQuote", instrument: terminalInstrument });
+      return normalizeTerminalMarketQuote(quote, terminalInstrument, instrument.securityId);
+    }));
+    for (const result of results) if (result.status === "fulfilled") quotes.push(result.value);
   }
-
-  // Try NSE first (has OI data)
-  try {
-    const raw = await fetchNSEProxy("equity-derivatives");
-    if (raw?.data?.length > 0) {
-      const stocks = raw.data
-        .filter((d: any) => d.symbol && d.symbol !== "NIFTY 50" && d.lastPrice)
-        .map((d: any) => ({
-          symbol: d.symbol,
-          ltp: d.lastPrice || 0,
-          change: d.change || 0,
-          changePercent: d.pChange || 0,
-          open: d.open || d.lastPrice,
-          high: d.dayHigh || d.lastPrice,
-          low: d.dayLow || d.lastPrice,
-          previousClose: d.previousClose || d.lastPrice,
-          volume: d.totalTradedVolume || 0,
-          totalTradedVolume: d.totalTradedVolume || 0,
-          openInterest: d.openInterest || 0,
-          oiChange: d.changeinOpenInterest || 0,
-          sector: d.meta?.industry || "",
-        }));
-      return canonicalizeFnOStocks(stocks, "nse");
-    }
-  } catch (e) {
-    console.warn("NSE F&O stocks fetch failed, trying TradingView:", e);
-  }
-
-  // Fallback to TradingView Scanner (no OI but great LTP/volume data)
-  try {
-    const tvData = await fetchTradingViewStocks();
-    if (tvData.length > 0) return canonicalizeFnOStocks(tvData, "tradingview");
-  } catch (e) {
-    console.warn("TradingView stocks fetch also failed:", e);
-  }
-
-  return [];
+  return normalizeKiteFnOStockQuotes(providerInstruments, quotes);
 }
 
 // ── TradingView Scanner API ──

@@ -12,7 +12,7 @@ import { isWatchlisted } from "@/lib/watchlist";
 import { useLiveOptionChain } from "@/hooks/useMarketData";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { classifyInstrument, isProductionInstrument } from "@/lib/instrumentClassification";
-import { fetchInstrumentMaster, normalizeTerminalMarketQuote } from "@/lib/marketApi";
+import { normalizeTerminalMarketQuote } from "@/lib/marketApi";
 import {
   createTerminalOrder,
   fetchTerminalPositions,
@@ -120,16 +120,7 @@ export function InstrumentExplorer({
   const [contextUnderlying, setContextUnderlying] = useState(initialUnderlying ?? "NIFTY");
   const [contextExpiry, setContextExpiry] = useState<string | undefined>(initialExpiry);
   const { instruments } = useInstrumentLookup();
-  const [providerInstruments, setProviderInstruments] = useState<Instrument[]>([]);
-
-  useEffect(() => {
-    if (instruments.length > 0 || providerInstruments.length > 0) return;
-    fetchInstrumentMaster()
-      .then((result) => setProviderInstruments(result.instruments as Instrument[]))
-      .catch(() => setProviderInstruments([]));
-  }, [instruments.length, providerInstruments.length]);
-
-  const availableInstruments = instruments.length > 0 ? instruments : providerInstruments;
+  const availableInstruments = instruments;
   const rowInstruments = rows.flatMap((row) => row.instrument ? [row.instrument] : []);
   const workspaceInstruments = rowInstruments.length > 0 ? rowInstruments : availableInstruments;
   const chartInstrument = workspaceInstruments.find((instrument) => instrument.tradingSymbol.toUpperCase() === (chartSymbol ?? "").toUpperCase());

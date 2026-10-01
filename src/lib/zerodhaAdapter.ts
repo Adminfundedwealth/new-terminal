@@ -13,7 +13,7 @@ import {
   type NormalizedTick,
   type HistoricalDataRequest,
 } from "./brokerAdapter";
-import { marketWS } from "./websocketClient";
+import { marketWS } from "./terminalRealtimeClient";
 import { InstrumentMaster, normalizeProviderInstrument } from "./instrumentMaster";
 import { normalizeQuote, toLegacyQuote } from "./quoteService";
 import type { OptionData, OptionLegData } from "./mockData";

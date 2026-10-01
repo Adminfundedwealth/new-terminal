@@ -2,6 +2,7 @@ import { supabase, SUPABASE_CONFIGURED } from "@/integrations/supabase/client";
 import type { AccountStatus } from "@/lib/accountLifecycle";
 import type { RiskRequest } from "@/lib/riskEngine";
 import type { Instrument } from "@/lib/localDatabase";
+import type { OptionData } from "@/lib/mockData";
 import { deserializeCanonicalOrder, type CanonicalOrderRow, type CanonicalOrder } from "@/lib/orderModel";
 
 const TERMINAL_OS_BASE = (import.meta.env.VITE_TERMINAL_OS_URL || "").replace(/\/$/, "");
@@ -258,6 +259,25 @@ export interface TerminalMarketDataCandle {
   openInterest?: number;
 }
 
+export interface TerminalMarketDataOptionChain {
+  provider: TerminalMarketDataProvider;
+  underlying: string;
+  expiry: string;
+  expiries: string[];
+  spotPrice: number;
+  chain: Array<{
+    strikePrice: number;
+    ce: OptionData["ce"];
+    pe: OptionData["pe"];
+  }>;
+  totalCEOI: number;
+  totalPEOI: number;
+  greeksAvailable: boolean;
+  oiChangeAvailable?: boolean;
+  afterHours?: boolean;
+  cachedAt?: string | number | null;
+}
+
 export function resolveTerminalMarketDataProvider(value: string | null | undefined): TerminalMarketDataProvider | null {
   const provider = value?.trim().toLowerCase();
   if (provider === "dhan") return "dhan";
@@ -302,6 +322,7 @@ export type TerminalMarketDataOperation =
   | { operation: "authenticate" }
   | { operation: "searchInstruments"; query: string }
   | { operation: "getQuote"; instrument: TerminalMarketDataInstrument }
+  | { operation: "getOptionChain"; underlying: string; expiry?: string }
   | {
       operation: "getHistoricalCandles";
       instrument: TerminalMarketDataInstrument;
@@ -317,6 +338,30 @@ export interface TerminalMarketDataStatus {
   is_connected: boolean;
   last_tested_at: string | null;
   last_test_result: string | null;
+}
+
+export async function requestTerminalRealtimeTicket(
+  accountId: string,
+  provider: TerminalMarketDataProvider,
+  environment: "production" | "paper" | "sandbox" = "production",
+): Promise<{ ticket: string; expires_at: string }> {
+  if (!accountId) throw new Error("A trading account is required for realtime data.");
+  const accessToken = await getCustomerAccessToken();
+  const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/realtime-ticket`, {
+    method: "POST",
+    credentials: "omit",
+    cache: "no-store",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ account_id: accountId, provider, environment }),
+  });
+  if (!response.ok) throw new Error("Realtime authentication is unavailable.");
+  const payload = await response.json() as { data?: { ticket?: string; expires_at?: string } };
+  if (!payload.data?.ticket || !payload.data.expires_at) throw new Error("Realtime authentication response is invalid.");
+  return { ticket: payload.data.ticket, expires_at: payload.data.expires_at };
 }
 
 export type TerminalMarketDataErrorCode =
@@ -427,6 +472,171 @@ export async function fetchTerminalMarketDataStatus(
   return readMarketDataResponse<TerminalMarketDataStatus>(response);
 }
 
+export interface TerminalRealtimeQuoteEvent {
+  account_id: string;
+  provider: TerminalMarketDataProvider;
+  environment: "production" | "paper" | "sandbox";
+  symbol: string;
+  quote: TerminalMarketDataQuote;
+}
+
+export type TerminalRealtimeStatus = "connecting" | "connected" | "reconnecting" | "error" | "disconnected";
+
+interface TerminalRealtimeSubscriber {
+  symbols: Set<string>;
+  onQuote: (event: TerminalRealtimeQuoteEvent) => void;
+  onStatus?: (status: TerminalRealtimeStatus) => void;
+}
+
+interface TerminalRealtimePool {
+  accountId: string;
+  provider: TerminalMarketDataProvider;
+  environment: "production" | "paper" | "sandbox";
+  symbols: Set<string>;
+  subscribers: Set<TerminalRealtimeSubscriber>;
+  controller: AbortController | null;
+  generation: number;
+}
+
+const terminalRealtimePools = new Map<string, TerminalRealtimePool>();
+
+function notifyRealtimeStatus(pool: TerminalRealtimePool, status: TerminalRealtimeStatus): void {
+  for (const subscriber of pool.subscribers) subscriber.onStatus?.(status);
+}
+
+function parseSseFrame(frame: string): { event: string; data: string } | null {
+  let event = "message";
+  const data: string[] = [];
+  for (const line of frame.split(/\r?\n/)) {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
+  }
+  return data.length ? { event, data: data.join("\n") } : null;
+}
+
+async function readRealtimeStream(pool: TerminalRealtimePool, generation: number, signal: AbortSignal): Promise<void> {
+  const accessToken = await getCustomerAccessToken();
+  const query = new URLSearchParams({
+    account_id: pool.accountId,
+    provider: pool.provider,
+    environment: pool.environment,
+    symbols: [...pool.symbols].sort().join(","),
+  });
+  const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/market-data/stream?${query}`, {
+    credentials: "omit",
+    headers: { Accept: "text/event-stream", Authorization: `Bearer ${accessToken}` },
+    signal,
+  });
+  if (!response.ok || !response.body) {
+    await readMarketDataResponse<unknown>(response);
+    throw new TerminalMarketDataError("PROVIDER_UNAVAILABLE", response.status);
+  }
+
+  notifyRealtimeStatus(pool, "connected");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (!signal.aborted && generation === pool.generation) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let boundary = buffer.search(/\r?\n\r?\n/);
+      while (boundary >= 0) {
+        const frame = buffer.slice(0, boundary);
+        const delimiter = buffer.slice(boundary).match(/^\r?\n\r?\n/)?.[0] ?? "\n\n";
+        buffer = buffer.slice(boundary + delimiter.length);
+        const message = parseSseFrame(frame);
+        if (message?.event === "quote") {
+          try {
+            const event = JSON.parse(message.data) as TerminalRealtimeQuoteEvent;
+            for (const subscriber of pool.subscribers) {
+              if (subscriber.symbols.has(event.symbol)) subscriber.onQuote(event);
+            }
+          } catch {
+            // Ignore malformed stream messages.
+          }
+        } else if (message?.event === "error") {
+          notifyRealtimeStatus(pool, "reconnecting");
+        }
+        boundary = buffer.search(/\r?\n\r?\n/);
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+}
+
+function startRealtimePool(pool: TerminalRealtimePool): void {
+  pool.controller?.abort();
+  const controller = new AbortController();
+  pool.controller = controller;
+  const generation = ++pool.generation;
+  void (async () => {
+    let delay = 1000;
+    while (!controller.signal.aborted && generation === pool.generation && pool.subscribers.size > 0) {
+      notifyRealtimeStatus(pool, delay === 1000 ? "connecting" : "reconnecting");
+      try {
+        await readRealtimeStream(pool, generation, controller.signal);
+        if (!controller.signal.aborted) throw new Error("Realtime stream ended");
+      } catch {
+        if (controller.signal.aborted || generation !== pool.generation) break;
+        notifyRealtimeStatus(pool, "reconnecting");
+      }
+      if (controller.signal.aborted || generation !== pool.generation) break;
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, delay);
+        controller.signal.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+      });
+      delay = Math.min(delay * 2, 30000);
+    }
+  })();
+}
+
+export function subscribeToTerminalMarketDataStream(
+  accountId: string,
+  provider: TerminalMarketDataProvider,
+  symbols: string[],
+  onQuote: (event: TerminalRealtimeQuoteEvent) => void,
+  onStatus?: (status: TerminalRealtimeStatus) => void,
+  environment: "production" | "paper" | "sandbox" = "production",
+): () => void {
+  const normalizedSymbols = [...new Set(symbols.map((symbol) => symbol.trim()).filter(Boolean))];
+  if (!accountId || normalizedSymbols.length === 0) return () => undefined;
+  const key = `${accountId}:${provider}:${environment}`;
+  let pool = terminalRealtimePools.get(key);
+  if (!pool) {
+    pool = { accountId, provider, environment, symbols: new Set(), subscribers: new Set(), controller: null, generation: 0 };
+    terminalRealtimePools.set(key, pool);
+  }
+  const subscriber: TerminalRealtimeSubscriber = { symbols: new Set(normalizedSymbols), onQuote, onStatus };
+  const previousSymbolCount = pool.symbols.size;
+  normalizedSymbols.forEach((symbol) => pool?.symbols.add(symbol));
+  pool.subscribers.add(subscriber);
+  if (pool.symbols.size !== previousSymbolCount || !pool.controller) startRealtimePool(pool);
+
+  return () => {
+    const current = terminalRealtimePools.get(key);
+    if (!current) return;
+    current.subscribers.delete(subscriber);
+    const stillNeeded = new Set([...current.subscribers].flatMap((item) => [...item.symbols]));
+    const changed = stillNeeded.size !== current.symbols.size || [...current.symbols].some((symbol) => !stillNeeded.has(symbol));
+    current.symbols = stillNeeded;
+    if (current.subscribers.size === 0) {
+      current.controller?.abort();
+      current.generation++;
+      terminalRealtimePools.delete(key);
+      onStatus?.("disconnected");
+    } else if (changed) {
+      startRealtimePool(current);
+    }
+  };
+}
+
+export function reconnectTerminalMarketDataStreams(): void {
+  for (const pool of terminalRealtimePools.values()) startRealtimePool(pool);
+}
+
 export async function fetchTerminalAccounts(): Promise<AccountsResponse> {
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) throw new Error("Authentication required to load trading accounts");
@@ -529,12 +739,26 @@ export function createServerPreTradeRiskGate() {
 }
 
 export async function createTerminalOrder(request: CreateOrderRequest): Promise<CreateOrderResponse> {
-  const instrumentType = request.instrument?.instrumentType?.toUpperCase();
-  const isKiteDerivative = request.product === "NRML" && request.instrument?.provider === "zerodha" &&
-    ["OPTIDX", "OPTSTK", "FUTIDX", "FUTSTK"].includes(instrumentType ?? "");
-  const { data, error } = await supabase.rpc(isKiteDerivative ? "create_simulated_kite_order" : "create_order", { request });
-  if (error) throw new Error("Order creation request failed");
-  const result = data as CreateOrderResponse;
+  if (!request.account_id) throw new Error("A trading account is required to place an order.");
+  const accessToken = await getCustomerAccessToken();
+  const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/orders`, {
+    method: "POST",
+    credentials: "omit",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(request),
+  });
+  let payload: { data?: CreateOrderResponse; error?: { message?: string } };
+  try {
+    payload = await response.json() as typeof payload;
+  } catch {
+    throw new Error("Order gateway returned an invalid response.");
+  }
+  if (!response.ok) throw new Error(payload.error?.message ?? "Order request was rejected.");
+  const result = payload.data as CreateOrderResponse;
   if (!result.ok) throw new Error(result.error?.message ?? "Order creation was rejected");
   return result;
 }

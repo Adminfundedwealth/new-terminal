@@ -11,7 +11,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { useAccountContext } from "@/hooks/useAccountContext";
 import { useLiveIndices, useMarketStatus, useAllIndices } from "@/hooks/useMarketData";
 import { useWebSocketStatus } from "@/hooks/useWebSocket";
-import { marketWS } from "@/lib/websocketClient";
+import { marketWS } from "@/lib/terminalRealtimeClient";
+import { resolveTerminalMarketDataProvider } from "@/lib/terminalApi";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import {
   fetchTerminalDashboard,
@@ -44,11 +45,18 @@ export default function DashboardLayout() {
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
   const { accounts: tradingAccounts, accountContext, activeAccountId, isLoading: accountLoading, isError: accountError, selectAccount } = useAccountContext();
+  const activeAccountProvider = resolveTerminalMarketDataProvider(
+    tradingAccounts.find((account) => account.id === activeAccountId)?.broker_provider,
+  );
 
   useEffect(() => {
-    marketWS.start();
+    if (!activeAccountId || !activeAccountProvider) {
+      marketWS.stop();
+      return;
+    }
+    marketWS.start({ accountId: activeAccountId, provider: activeAccountProvider });
     return () => marketWS.stop();
-  }, []);
+  }, [activeAccountId, activeAccountProvider]);
 
   useQueries({
     queries: [

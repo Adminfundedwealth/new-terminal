@@ -1,50 +1,99 @@
-/**
- * React Hooks for Dhan WebSocket real-time market data
- * 
- * These hooks consume the MarketWebSocket singleton and provide
- * real-time ticking data to dashboard components.
- */
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAccountContext } from "@/hooks/useAccountContext";
+import { SYMBOL_TO_SECURITY_ID } from "@/lib/websocketClient";
+import { marketWS } from "@/lib/terminalRealtimeClient";
+import {
+  reconnectTerminalMarketDataStreams,
+  resolveTerminalMarketDataProvider,
+  subscribeToTerminalMarketDataStream,
+  type TerminalRealtimeStatus,
+} from "@/lib/terminalApi";
+import type { ConnectionState, TickData } from "@/lib/terminalRealtimeClient";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { marketWS, SYMBOL_TO_SECURITY_ID, type ConnectionState, type TickData } from "@/lib/websocketClient";
+const INDEX_SYMBOLS = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"];
+const REALTIME_SYMBOLS = [...INDEX_SYMBOLS, "INDIAVIX"];
 
-// ── Hook: WebSocket Connection Status ──
+function toConnectionState(status: TerminalRealtimeStatus): ConnectionState {
+  if (status === "connected") return "CONNECTED";
+  if (status === "connecting") return "CONNECTING";
+  if (status === "reconnecting") return "RECONNECTING";
+  return "DISCONNECTED";
+}
 
-export function useWebSocketStatus() {
-  const [isConnected, setIsConnected] = useState(false);
+function useTerminalTicks(symbols: string[]) {
+  const { activeAccountId, accounts } = useAccountContext();
+  const activeAccount = accounts.find((account) => account.id === activeAccountId);
+  const provider = resolveTerminalMarketDataProvider(activeAccount?.broker_provider);
+  const symbolsKey = symbols.join(",");
+  const [ticks, setTicks] = useState<Record<string, TickData>>({});
+  const [state, setState] = useState<ConnectionState>("DISCONNECTED");
 
   useEffect(() => {
-    return marketWS.onStatus(setIsConnected);
-  }, []);
+    setTicks({});
+    if (!activeAccountId || !provider) {
+      setState("DISCONNECTED");
+      return;
+    }
+    const subscribedSymbols = symbolsKey.split(",").filter(Boolean);
+    if (import.meta.env.VITE_REALTIME_URL?.trim()) {
+      const unsubscribers = subscribedSymbols.flatMap((symbol) => {
+        const securityId = SYMBOL_TO_SECURITY_ID[symbol];
+        return securityId ? [marketWS.subscribe(securityId, (tick) => setTicks((current) => ({ ...current, [symbol]: tick })))] : [];
+      });
+      const unsubscribeState = marketWS.onConnectionState(setState);
+      return () => {
+        unsubscribers.forEach((unsubscribe) => unsubscribe());
+        unsubscribeState();
+      };
+    }
+    return subscribeToTerminalMarketDataStream(
+      activeAccountId,
+      provider,
+      subscribedSymbols,
+      (event) => {
+        const securityId = SYMBOL_TO_SECURITY_ID[event.symbol];
+        if (!securityId) return;
+        const quote = event.quote;
+        const tick: TickData = {
+          type: "ticker",
+          securityId,
+          symbol: event.symbol,
+          exchangeSegment: quote.exchange,
+          ltp: quote.ltp,
+          change: quote.change ?? undefined,
+          changePercent: quote.changePercent ?? undefined,
+          open: quote.open ?? undefined,
+          high: quote.high ?? undefined,
+          low: quote.low ?? undefined,
+          prevClose: quote.previousClose ?? undefined,
+          volume: quote.volume ?? undefined,
+          oi: quote.openInterest ?? undefined,
+          timestamp: Date.parse(quote.timestamp),
+          source: provider === "kite" ? "zerodha" : "dhan",
+          provider: provider === "kite" ? "zerodha" : "dhan",
+          connected: true,
+        };
+        setTicks((current) => ({ ...current, [event.symbol]: tick }));
+      },
+      (status) => setState(toConnectionState(status)),
+    );
+  }, [activeAccountId, provider, symbolsKey]);
 
-  return isConnected;
+  return { ticks, state, isConnected: state === "CONNECTED" };
+}
+
+export function useWebSocketStatus() {
+  return useTerminalTicks(REALTIME_SYMBOLS).isConnected;
 }
 
 export function useWebSocketConnectionState(): ConnectionState {
-  const [state, setState] = useState<ConnectionState>(marketWS.state);
-
-  useEffect(() => marketWS.onConnectionState(setState), []);
-
-  return state;
+  return useTerminalTicks(REALTIME_SYMBOLS).state;
 }
-
-// ── Hook: Single Instrument Tick ──
 
 export function useWebSocketTick(symbol: string): TickData | null {
-  const securityId = SYMBOL_TO_SECURITY_ID[symbol];
-  const [tick, setTick] = useState<TickData | null>(() => {
-    return securityId ? marketWS.getLatest(securityId) || null : null;
-  });
-
-  useEffect(() => {
-    if (!securityId) return;
-    return marketWS.subscribe(securityId, setTick);
-  }, [securityId]);
-
-  return tick;
+  const { ticks } = useTerminalTicks([symbol]);
+  return ticks[symbol] ?? null;
 }
-
-// ── Hook: All Index Ticks (NIFTY, BANKNIFTY, etc.) ──
 
 export interface WebSocketIndexData {
   symbol: string;
@@ -66,36 +115,12 @@ const INDEX_NAMES: Record<string, string> = {
 };
 
 export function useWebSocketIndices(): { indices: WebSocketIndexData[]; isConnected: boolean } {
-  const isConnected = useWebSocketStatus();
-  const [tickMap, setTickMap] = useState<Map<number, TickData>>(new Map());
-
-  useEffect(() => {
-    // Subscribe to all index ticks
-    const indexSymbols = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"];
-    const unsubscribers: (() => void)[] = [];
-
-    for (const symbol of indexSymbols) {
-      const secId = SYMBOL_TO_SECURITY_ID[symbol];
-      if (!secId) continue;
-
-      const unsub = marketWS.subscribe(secId, (data) => {
-        setTickMap((prev) => {
-          const next = new Map(prev);
-          next.set(secId, data);
-          return next;
-        });
-      });
-      unsubscribers.push(unsub);
-    }
-
-    return () => unsubscribers.forEach((unsub) => unsub());
-  }, []);
+  const { ticks, isConnected } = useTerminalTicks(INDEX_SYMBOLS);
 
   const indices = useMemo(() => {
     const result: WebSocketIndexData[] = [];
     for (const [symbol, name] of Object.entries(INDEX_NAMES)) {
-      const secId = SYMBOL_TO_SECURITY_ID[symbol];
-      const tick = tickMap.get(secId);
+      const tick = ticks[symbol];
       if (tick?.ltp) {
         result.push({
           symbol,
@@ -111,7 +136,7 @@ export function useWebSocketIndices(): { indices: WebSocketIndexData[]; isConnec
       }
     }
     return result;
-  }, [tickMap]);
+  }, [ticks]);
 
   return { indices, isConnected };
 }
@@ -127,8 +152,8 @@ export interface WebSocketVixData {
 }
 
 export function useWebSocketVix(): { vix: WebSocketVixData | null; isConnected: boolean } {
-  const isConnected = useWebSocketStatus();
-  const tick = useWebSocketTick("INDIAVIX");
+  const { ticks, isConnected } = useTerminalTicks(["INDIAVIX"]);
+  const tick = ticks.INDIAVIX;
 
   const vix = useMemo(() => {
     if (!tick?.ltp) return null;
@@ -147,8 +172,5 @@ export function useWebSocketVix(): { vix: WebSocketVixData | null; isConnected: 
 // ── Hook: Force reconnect ──
 
 export function useWebSocketReconnect() {
-  return useCallback(() => {
-    marketWS.disconnect();
-    setTimeout(() => marketWS.connect(), 200);
-  }, []);
+  return useCallback(() => reconnectTerminalMarketDataStreams(), []);
 }

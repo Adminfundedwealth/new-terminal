@@ -9,6 +9,8 @@ vi.mock("@/integrations/supabase/client", () => ({
 import {
   fetchTerminalMarketDataStatus,
   requestTerminalMarketData,
+  requestTerminalRealtimeTicket,
+  subscribeToTerminalMarketDataStream,
   TerminalMarketDataError,
 } from "@/lib/terminalApi";
 
@@ -64,6 +66,39 @@ describe("Main Terminal market-data contract", () => {
     expect(serialized).not.toContain("credentials");
   });
 
+  it("opens the account/provider realtime stream with JWT auth and parses normalized quote events", async () => {
+    const quoteEvent = {
+      account_id: accountId,
+      provider: "dhan",
+      environment: "production",
+      symbol: "NIFTY",
+      quote: { provider: "dhan", symbol: "NIFTY", tradingSymbol: "NIFTY 50", exchange: "NSE", ltp: 25000, open: 24900, high: 25100, low: 24800, previousClose: 24950, change: 50, changePercent: 0.2, volume: 10, openInterest: null, timestamp: "2026-10-01T09:15:00.000Z" },
+    };
+    fetchMock.mockResolvedValueOnce(new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(`event: quote\ndata: ${JSON.stringify(quoteEvent)}\n\n`));
+      },
+    }), { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+
+    const quoteReceived = new Promise<typeof quoteEvent>((resolve) => {
+      const unsubscribe = subscribeToTerminalMarketDataStream(accountId, "dhan", ["NIFTY"], (event) => {
+        unsubscribe();
+        resolve(event);
+      });
+    });
+    const quote = await quoteReceived;
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const parsedUrl = new URL(url, "https://main.test");
+    expect(parsedUrl.pathname).toBe("/api/terminal/market-data/stream");
+    expect(parsedUrl.searchParams.get("account_id")).toBe(accountId);
+    expect(parsedUrl.searchParams.get("provider")).toBe("dhan");
+    expect(parsedUrl.searchParams.get("symbols")).toBe("NIFTY");
+    expect(parsedUrl.searchParams.has("access_token")).toBe(false);
+    expect(new Headers(init.headers).get("Authorization")).toBe(`Bearer ${accessToken}`);
+    expect(quote).toEqual(quoteEvent);
+  });
+
   it("requests provider status with the same customer/account/provider authorization context", async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: {
       account_id: accountId,
@@ -81,6 +116,23 @@ describe("Main Terminal market-data contract", () => {
     expect(new URL(url, "http://main.test").searchParams.get("provider")).toBe("kite");
     expect(new Headers(init.headers).get("Authorization")).toBe(`Bearer ${accessToken}`);
     expect(status.is_connected).toBe(true);
+  });
+
+  it("requests a short-lived realtime ticket without sending credentials in the body", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: {
+      ticket: "signed-scope-only-ticket",
+      expires_at: "2026-10-01T10:01:30.000Z",
+    } }), { status: 200 }));
+
+    const ticket = await requestTerminalRealtimeTicket(accountId, "dhan", "paper");
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const headers = new Headers(init.headers);
+    expect(new URL(url, "http://main.test").pathname).toBe("/api/terminal/realtime-ticket");
+    expect(headers.get("Authorization")).toBe(`Bearer ${accessToken}`);
+    expect(init.credentials).toBe("omit");
+    expect(JSON.parse(String(init.body))).toEqual({ account_id: accountId, provider: "dhan", environment: "paper" });
+    expect(JSON.stringify(init.body)).not.toContain(accessToken);
+    expect(ticket.ticket).toBe("signed-scope-only-ticket");
   });
 
   it("fails before network access when the customer session is missing", async () => {

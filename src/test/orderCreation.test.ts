@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTerminalOrder } from "@/lib/terminalApi";
 
-const { rpcMock } = vi.hoisted(() => ({ rpcMock: vi.fn() }));
+const { getSession } = vi.hoisted(() => ({ getSession: vi.fn() }));
 vi.mock("@/integrations/supabase/client", () => ({
-  supabase: { rpc: rpcMock },
+  supabase: { auth: { getSession } },
   SUPABASE_CONFIGURED: true,
 }));
 
@@ -78,10 +78,18 @@ describe("simulated Kite derivative order contract", () => {
 });
 
 describe("Kite derivative order routing", () => {
-  beforeEach(() => rpcMock.mockReset());
+  const accessToken = "mock-customer-jwt";
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    getSession.mockResolvedValue({ data: { session: { access_token: accessToken } }, error: null });
+    fetchMock = vi.fn(async () => new Response(JSON.stringify({ data: { ok: true, order: { id: "canonical-order" } } }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
 
   it("sends NRML Kite derivatives only to the simulated RPC", async () => {
-    rpcMock.mockResolvedValue({ data: { ok: true, order: { id: "canonical-order" } }, error: null });
     const request = {
       account_id: "sim-account",
       symbol: "NIFTY26SEP23150CE",
@@ -112,6 +120,10 @@ describe("Kite derivative order routing", () => {
 
     await createTerminalOrder(request);
 
-    expect(rpcMock).toHaveBeenCalledExactlyOnceWith("create_simulated_kite_order", { request });
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(new URL(url, "https://main.test").pathname).toBe("/api/terminal/orders");
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).get("Authorization")).toBe(`Bearer ${accessToken}`);
+    expect(JSON.parse(String(init.body))).toEqual(request);
   });
 });
