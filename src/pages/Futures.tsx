@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
+import { useAccountContext } from "@/hooks/useAccountContext";
 import { InstrumentExplorer } from "@/components/InstrumentExplorer";
 import { getPreferredMarketAdapter } from "@/lib/brokerRouter";
 import { classifyInstrument, isProductionInstrument } from "@/lib/instrumentClassification";
@@ -14,6 +15,8 @@ export default function Futures() {
   const navigate = useNavigate();
   const [watchedSymbols, setWatchedSymbols] = useState<string[]>(() => getSavedWatchlist());
   const { instruments, isLoaded } = useInstrumentLookup();
+  const { activeAccountId, accounts } = useAccountContext();
+  const activeAccountProvider = accounts.find((account) => account.id === activeAccountId)?.broker_provider;
   const [providerInstruments, setProviderInstruments] = useState<Instrument[]>([]);
   const kiteMarketQuery = useQuery({
     queryKey: ["futures-market-data", "kite"],
@@ -96,6 +99,8 @@ export default function Futures() {
         isLoading={!isLoaded}
         watchedSymbols={watchedSymbols}
         onToggleWatchlist={handleWatchlistToggle}
+        activeAccountId={activeAccountId}
+        activeAccountProvider={activeAccountProvider}
         onTradeOpen={(symbol) => navigate(`/option-chain?symbol=${symbol}`)}
         footerLabel="contracts"
         searchPlaceholder="Search futures..."

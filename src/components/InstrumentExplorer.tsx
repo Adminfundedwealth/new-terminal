@@ -12,9 +12,17 @@ import { isWatchlisted } from "@/lib/watchlist";
 import { useLiveOptionChain } from "@/hooks/useMarketData";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { classifyInstrument, isProductionInstrument } from "@/lib/instrumentClassification";
-import { fetchInstrumentMaster } from "@/lib/marketApi";
-import { getPreferredMarketAdapter } from "@/lib/brokerRouter";
-import { createTerminalOrder, fetchTerminalPositions, modifyTerminalPositionProtection } from "@/lib/terminalApi";
+import { fetchInstrumentMaster, normalizeTerminalMarketQuote } from "@/lib/marketApi";
+import {
+  createTerminalOrder,
+  fetchTerminalPositions,
+  modifyTerminalPositionProtection,
+  requestTerminalMarketData,
+  resolveTerminalMarketDataProvider,
+  toTerminalMarketDataInstrument,
+  type TerminalMarketDataProvider,
+  type TerminalMarketDataQuote,
+} from "@/lib/terminalApi";
 import type { Instrument } from "@/lib/localDatabase";
 
 export type ExplorerAsset = "stocks" | "indices" | "futures";
@@ -52,6 +60,7 @@ interface ExplorerProps {
   onToggleWatchlist: (symbol: string) => void;
   onTradeOpen?: (symbol: string) => void;
   activeAccountId?: string | null;
+  activeAccountProvider?: string | null;
   searchPlaceholder?: string;
   initialWorkspaceContext?: "stocks" | "options" | "futures";
   initialChartSymbol?: string;
@@ -83,6 +92,7 @@ export function InstrumentExplorer({
   onToggleWatchlist,
   onTradeOpen,
   activeAccountId,
+  activeAccountProvider,
   searchPlaceholder,
   initialWorkspaceContext,
   initialChartSymbol,
@@ -152,6 +162,7 @@ export function InstrumentExplorer({
     if (matches.length === 0) return undefined;
     return matches.find((instrument) => instrument.exchange === "NSE" || instrument.exchangeSegment === "NSE_EQ") ?? matches[0];
   }, [workspaceInstruments, chartSymbol, workspaceContext]);
+  const activeProvider: TerminalMarketDataProvider | null = resolveTerminalMarketDataProvider(activeAccountProvider);
 
   const { data: optionChainData, isLoading: isOptionChainLoading } = useLiveOptionChain(
     contextUnderlying,
@@ -160,15 +171,19 @@ export function InstrumentExplorer({
   );
 
   const { data: derivativeQuote } = useQuery({
-    queryKey: ["kite-derivative-quote", chartSymbol, ticketInstrument?.providerInstrumentId],
+    queryKey: ["terminal-derivative-quote", activeAccountId, activeProvider, chartSymbol, ticketInstrument?.providerInstrumentId],
     queryFn: async () => {
-      if (!ticketInstrument || !["futures", "options"].includes(classifyInstrument(ticketInstrument)) || ticketInstrument.provider !== "zerodha") return null;
-      const adapter = await getPreferredMarketAdapter();
-      if (adapter?.id !== "zerodha") return null;
-      const result = await adapter.getQuotes([`NFO:${ticketInstrument.tradingSymbol}`]);
-      return result.data?.[0] ?? null;
+      if (!ticketInstrument || !activeProvider ||
+        resolveTerminalMarketDataProvider(ticketInstrument.provider) !== activeProvider ||
+        !["futures", "options"].includes(classifyInstrument(ticketInstrument))) return null;
+      const instrument = toTerminalMarketDataInstrument(ticketInstrument, activeProvider);
+      const quote = await requestTerminalMarketData<TerminalMarketDataQuote>(activeAccountId ?? "", activeProvider, {
+        operation: "getQuote",
+        instrument,
+      });
+      return normalizeTerminalMarketQuote(quote, instrument, ticketInstrument.securityId);
     },
-    enabled: Boolean(ticketInstrument && workspaceContext !== "stocks"),
+    enabled: Boolean(activeAccountId && activeProvider === "kite" && ticketInstrument && workspaceContext !== "stocks"),
     retry: false,
     staleTime: 5_000,
   });

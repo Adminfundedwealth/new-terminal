@@ -26,6 +26,9 @@ vi.mock("@/lib/marketApi", () => ({
 
 vi.mock("@/lib/terminalApi", () => ({
   createTerminalOrder: vi.fn().mockResolvedValue({ ok: true, order: { id: "mock-order" } }),
+  requestTerminalMarketData: vi.fn(),
+  resolveTerminalMarketDataProvider: vi.fn((provider: string | null | undefined) => provider === "zerodha" ? "kite" : provider === "dhan" ? "dhan" : null),
+  toTerminalMarketDataInstrument: vi.fn((instrument, provider) => ({ ...instrument, provider, providerInstrumentId: instrument.providerInstrumentId || instrument.securityId })),
   modifyTerminalPositionProtection: vi.fn().mockResolvedValue({}),
   fetchTerminalPositions: vi.fn().mockResolvedValue({
     data: [{

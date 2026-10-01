@@ -1,5 +1,20 @@
-import { describe, it, expect } from "vitest";
-import { KITE_INDEX_TOKEN_MAP, parseColumnarCandles, resolveKiteHistoricalToken } from "@/hooks/useChartData";
+import { createElement, type ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { renderHook, waitFor } from "@testing-library/react";
+import { beforeEach, describe, it, expect, vi } from "vitest";
+
+const gatewayMocks = vi.hoisted(() => ({
+  accountContext: vi.fn(),
+  requestMarketData: vi.fn(),
+}));
+
+vi.mock("@/hooks/useAccountContext", () => ({ useAccountContext: gatewayMocks.accountContext }));
+vi.mock("@/lib/terminalApi", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/terminalApi")>();
+  return { ...actual, requestTerminalMarketData: gatewayMocks.requestMarketData };
+});
+
+import { KITE_INDEX_TOKEN_MAP, parseColumnarCandles, resolveKiteHistoricalToken, useChartData } from "@/hooks/useChartData";
 
 describe("Kite index historical instrument mapping", () => {
   it("uses verified Kite spot-index tokens rather than the Dhan token map", () => {
@@ -78,5 +93,66 @@ describe("parseColumnarCandles", () => {
       timestamp: [1779372800, 1779200000, 1779286400],
     });
     expect(result.map((c) => c.close)).toEqual([1, 2, 3]);
+  });
+});
+
+describe("account-scoped chart history gateway", () => {
+  const accountId = "11111111-1111-4111-8111-111111111111";
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    createElement(QueryClientProvider, { client: queryClient }, children);
+
+  beforeEach(() => {
+    queryClient.clear();
+    gatewayMocks.requestMarketData.mockReset();
+    gatewayMocks.accountContext.mockReturnValue({
+      activeAccountId: accountId,
+      accounts: [{ id: accountId, broker_provider: "dhan" }],
+    });
+  });
+
+  it.each([
+    ["dhan", "dhan", "13", "15m"],
+    ["kite", "kite", "256265", "15minute"],
+  ] as const)("routes %s chart candles through Terminal OS with account and provider context", async (accountProvider, gatewayProvider, providerInstrumentId, expectedInterval) => {
+    const instrument = {
+      provider: gatewayProvider,
+      providerInstrumentId,
+      symbol: "NIFTY 50",
+      tradingSymbol: gatewayProvider === "kite" ? "NIFTY 50" : "NIFTY",
+      exchange: "NSE",
+      exchangeSegment: "IDX_I",
+      instrumentType: "INDEX",
+    };
+    gatewayMocks.accountContext.mockReturnValue({
+      activeAccountId: accountId,
+      accounts: [{ id: accountId, broker_provider: accountProvider }],
+    });
+    gatewayMocks.requestMarketData.mockImplementation(async (_accountId, _provider, operation) => {
+      if (operation.operation === "searchInstruments") return [instrument];
+      if (operation.operation === "getHistoricalCandles") return [{
+        timestamp: "2026-09-28T09:15:00.000Z",
+        open: 100,
+        high: 105,
+        low: 99,
+        close: 103,
+        volume: 10,
+      }];
+      return null;
+    });
+
+    const { result } = renderHook(() => useChartData("NIFTY", "1W"), { wrapper });
+    await waitFor(() => expect(result.current.data).toHaveLength(1));
+
+    expect(gatewayMocks.requestMarketData).toHaveBeenCalledWith(accountId, gatewayProvider, {
+      operation: "searchInstruments",
+      query: "NIFTY",
+    });
+    expect(gatewayMocks.requestMarketData).toHaveBeenCalledWith(accountId, gatewayProvider, expect.objectContaining({
+      operation: "getHistoricalCandles",
+      instrument: expect.objectContaining({ providerInstrumentId }),
+      interval: expectedInterval,
+    }));
+    expect(result.current.data?.[0]).toMatchObject({ open: 100, high: 105, low: 99, close: 103, volume: 10 });
   });
 });

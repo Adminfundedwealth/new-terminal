@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { fetchInstrumentMaster, fetchLiveOptionChain, normalizeKiteFnOStockQuotes, parseDhanOptionChain, parseNSEOptionChain, normalizeInstrumentMasterResponse } from "@/lib/marketApi";
+import { fetchInstrumentMaster, fetchLiveOptionChain, normalizeKiteFnOStockQuotes, normalizeTerminalMarketQuote, parseDhanOptionChain, parseNSEOptionChain, normalizeInstrumentMasterResponse } from "@/lib/marketApi";
 import { resolveAllowedOrigin } from "../../proxy-origin.mjs";
 
 describe("Kite option-chain provider policy", () => {
@@ -13,6 +13,52 @@ describe("Kite option-chain provider policy", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("Terminal OS quote normalization", () => {
+  it.each([
+    ["dhan", "dhan"],
+    ["kite", "zerodha"],
+  ] as const)("normalizes %s quotes into the existing UI quote shape", (gatewayProvider, uiProvider) => {
+    const instrument = {
+      provider: gatewayProvider,
+      providerInstrumentId: "13",
+      securityId: "canonical-13",
+      symbol: "NIFTY 50",
+      tradingSymbol: "NIFTY",
+      exchange: "NSE",
+      exchangeSegment: "IDX_I",
+      instrumentType: "INDEX",
+    };
+    const result = normalizeTerminalMarketQuote({
+      provider: gatewayProvider,
+      symbol: "NIFTY 50",
+      tradingSymbol: "NIFTY",
+      exchange: "NSE",
+      ltp: 25100,
+      open: 25000,
+      high: 25200,
+      low: 24900,
+      previousClose: 25000,
+      change: 100,
+      changePercent: 0.4,
+      volume: 10,
+      openInterest: null,
+      timestamp: "2026-09-29T10:00:00.000Z",
+    }, instrument, instrument.securityId);
+
+    expect(result).toMatchObject({
+      provider: uiProvider,
+      instrumentId: "canonical-13",
+      providerInstrumentId: "13",
+      symbol: "NIFTY",
+      ltp: 25100,
+      lastTradedPrice: 25100,
+      change: 100,
+      changePercent: 0.4,
+      volume: 10,
+    });
   });
 });
 

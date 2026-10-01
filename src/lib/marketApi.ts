@@ -4,6 +4,7 @@ import { InstrumentMaster, normalizeInstrumentMaster } from "./instrumentMaster"
 import { normalizeQuote, toLegacyQuote } from "./quoteService";
 import { classifyInstrument, isProductionInstrument } from "./instrumentClassification";
 import type { NormalizedQuote } from "./brokerAdapter";
+import type { TerminalMarketDataInstrument, TerminalMarketDataQuote } from "./terminalApi";
 
 // Local proxy base URL — override via VITE_PROXY_URL if deploying proxy elsewhere
 const PROXY_BASE = import.meta.env.VITE_PROXY_URL || "";
@@ -309,6 +310,37 @@ export function normalizeDhanQuotePayload(raw: unknown, symbol: string, master: 
   const instrument = master.getByExchangeSymbol("NSE", symbol) || master.getByExchangeSymbol("NSE", `${symbol} 50`);
   const result = normalizeQuote({ provider: "dhan", payload: raw, providerInstrumentId: instrument?.providerInstrumentId, exchange: instrument?.exchange, symbol: instrument?.tradingSymbol, now }, master);
   return { ...result, quote: result.quote ? toLegacyQuote(result.quote) : undefined };
+}
+
+export function normalizeTerminalMarketQuote(
+  quote: TerminalMarketDataQuote,
+  instrument: TerminalMarketDataInstrument,
+  canonicalInstrumentId?: string,
+  now = Date.now(),
+): NormalizedQuote {
+  const timestamp = Number.isFinite(Date.parse(quote.timestamp))
+    ? new Date(quote.timestamp).toISOString()
+    : new Date(now).toISOString();
+  const change = quote.change ?? (quote.previousClose === null ? 0 : quote.ltp - quote.previousClose);
+  const changePercent = quote.changePercent ?? (quote.previousClose ? (change / quote.previousClose) * 100 : 0);
+  return {
+    instrumentId: canonicalInstrumentId,
+    providerInstrumentId: instrument.providerInstrumentId,
+    exchange: quote.exchange,
+    symbol: quote.tradingSymbol || quote.symbol,
+    provider: quote.provider === "kite" ? "zerodha" : "dhan",
+    ltp: quote.ltp,
+    lastTradedPrice: quote.ltp,
+    previousClose: quote.previousClose ?? undefined,
+    open: quote.open ?? undefined,
+    high: quote.high ?? undefined,
+    low: quote.low ?? undefined,
+    volume: quote.volume ?? undefined,
+    openInterest: quote.openInterest ?? undefined,
+    change,
+    changePercent,
+    timestamp,
+  };
 }
 
 // Dhan expiry list

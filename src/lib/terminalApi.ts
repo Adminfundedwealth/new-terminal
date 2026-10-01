@@ -214,6 +214,219 @@ async function fetchTerminalJson<T>(path: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+export type TerminalMarketDataProvider = "dhan" | "kite";
+
+export interface TerminalMarketDataInstrument {
+  provider: TerminalMarketDataProvider;
+  providerInstrumentId: string;
+  symbol: string;
+  tradingSymbol: string;
+  exchange: string;
+  exchangeSegment: string;
+  instrumentType: string;
+  lotSize?: number;
+  tickSize?: number;
+  expiryDate?: string;
+  strikePrice?: number;
+  optionType?: string;
+}
+
+export interface TerminalMarketDataQuote {
+  provider: TerminalMarketDataProvider;
+  symbol: string;
+  tradingSymbol: string;
+  exchange: string;
+  ltp: number;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  previousClose: number | null;
+  change: number | null;
+  changePercent: number | null;
+  volume: number | null;
+  openInterest: number | null;
+  timestamp: string;
+}
+
+export interface TerminalMarketDataCandle {
+  timestamp: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  openInterest?: number;
+}
+
+export function resolveTerminalMarketDataProvider(value: string | null | undefined): TerminalMarketDataProvider | null {
+  const provider = value?.trim().toLowerCase();
+  if (provider === "dhan") return "dhan";
+  if (provider === "kite" || provider === "zerodha") return "kite";
+  return null;
+}
+
+export function toTerminalMarketDataInstrument(
+  instrument: {
+    providerInstrumentId?: string;
+    securityId: string;
+    symbol: string;
+    tradingSymbol: string;
+    exchange: string;
+    exchangeSegment: string;
+    instrumentType: string;
+    lotSize?: number;
+    tickSize?: number;
+    expiryDate?: string;
+    strikePrice?: number;
+    optionType?: string;
+  },
+  provider: TerminalMarketDataProvider,
+): TerminalMarketDataInstrument {
+  return {
+    provider,
+    providerInstrumentId: instrument.providerInstrumentId || instrument.securityId,
+    symbol: instrument.symbol,
+    tradingSymbol: instrument.tradingSymbol,
+    exchange: instrument.exchange,
+    exchangeSegment: instrument.exchangeSegment,
+    instrumentType: instrument.instrumentType,
+    lotSize: instrument.lotSize,
+    tickSize: instrument.tickSize,
+    expiryDate: instrument.expiryDate,
+    strikePrice: instrument.strikePrice,
+    optionType: instrument.optionType,
+  };
+}
+
+export type TerminalMarketDataOperation =
+  | { operation: "authenticate" }
+  | { operation: "searchInstruments"; query: string }
+  | { operation: "getQuote"; instrument: TerminalMarketDataInstrument }
+  | {
+      operation: "getHistoricalCandles";
+      instrument: TerminalMarketDataInstrument;
+      interval: string;
+      fromDate: string;
+      toDate: string;
+    };
+
+export interface TerminalMarketDataStatus {
+  account_id: string;
+  provider: TerminalMarketDataProvider;
+  configured: boolean;
+  is_connected: boolean;
+  last_tested_at: string | null;
+  last_test_result: string | null;
+}
+
+export type TerminalMarketDataErrorCode =
+  | "UNAUTHENTICATED"
+  | "ACCOUNT_FORBIDDEN"
+  | "ACCOUNT_INACTIVE"
+  | "INVALID_PROVIDER_ACCOUNT"
+  | "MISSING_CREDENTIALS"
+  | "CREDENTIAL_STORAGE_ERROR"
+  | "INVALID_CREDENTIALS"
+  | "RATE_LIMITED"
+  | "PROVIDER_UNAVAILABLE"
+  | "PROVIDER_ERROR"
+  | "INVALID_REQUEST";
+
+const MARKET_DATA_ERROR_MESSAGES: Record<TerminalMarketDataErrorCode, string> = {
+  UNAUTHENTICATED: "Sign in again to request market data.",
+  ACCOUNT_FORBIDDEN: "This trading account is not available for market data.",
+  ACCOUNT_INACTIVE: "This trading account is inactive.",
+  INVALID_PROVIDER_ACCOUNT: "The selected provider is not configured for this account.",
+  MISSING_CREDENTIALS: "Broker credentials are not configured for this account.",
+  CREDENTIAL_STORAGE_ERROR: "Broker credentials could not be loaded securely.",
+  INVALID_CREDENTIALS: "Broker authentication failed.",
+  RATE_LIMITED: "The broker is rate limiting market-data requests. Try again shortly.",
+  PROVIDER_UNAVAILABLE: "The broker market-data service is temporarily unavailable.",
+  PROVIDER_ERROR: "The market-data request could not be completed.",
+  INVALID_REQUEST: "The market-data request is invalid.",
+};
+
+export class TerminalMarketDataError extends Error {
+  constructor(
+    readonly code: TerminalMarketDataErrorCode,
+    readonly status: number,
+  ) {
+    super(MARKET_DATA_ERROR_MESSAGES[code]);
+    this.name = "TerminalMarketDataError";
+  }
+}
+
+function normalizeMarketDataError(status: number, code?: string): TerminalMarketDataError {
+  if (status === 401) return new TerminalMarketDataError(code === "INVALID_CREDENTIALS" ? "INVALID_CREDENTIALS" : "UNAUTHENTICATED", status);
+  if (status === 403 || status === 404 || code === "ACCOUNT_NOT_FOUND") return new TerminalMarketDataError("ACCOUNT_FORBIDDEN", status);
+  if (code === "ACCOUNT_INACTIVE") return new TerminalMarketDataError("ACCOUNT_INACTIVE", status);
+  if (status === 409 || code === "INVALID_PROVIDER_ACCOUNT") return new TerminalMarketDataError("INVALID_PROVIDER_ACCOUNT", status);
+  if (status === 424 || code === "MISSING_CREDENTIALS") return new TerminalMarketDataError("MISSING_CREDENTIALS", status);
+  if (code === "CREDENTIAL_STORAGE_ERROR") return new TerminalMarketDataError("CREDENTIAL_STORAGE_ERROR", status);
+  if (status === 429 || code === "RATE_LIMITED") return new TerminalMarketDataError("RATE_LIMITED", status);
+  if (code === "INVALID_REQUEST" || code === "INVALID_INSTRUMENT" || status === 400) return new TerminalMarketDataError("INVALID_REQUEST", status);
+  if (status >= 500 || code === "UPSTREAM_ERROR" || code === "PROVIDER_UNAVAILABLE") return new TerminalMarketDataError("PROVIDER_UNAVAILABLE", status);
+  return new TerminalMarketDataError("PROVIDER_ERROR", status);
+}
+
+async function getCustomerAccessToken(): Promise<string> {
+  const { data: { session }, error } = await supabase.auth.getSession();
+  if (error || !session?.access_token) {
+    throw new Error("Authentication required to request account market data.");
+  }
+  return session.access_token;
+}
+
+async function readMarketDataResponse<T>(response: Response): Promise<T> {
+  let payload: { data?: T; error?: { code?: string } };
+  try {
+    payload = await response.json() as { data?: T; error?: { code?: string } };
+  } catch {
+    if (!response.ok) throw normalizeMarketDataError(response.status);
+    throw new TerminalMarketDataError("PROVIDER_ERROR", response.status);
+  }
+  if (!response.ok) {
+    throw normalizeMarketDataError(response.status, payload.error?.code);
+  }
+  return payload.data as T;
+}
+
+export async function requestTerminalMarketData<T>(
+  accountId: string,
+  provider: TerminalMarketDataProvider,
+  operation: TerminalMarketDataOperation,
+  environment: "production" | "paper" | "sandbox" = "production",
+): Promise<T> {
+  if (!accountId) throw new Error("A trading account is required for market data.");
+  const accessToken = await getCustomerAccessToken();
+  const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/market-data`, {
+    method: "POST",
+    credentials: "omit",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ account_id: accountId, provider, environment, ...operation }),
+  });
+  return readMarketDataResponse<T>(response);
+}
+
+export async function fetchTerminalMarketDataStatus(
+  accountId: string,
+  provider: TerminalMarketDataProvider,
+  environment: "production" | "paper" | "sandbox" = "production",
+): Promise<TerminalMarketDataStatus> {
+  if (!accountId) throw new Error("A trading account is required for market-data status.");
+  const accessToken = await getCustomerAccessToken();
+  const query = new URLSearchParams({ account_id: accountId, provider, environment });
+  const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/market-data?${query}`, {
+    credentials: "omit",
+    headers: { Accept: "application/json", Authorization: `Bearer ${accessToken}` },
+  });
+  return readMarketDataResponse<TerminalMarketDataStatus>(response);
+}
+
 export async function fetchTerminalAccounts(): Promise<AccountsResponse> {
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) throw new Error("Authentication required to load trading accounts");

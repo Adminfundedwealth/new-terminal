@@ -10,7 +10,8 @@ export default function Stocks() {
   const [searchParams] = useSearchParams();
   const [watchedSymbols, setWatchedSymbols] = useState<string[]>(() => getSavedWatchlist());
   const { data, isLoading } = useFnOStocks();
-  const { activeAccountId } = useAccountContext();
+  const { activeAccountId, accounts } = useAccountContext();
+  const activeAccountProvider = accounts.find((account) => account.id === activeAccountId)?.broker_provider;
   const initialWorkspaceContext = searchParams.get("workspace") === "options" ? "options" : undefined;
   const initialChartSymbol = searchParams.get("contract") ?? undefined;
   const initialUnderlying = searchParams.get("underlying") ?? undefined;
@@ -53,6 +54,7 @@ export default function Stocks() {
         watchedSymbols={watchedSymbols}
         onToggleWatchlist={handleWatchlistToggle}
         activeAccountId={activeAccountId}
+        activeAccountProvider={activeAccountProvider}
         initialWorkspaceContext={initialWorkspaceContext}
         initialChartSymbol={initialChartSymbol}
         initialUnderlying={initialUnderlying}
