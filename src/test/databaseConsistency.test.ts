@@ -114,4 +114,27 @@ describe("canonical database consistency", () => {
     expect(migrationSql).toContain("max_risk_per_trade_percent");
     expect(migrationSql).toContain("min_trading_days");
   });
+
+  it("adds the durable outbox worker contract for provider submission and ack/fill recovery", () => {
+    expect(migrationSql).toContain("create table if not exists public.execution_submissions");
+    expect(migrationSql).toContain("create table if not exists public.execution_audit_log");
+    expect(migrationSql).toContain("create or replace function public.claim_next_order_execution_outbox(");
+    expect(migrationSql).toContain("create or replace function public.mark_order_submission_started(");
+    expect(migrationSql).toContain("create or replace function public.record_provider_ack(");
+    expect(migrationSql).toContain("create or replace function public.record_execution_fill(");
+    expect(migrationSql).toContain("grant execute on function public.claim_next_order_execution_outbox");
+    expect(migrationSql).toContain("grant execute on function public.record_execution_fill");
+  });
+
+  it("adds bounded D6 recovery RPCs without relaxing D2 database idempotency", () => {
+    expect(migrationSql).toContain("create or replace function public.authorize_order_execution_retry(");
+    expect(migrationSql).toContain("create or replace function public.mark_order_execution_failed(");
+    expect(migrationSql).toContain("D6_RETRY_REQUIRES_SERVICE_ROLE");
+    expect(migrationSql).toContain("D6_FAILURE_REQUIRES_SERVICE_ROLE");
+    expect(migrationSql).toContain("row_submission.retry_count + 1 >= max_attempts");
+    expect(migrationSql).toContain("unique (account_id, client_order_id)");
+    expect(migrationSql).toContain("executions_account_external_normalized_uidx");
+    expect(migrationSql).toContain("revoke all on function public.authorize_order_execution_retry(uuid, text, integer) from public, anon, authenticated");
+    expect(migrationSql).toContain("grant execute on function public.authorize_order_execution_retry(uuid, text, integer) to service_role");
+  });
 });

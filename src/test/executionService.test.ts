@@ -193,7 +193,7 @@ describe("ExecutionService", () => {
     const request = { accountId: "acct-1", brokerId: "dhan" as const, symbol: "NIFTY", exchange: "NSE", side: "BUY" as const, quantity: 1, orderType: "MARKET", idempotencyKey: "timeout-1", authUserId: "user-1" };
     const first = await service.placeOrder(request);
     const second = await service.placeOrder(request);
-    expect(first.state).toBe("REJECTED");
+    expect(first.state).toBe("PENDING");
     expect(second.brokerOrderId).toBe(first.brokerOrderId);
     expect(runtime.calls).toHaveLength(1);
   });
@@ -219,9 +219,12 @@ describe("ExecutionService", () => {
   });
 
   it("blocks a real order when risk checks fail", async () => {
+    const runtime = createMockBrokerRuntime({ calls: [] });
     const service = new ExecutionService(createBrokerRouter([]), {
       mode: "REAL",
       realOrderEnabled: true,
+      authUserId: "user-1",
+      brokerRuntime: runtime,
       riskRules: {
         trading_permission: true,
         allowed_segments: ["NSE"],
@@ -262,10 +265,12 @@ describe("ExecutionService", () => {
       quantity: 2,
       orderType: "MARKET",
       idempotencyKey: "risk-block-1",
+      now: new Date("2026-09-22T10:00:00.000Z"),
     });
 
     expect(result.state).toBe("REJECTED");
     expect(result.reasonCode).toBe("QUANTITY_EXCEEDED");
+    expect(runtime.calls).toHaveLength(0);
   });
 
   it("uses mocked broker runtime for a real execution flow and fills position only after broker ACK + fill", async () => {

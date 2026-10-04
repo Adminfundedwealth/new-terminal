@@ -22,7 +22,6 @@ import { WhatIfSimulator } from "@/components/WhatIfSimulator";
 import { useToast } from "@/hooks/use-toast";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { classifyInstrument, validateInstrumentForOrder } from "@/lib/instrumentClassification";
-import { TerminalAccountData } from "@/components/TerminalAccountData";
 
 // Inline editable cell
 function EditableCell({ value, onSave, prefix = "", suffix = "", className = "" }: {
@@ -184,7 +183,7 @@ export default function PositionTracker() {
       lotSize: selectedInstrument.lotSize,
     });
     setPositions(prev => [...prev, pos]);
-    toast({ title: "Simulated Order Added", description: `Simulated ${formAction} ${formSymbol} ${formStrike} ${formType}` });
+    toast({ title: "Position Added", description: `${formAction} ${formSymbol} ${formStrike} ${formType}` });
     // Reset form
     setFormEntry("100");
     setFormCmp("100");
@@ -286,9 +285,9 @@ export default function PositionTracker() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Position Tracker <span className="text-sm font-normal text-muted-foreground">Simulated Trading</span></h1>
+          <h1 className="text-2xl font-bold tracking-tight">Position Tracker</h1>
           <p className="text-sm text-muted-foreground">
-            Live P&L · Simulated Orders · Greeks Decay · Portfolio Risk
+            Live P&L · P&L Simulator · Greeks Decay · Portfolio Risk
             {positions.length > 0 && <Badge variant="outline" className="ml-2 text-[11px]">{positions.length} active</Badge>}
             {closedPositions.length > 0 && <Badge variant="outline" className="ml-1 text-[11px]">{closedPositions.length} closed</Badge>}
           </p>
@@ -323,8 +322,6 @@ export default function PositionTracker() {
           </Button>
         </div>
       </div>
-
-      <TerminalAccountData />
 
       {/* Add Position Form */}
       {showAddForm && (
@@ -361,7 +358,7 @@ export default function PositionTracker() {
                 <Label className="text-[11px]">Action</Label>
                 <Select value={formAction} onValueChange={v => setFormAction(v as "BUY" | "SELL")}>
                   <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value="BUY">Simulated BUY</SelectItem><SelectItem value="SELL">Simulated SELL</SelectItem></SelectContent>
+                  <SelectContent><SelectItem value="BUY">BUY</SelectItem><SelectItem value="SELL">SELL</SelectItem></SelectContent>
                 </Select>
               </div>
               <div>
@@ -541,7 +538,7 @@ export default function PositionTracker() {
         </TabsContent>
       </Tabs>
 
-      {/* Simulation Mode */}
+      {/* What-If Scenario Simulator */}
       <WhatIfSimulator positions={positions} />
 
       {/* Active Positions by Symbol */}

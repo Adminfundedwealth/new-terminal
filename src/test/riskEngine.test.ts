@@ -101,6 +101,23 @@ describe("risk engine foundation", () => {
     expect(result.reason_code).toBe("MARKET_DATA_STALE");
   });
 
+  it("requires a trusted price for limit orders and rejects unverifiable broker margin", () => {
+    const priceRejected = evaluateRisk(request({ order_type: "LIMIT", requested_price: null, trusted_price: null }), state(), { ...rules, price_verification_required: true });
+    expect(priceRejected.reason_code).toBe("PRICE_NOT_VERIFIABLE");
+
+    const marginRejected = evaluateRisk(request(), state({ margin_verified: false }), { ...rules, margin_requirement: 2500 });
+    expect(marginRejected.reason_code).toBe("MARGIN_NOT_VERIFIABLE");
+  });
+
+  it("treats reduce-only closes as risk-reducing rather than new exposure", () => {
+    const openPosition = state({ open_positions: [{ symbol: "NIFTY", quantity: 4, is_open: true }] });
+    const allowReduceOnly = evaluateRisk(request({ quantity: 2, is_reduce_only: true, exposure_direction: "reducing" }), openPosition, rules);
+    const rejectExposureIncrease = evaluateRisk(request({ quantity: 2, is_reduce_only: false, exposure_direction: "increasing" }), openPosition, { ...rules, max_position_quantity: 5 });
+
+    expect(allowReduceOnly.decision).toBe("ALLOW");
+    expect(rejectExposureIncrease.reason_code).toBe("QUANTITY_EXCEEDED");
+  });
+
   it("rejects missing required rule configuration", () => {
     const result = evaluateRisk(request(), state(), { ...rules, max_daily_trades: undefined });
     expect(result.reason_code).toBe("RULE_CONFIGURATION_MISSING");

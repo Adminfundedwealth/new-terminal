@@ -116,6 +116,7 @@ class TerminalRealtimeClient {
   get isDhanConnected(): boolean { return this.authenticated && this.scope?.provider === "dhan"; }
   get isKiteConnected(): boolean { return this.authenticated && this.scope?.provider === "kite"; }
   get state(): ConnectionState { return this.connectionState; }
+  get heartbeatTimestamp(): number { return this.lastHeartbeatAt; }
   get hasReconnectTimer(): boolean { return this.reconnectTimer !== null; }
   getLatest(securityId: number): TickData | undefined { return this.latestData.get(securityId); }
   getLatestBySymbol(symbol: string): TickData | undefined {

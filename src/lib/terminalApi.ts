@@ -4,6 +4,7 @@ import type { RiskRequest } from "@/lib/riskEngine";
 import type { Instrument } from "@/lib/localDatabase";
 import type { OptionData } from "@/lib/mockData";
 import { deserializeCanonicalOrder, type CanonicalOrderRow, type CanonicalOrder } from "@/lib/orderModel";
+import { REALTIME_MOCK_TEST_ACCOUNT_ID } from "@/lib/realtimeMockTestScope";
 
 const TERMINAL_OS_BASE = (import.meta.env.VITE_TERMINAL_OS_URL || "").replace(/\/$/, "");
 
@@ -96,6 +97,146 @@ interface AccountsResponse {
   };
 }
 
+export type TerminalOrderCommandRequest = Omit<CreateOrderRequest, "account_id" | "client_order_id" | "instrument"> & {
+  account_id: string;
+  client_order_id: string;
+};
+
+const PENDING_ORDER_COMMANDS_KEY = "fundedwealth.pending-order-commands.v1";
+
+interface PendingOrderCommand {
+  signature: string;
+  client_order_id: string;
+}
+
+function normalizedOrderCommand(request: CreateOrderRequest, clientOrderId: string): TerminalOrderCommandRequest {
+  const orderType = request.order_type === "STOP" ? "SL" : request.order_type === "STOP-LIMIT" ? "SL-M" : request.order_type;
+  return {
+    account_id: request.account_id,
+    client_order_id: clientOrderId,
+    symbol: request.symbol.trim().toUpperCase(),
+    exchange: request.exchange.trim().toUpperCase(),
+    ...(request.segment?.trim() ? { segment: request.segment.trim().toUpperCase() } : {}),
+    side: request.side,
+    quantity: request.quantity,
+    order_type: orderType,
+    ...(request.price == null ? {} : { price: request.price }),
+    ...(request.trigger_price == null ? {} : { trigger_price: request.trigger_price }),
+    ...(request.stop_loss == null ? {} : { stop_loss: request.stop_loss }),
+    ...(request.take_profit == null ? {} : { take_profit: request.take_profit }),
+    time_in_force: request.time_in_force ?? "DAY",
+    ...(request.product == null ? {} : { product: request.product }),
+    is_overnight: request.is_overnight ?? false,
+  };
+}
+
+function orderCommandSignature(command: TerminalOrderCommandRequest): string {
+  return JSON.stringify({
+    account_id: command.account_id,
+    symbol: command.symbol,
+    exchange: command.exchange,
+    segment: command.segment ?? "",
+    side: command.side,
+    quantity: command.quantity,
+    order_type: command.order_type,
+    price: command.price ?? null,
+    trigger_price: command.trigger_price ?? null,
+    stop_loss: command.stop_loss ?? null,
+    take_profit: command.take_profit ?? null,
+    time_in_force: command.time_in_force ?? "DAY",
+    product: command.product ?? "",
+    is_overnight: command.is_overnight ?? false,
+  });
+}
+
+function readPendingOrderCommands(): PendingOrderCommand[] {
+  try {
+    const stored = globalThis.localStorage?.getItem(PENDING_ORDER_COMMANDS_KEY);
+    const parsed: unknown = stored ? JSON.parse(stored) : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is PendingOrderCommand =>
+        typeof entry?.signature === "string" && typeof entry?.client_order_id === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistPendingOrderCommand(command: TerminalOrderCommandRequest): void {
+  try {
+    const signature = orderCommandSignature(command);
+    const pending = readPendingOrderCommands().filter((entry) => entry.signature !== signature);
+    pending.push({ signature, client_order_id: command.client_order_id });
+    globalThis.localStorage?.setItem(PENDING_ORDER_COMMANDS_KEY, JSON.stringify(pending));
+  } catch {
+    // Durable idempotency remains authoritative at the gateway if browser storage is unavailable.
+  }
+}
+
+function clearPendingOrderCommand(command: TerminalOrderCommandRequest): void {
+  try {
+    const signature = orderCommandSignature(command);
+    const pending = readPendingOrderCommands().filter((entry) =>
+      entry.signature !== signature || entry.client_order_id !== command.client_order_id);
+    globalThis.localStorage?.setItem(PENDING_ORDER_COMMANDS_KEY, JSON.stringify(pending));
+  } catch {
+    // A stale local retry hint is harmless; the server still enforces the key.
+  }
+}
+
+function prepareOrderCommand(request: CreateOrderRequest): TerminalOrderCommandRequest {
+  const seed = normalizedOrderCommand(request, request.client_order_id?.trim() || "pending");
+  const signature = orderCommandSignature(seed);
+  const existing = readPendingOrderCommands().find((entry) => entry.signature === signature);
+  const clientOrderId = existing?.client_order_id
+    ?? request.client_order_id?.trim()
+    ?? globalThis.crypto.randomUUID();
+  const command = normalizedOrderCommand(request, clientOrderId);
+  persistPendingOrderCommand(command);
+  return command;
+}
+
+/** Customer command boundary; the gateway derives provider routing server-side. */
+export async function submitTerminalOrderCommand(request: TerminalOrderCommandRequest): Promise<CreateOrderResponse> {
+  if (!TERMINAL_OS_BASE) throw new Error("Terminal OS is not configured.");
+  const accessToken = await getCustomerAccessToken();
+
+  let response: Response;
+  try {
+    response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/orders`, {
+      method: "POST",
+      credentials: "omit",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(request),
+    });
+  } catch (error) {
+    throw error instanceof Error ? error : new Error("Network response was lost after acceptance");
+  }
+
+  if (!response || typeof response.json !== "function") {
+    throw new Error("Network response was lost after acceptance");
+  }
+
+  let payload: {
+    data?: { order?: Record<string, unknown>; replayed?: boolean };
+    error?: { message?: string };
+  } = {};
+  try {
+    payload = await response.json() as typeof payload;
+  } catch {
+    if (!response.ok) {
+      throw new Error(`Order command was rejected (${response.status}).`);
+    }
+    return { ok: true, replayed: false, order: undefined };
+  }
+
+  if (!response.ok) throw new Error(payload.error?.message ?? "Order command was rejected.");
+  return { ok: true, replayed: payload.data?.replayed ?? false, order: payload.data?.order };
+}
 export interface TerminalHealthCheck {
   name: string;
   status: string;
@@ -356,7 +497,12 @@ export async function requestTerminalRealtimeTicket(
       "Content-Type": "application/json",
       Authorization: `Bearer ${accessToken}`,
     },
-    body: JSON.stringify({ account_id: accountId, provider, environment }),
+    body: JSON.stringify({
+      account_id: accountId,
+      provider,
+      environment,
+      ...(accountId === REALTIME_MOCK_TEST_ACCOUNT_ID && provider === "dhan" && environment === "paper" ? { test_mode: true } : {}),
+    }),
   });
   if (!response.ok) throw new Error("Realtime authentication is unavailable.");
   const payload = await response.json() as { data?: { ticket?: string; expires_at?: string } };
@@ -740,26 +886,9 @@ export function createServerPreTradeRiskGate() {
 
 export async function createTerminalOrder(request: CreateOrderRequest): Promise<CreateOrderResponse> {
   if (!request.account_id) throw new Error("A trading account is required to place an order.");
-  const accessToken = await getCustomerAccessToken();
-  const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/orders`, {
-    method: "POST",
-    credentials: "omit",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify(request),
-  });
-  let payload: { data?: CreateOrderResponse; error?: { message?: string } };
-  try {
-    payload = await response.json() as typeof payload;
-  } catch {
-    throw new Error("Order gateway returned an invalid response.");
-  }
-  if (!response.ok) throw new Error(payload.error?.message ?? "Order request was rejected.");
-  const result = payload.data as CreateOrderResponse;
-  if (!result.ok) throw new Error(result.error?.message ?? "Order creation was rejected");
+  const command = prepareOrderCommand(request);
+  const result = await submitTerminalOrderCommand(command);
+  clearPendingOrderCommand(command);
   return result;
 }
 

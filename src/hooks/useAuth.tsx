@@ -22,21 +22,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let mounted = true;
+
+    const finalizeSession = (nextSession: Session | null) => {
+      if (!mounted) return;
+      setSession(nextSession);
+      setLoading(false);
+    };
+
     void supabase.auth.getSession().then(({ data, error }) => {
       if (!mounted) return;
-      if (error) console.error("Supabase session initialization failed:", error.message);
-      setSession(data.session);
-      setLoading(false);
+      if (error) {
+        console.error("Supabase session initialization failed:", error.message);
+      }
+      finalizeSession(data.session ?? null);
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      if (mounted) {
-        setSession(nextSession);
-        if (!nextSession) {
-          queryClient.removeQueries({ predicate: (query) => query.queryKey[0] === "customer-account" || query.queryKey[0] === "terminal-os" });
-        }
+      if (!mounted) return;
+      setSession(nextSession ?? null);
+      if (!nextSession) {
+        void queryClient.removeQueries({ predicate: (query) => query.queryKey[0] === "customer-account" || query.queryKey[0] === "terminal-os" });
       }
+      setLoading(false);
     });
+
     return () => {
       mounted = false;
       listener.subscription.unsubscribe();

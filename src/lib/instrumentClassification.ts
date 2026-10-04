@@ -23,14 +23,19 @@ export function classifyInstrument(instrument: Instrument): InstrumentCategory |
   return null;
 }
 
-export function isProductionInstrument(instrument: Pick<Instrument, "symbol" | "tradingSymbol" | "exchangeSegment" | "instrumentType">): boolean {
-  const values = [instrument.symbol, instrument.tradingSymbol]
-    .filter((value): value is string => !!value)
-    .map((value) => value.trim());
-
-  if (values.length === 0) return false;
-
-  return !values.some((value) => /TEST/i.test(value));
+export function isProductionInstrument(instrument: Instrument | Partial<Instrument>): boolean {
+  // Filter out test/demo/synthetic instruments
+  // Production instruments should have valid trading symbols and not be marked as test
+  if (!instrument?.symbol && !instrument?.tradingSymbol) return false;
+  
+  const symbol = (instrument.symbol || instrument.tradingSymbol || "").toUpperCase();
+  const tradingSymbol = (instrument.tradingSymbol || "").toUpperCase();
+  
+  // Exclude common test prefixes/patterns
+  if (symbol.startsWith("TEST") || symbol.startsWith("DEMO") || symbol.startsWith("SYNTH")) return false;
+  if (tradingSymbol.startsWith("TEST") || tradingSymbol.startsWith("DEMO")) return false;
+  
+  return true;
 }
 
 export function isTradableContract(instrument: Instrument, category?: InstrumentCategory): boolean {

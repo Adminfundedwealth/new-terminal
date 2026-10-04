@@ -13,6 +13,7 @@ import {
   subscribeToTerminalMarketDataStream,
   TerminalMarketDataError,
 } from "@/lib/terminalApi";
+import { REALTIME_MOCK_TEST_ACCOUNT_ID } from "@/lib/realtimeMockTestScope";
 
 const accessToken = "customer-session-jwt";
 const accountId = "11111111-1111-4111-8111-111111111111";
@@ -133,6 +134,24 @@ describe("Main Terminal market-data contract", () => {
     expect(JSON.parse(String(init.body))).toEqual({ account_id: accountId, provider: "dhan", environment: "paper" });
     expect(JSON.stringify(init.body)).not.toContain(accessToken);
     expect(ticket.ticket).toBe("signed-scope-only-ticket");
+  });
+
+  it("opts into test mode only for the fixed synthetic paper scope", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: {
+      ticket: "mock-scope-ticket",
+      expires_at: "2026-10-01T10:01:30.000Z",
+    } }), { status: 200 }));
+
+    await requestTerminalRealtimeTicket(REALTIME_MOCK_TEST_ACCOUNT_ID, "dhan", "paper");
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({
+      account_id: REALTIME_MOCK_TEST_ACCOUNT_ID,
+      provider: "dhan",
+      environment: "paper",
+      test_mode: true,
+    });
+    expect(JSON.stringify(init.body)).not.toContain(accessToken);
   });
 
   it("fails before network access when the customer session is missing", async () => {

@@ -20,12 +20,14 @@ import {
   getFnOStockList,
   findInstrumentsBySymbol,
   getAllInstruments,
+  saveInstruments,
   type PriceSnapshot,
   type CandleHistory,
   type CandleData,
   type DatabaseStats,
   type Instrument,
 } from "@/lib/localDatabase";
+import { fetchInstrumentMaster } from "@/lib/marketApi";
 import { classifyInstrument, type InstrumentCategory } from "@/lib/instrumentClassification";
 
 // ── Hook: Database readiness check ──
@@ -167,12 +169,32 @@ export function useInstrumentLookup() {
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
-    getAllInstruments().then((data) => {
-      setAllInstruments(data);
-      setIsLoaded(true);
-    }).catch(() => {
-      setIsLoaded(true);
-    });
+    const load = async () => {
+      try {
+        let data = await getAllInstruments();
+        const hasUnderlyingMaster = data.some((instrument) => {
+          const hasRequiredFields = instrument.securityId && instrument.symbol && instrument.tradingSymbol;
+          const category = classifyInstrument(instrument);
+          return hasRequiredFields && (category === "stocks" || category === "indices");
+        });
+        if (!hasUnderlyingMaster) {
+          const result = await fetchInstrumentMaster();
+          data = result.instruments || [];
+          if (data.length > 0) {
+            const BATCH_SIZE = 2000;
+            for (let i = 0; i < data.length; i += BATCH_SIZE) {
+              await saveInstruments(data.slice(i, i + BATCH_SIZE));
+            }
+          }
+        }
+        setAllInstruments(data);
+      } catch {
+        setAllInstruments([]);
+      } finally {
+        setIsLoaded(true);
+      }
+    };
+    load();
   }, []);
 
   const search = useCallback((query: string, category?: InstrumentCategory, limit = 20) => {

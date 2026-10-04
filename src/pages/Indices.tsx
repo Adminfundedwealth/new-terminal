@@ -7,8 +7,7 @@ import { getSavedWatchlist, saveWatchlist } from "@/lib/watchlist";
 
 export default function Indices() {
   const navigate = useNavigate();
-  const { activeAccountId, accounts } = useAccountContext();
-  const activeAccountProvider = accounts.find((account) => account.id === activeAccountId)?.broker_provider;
+  const { activeAccountId } = useAccountContext();
   const [watchedSymbols, setWatchedSymbols] = useState<string[]>(() => getSavedWatchlist());
   const { data, isLoading } = useLiveIndices();
 
@@ -45,7 +44,6 @@ export default function Indices() {
         watchedSymbols={watchedSymbols}
         onToggleWatchlist={handleWatchlistToggle}
         activeAccountId={activeAccountId}
-        activeAccountProvider={activeAccountProvider}
         onTradeOpen={(symbol) => navigate(`/option-chain?symbol=${symbol}`)}
         footerLabel="indices"
         searchPlaceholder="Search indices..."

@@ -1,115 +1,68 @@
-import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useMemo, useState } from "react";
+import { Search, RefreshCw } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
-import { useAccountContext } from "@/hooks/useAccountContext";
-import { InstrumentExplorer } from "@/components/InstrumentExplorer";
-import { getPreferredMarketAdapter } from "@/lib/brokerRouter";
-import { classifyInstrument, isProductionInstrument } from "@/lib/instrumentClassification";
-import { getSavedWatchlist, saveWatchlist } from "@/lib/watchlist";
-import { isMeaningfulMarketValue } from "@/lib/marketDataState";
-import { fetchInstrumentMaster } from "@/lib/marketApi";
-import type { Instrument } from "@/lib/localDatabase";
+import { classifyInstrument } from "@/lib/instrumentClassification";
 
 export default function Futures() {
-  const navigate = useNavigate();
-  const [watchedSymbols, setWatchedSymbols] = useState<string[]>(() => getSavedWatchlist());
   const { instruments, isLoaded } = useInstrumentLookup();
-  const { activeAccountId, accounts } = useAccountContext();
-  const activeAccountProvider = accounts.find((account) => account.id === activeAccountId)?.broker_provider;
-  const activeProvider = resolveTerminalMarketDataProvider(activeAccountProvider);
-  const kiteMarketQuery = useQuery({
-    queryKey: ["futures-market-data", activeAccountId, activeProvider],
-    queryFn: async () => {
-      if (!activeAccountId || !activeProvider) return null;
-      const futures = instruments.filter((instrument) => isProductionInstrument(instrument) && classifyInstrument(instrument) === "futures" && (instrument.provider === activeProvider || (activeProvider === "kite" && instrument.provider === "zerodha")));
-      const quotes = [];
-      for (let offset = 0; offset < futures.length; offset += 10) {
-        const batch = futures.slice(offset, offset + 10);
-        const results = await Promise.allSettled(batch.map(async (instrument) => {
-          const terminalInstrument = toTerminalMarketDataInstrument(instrument, activeProvider);
-          const quote = await requestTerminalMarketData(activeAccountId, activeProvider, { operation: "getQuote", instrument: terminalInstrument });
-          return normalizeTerminalMarketQuote(quote, terminalInstrument, instrument.securityId);
-        }));
-        for (const result of results) if (result.status === "fulfilled") quotes.push(result.value);
-      }
-      return { instruments: futures, quotes };
-    },
-    staleTime: 10_000,
-    refetchInterval: 15_000,
-    retry: false,
-  });
-  const availableInstruments = kiteMarketQuery.data?.instruments ?? [];
-  const quotesByInstrumentId = useMemo(
-    () => new Map((kiteMarketQuery.data?.quotes ?? []).map((quote) => [quote.instrumentId ?? quote.providerInstrumentId ?? "", quote])),
-    [kiteMarketQuery.data?.quotes],
-  );
+  const [search, setSearch] = useState("");
 
-  useEffect(() => {
-    if (instruments.length > 0) return;
-    fetchInstrumentMaster()
-      .then((result) => setProviderInstruments(result.instruments as Instrument[]))
-      .catch(() => setProviderInstruments([]));
-  }, [instruments.length]);
-
-  const rows = useMemo(() => {
-    return availableInstruments
-      .filter((instrument) => isProductionInstrument(instrument) && classifyInstrument(instrument) === "futures")
-      .sort((a, b) => a.symbol.localeCompare(b.symbol) || (a.expiryDate || "").localeCompare(b.expiryDate || ""))
-      .map((instrument) => {
-        const quote = quotesByInstrumentId.get(instrument.securityId);
-        const quoteAge = quote?.timestamp ? Date.now() - new Date(quote.timestamp).getTime() : Number.POSITIVE_INFINITY;
-        return {
-          symbol: instrument.symbol,
-          chartSymbol: instrument.tradingSymbol,
-          label: instrument.tradingSymbol,
-          contract: instrument.tradingSymbol,
-          underlying: instrument.symbol,
-          expiry: instrument.expiryDate || "—",
-          ltp: quote?.ltp ?? null,
-          change: quote?.change ?? null,
-          changePercent: quote?.changePercent ?? null,
-          open: quote?.open ?? null,
-          high: quote?.high ?? null,
-          low: quote?.low ?? null,
-          volume: quote?.volume ?? null,
-          oi: quote?.openInterest ?? null,
-          oiChange: null,
-          isLive: quoteAge >= 0 && quoteAge <= 60_000,
-          instrument,
-          searchText: `${instrument.symbol} ${instrument.tradingSymbol}`,
-        };
-      });
-  }, [availableInstruments, quotesByInstrumentId]);
-
-  const hasAvailableMarketData = rows.some((row) => isMeaningfulMarketValue(row.ltp) || isMeaningfulMarketValue(row.open) || isMeaningfulMarketValue(row.high));
-
-  const explorerSubtitle = hasAvailableMarketData
-    ? "Available futures contracts from the instrument master. Live quote updates will appear when the market is active."
-    : "Futures contracts are available from the instrument master and will display live or last-known values when data is available.";
-
-  const handleWatchlistToggle = (symbol: string) => {
-    const next = watchedSymbols.includes(symbol) ? watchedSymbols.filter((entry) => entry !== symbol) : [...watchedSymbols, symbol];
-    setWatchedSymbols(next);
-    saveWatchlist(next);
-  };
+  const futures = useMemo(() => {
+    const query = search.trim().toUpperCase();
+    return instruments
+      .filter((instrument) => classifyInstrument(instrument) === "futures")
+      .filter((instrument) => !query || instrument.symbol.toUpperCase().includes(query) || instrument.tradingSymbol.toUpperCase().includes(query))
+      .sort((a, b) => a.symbol.localeCompare(b.symbol) || (a.expiryDate || "").localeCompare(b.expiryDate || ""));
+  }, [instruments, search]);
 
   return (
-    <main className="mx-auto w-full max-w-[1500px] p-3 sm:p-5">
-      <InstrumentExplorer
-        title="Futures"
-        subtitle={explorerSubtitle}
-        asset="futures"
-        rows={rows}
-        isLoading={!isLoaded}
-        watchedSymbols={watchedSymbols}
-        onToggleWatchlist={handleWatchlistToggle}
-        activeAccountId={activeAccountId}
-        activeAccountProvider={activeAccountProvider}
-        onTradeOpen={(symbol) => navigate(`/option-chain?symbol=${symbol}`)}
-        footerLabel="contracts"
-        searchPlaceholder="Search futures..."
-      />
-    </main>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Futures</h1>
+          <p className="text-sm text-muted-foreground">Stock futures and index futures from the instrument master</p>
+        </div>
+        <Badge variant="outline">{futures.length} contracts</Badge>
+      </div>
+
+      <Card>
+        <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
+          <CardTitle className="text-sm">Futures Contracts</CardTitle>
+          <div className="relative w-64">
+            <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+            <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search futures..." className="h-8 pl-8 text-xs" />
+          </div>
+        </CardHeader>
+        <CardContent>
+          {!isLoaded ? (
+            <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground"><RefreshCw className="h-4 w-4 animate-spin" /> Loading instrument master...</div>
+          ) : futures.length === 0 ? (
+            <p className="py-12 text-center text-sm text-muted-foreground">No futures contracts found in the instrument master.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead><tr className="border-b text-xs text-muted-foreground"><th className="pb-2">Symbol</th><th className="pb-2">Trading Symbol</th><th className="pb-2">Type</th><th className="pb-2">Expiry</th><th className="pb-2 text-right">Lot Size</th><th className="pb-2">Security ID</th></tr></thead>
+                <tbody>
+                  {futures.map((instrument) => (
+                    <tr key={instrument.securityId} className="border-b border-border/50 last:border-0">
+                      <td className="py-2 font-semibold">{instrument.symbol}</td>
+                      <td className="py-2 font-mono text-xs">{instrument.tradingSymbol}</td>
+                      <td className="py-2"><Badge variant="outline" className="text-[10px]">{instrument.instrumentType}</Badge></td>
+                      <td className="py-2 text-muted-foreground">{instrument.expiryDate || "-"}</td>
+                      <td className="py-2 text-right font-mono">{instrument.lotSize}</td>
+                      <td className="py-2 font-mono text-xs text-muted-foreground">{instrument.securityId}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }

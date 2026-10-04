@@ -1,0 +1,144 @@
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+import { useState, useEffect, useCallback } from "react";
+import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { AppSidebar } from "@/components/AppSidebar";
+import { Outlet, useLocation } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { StatusFooter } from "@/components/StatusFooter";
+import { CommandPalette } from "@/components/CommandPalette";
+import { AlertSystem } from "@/components/AlertSystem";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { useAuth } from "@/hooks/useAuth";
+import { useAccountContext } from "@/hooks/useAccountContext";
+import { useLiveIndices, useMarketStatus, useAllIndices } from "@/hooks/useMarketData";
+import { useWebSocketStatus } from "@/hooks/useWebSocket";
+import { marketWS } from "@/lib/terminalRealtimeClient";
+import { resolveTerminalMarketDataProvider } from "@/lib/terminalApi";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
+import { fetchTerminalDashboard, fetchTerminalExecutions, fetchTerminalPerformance, fetchTerminalPositions, fetchTerminalRisk, fetchTerminalWatchlists, } from "@/lib/terminalApi";
+import { Search, Bell, Timer, RefreshCw, Wifi, WifiOff, Plane, WalletCards, Check, LogOut } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger, } from "@/components/ui/dropdown-menu";
+export default function DashboardLayout() {
+    const { user, signOut } = useAuth();
+    const location = useLocation();
+    const queryClient = useQueryClient();
+    const [searchOpen, setSearchOpen] = useState(false);
+    const [alertsOpen, setAlertsOpen] = useState(false);
+    const [timeToExpiry, setTimeToExpiry] = useState("");
+    const [lastRefresh, setLastRefresh] = useState(new Date());
+    const [isRefreshing, setIsRefreshing] = useState(false);
+    const { accounts: tradingAccounts, accountContext, activeAccountId, isLoading: accountLoading, isError: accountError, selectAccount } = useAccountContext();
+    const activeAccountProvider = resolveTerminalMarketDataProvider(tradingAccounts.find((account) => account.id === activeAccountId)?.broker_provider);
+    useEffect(() => {
+        if (!activeAccountId || !activeAccountProvider) {
+            marketWS.stop();
+            return;
+        }
+        marketWS.start({ accountId: activeAccountId, provider: activeAccountProvider });
+        return () => marketWS.stop();
+    }, [activeAccountId, activeAccountProvider]);
+    useQueries({
+        queries: [
+            { queryKey: ["terminal-os", user?.id ?? "anonymous", "dashboard", activeAccountId], queryFn: () => fetchTerminalDashboard(activeAccountId ?? undefined), retry: false, staleTime: 30000, enabled: Boolean(activeAccountId) },
+            { queryKey: ["terminal-os", user?.id ?? "anonymous", "positions", activeAccountId], queryFn: () => fetchTerminalPositions(activeAccountId ?? undefined), retry: false, staleTime: 30000, enabled: Boolean(activeAccountId) },
+            { queryKey: ["terminal-os", user?.id ?? "anonymous", "executions", activeAccountId], queryFn: () => fetchTerminalExecutions(activeAccountId ?? undefined), retry: false, staleTime: 30000, enabled: Boolean(activeAccountId) },
+            { queryKey: ["terminal-os", user?.id ?? "anonymous", "risk", activeAccountId], queryFn: () => fetchTerminalRisk(activeAccountId ?? undefined), retry: false, staleTime: 30000, enabled: Boolean(activeAccountId) },
+            { queryKey: ["terminal-os", user?.id ?? "anonymous", "performance", activeAccountId], queryFn: () => fetchTerminalPerformance(activeAccountId ?? undefined), retry: false, staleTime: 30000, enabled: Boolean(activeAccountId) },
+            { queryKey: ["terminal-os", user?.id ?? "anonymous", "watchlists", activeAccountId], queryFn: fetchTerminalWatchlists, retry: false, staleTime: 30000, enabled: Boolean(user?.id) },
+        ],
+    });
+    const handleAccountChange = (accountId) => { void selectAccount(accountId); };
+    const handleSignOut = async () => {
+        await signOut();
+    };
+    // Live data hooks
+    const { data: indicesResult } = useLiveIndices();
+    const { data: marketResult } = useMarketStatus();
+    const { data: allIndicesData } = useAllIndices();
+    const hasLiveTicks = useWebSocketStatus();
+    const indices = indicesResult?.data || [];
+    const isMarketOpen = marketResult?.isOpen || false;
+    const isLiveData = Boolean(hasLiveTicks && isMarketOpen);
+    const dataStatus = isLiveData ? "LIVE" : isMarketOpen ? "CONNECTED" : indicesResult?.isLive ? "CLOSED" : "OFFLINE";
+    const giftNifty = marketResult?.giftNifty || null;
+    const liveVix = allIndicesData?.vix;
+    useKeyboardShortcuts({
+        onToggleSearch: () => setSearchOpen(true),
+        onToggleAlerts: () => setAlertsOpen(true),
+    });
+    // Quick refresh — invalidate ALL queries
+    const handleQuickRefresh = useCallback(async () => {
+        setIsRefreshing(true);
+        await queryClient.invalidateQueries();
+        setLastRefresh(new Date());
+        setTimeout(() => setIsRefreshing(false), 800);
+    }, [queryClient]);
+    // Keyboard shortcut: R for refresh
+    useEffect(() => {
+        const handler = (e) => {
+            if (e.key === "r" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                const target = e.target;
+                if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+                    return;
+                handleQuickRefresh();
+            }
+        };
+        window.addEventListener("keydown", handler);
+        return () => window.removeEventListener("keydown", handler);
+    }, [handleQuickRefresh]);
+    useEffect(() => {
+        const updateTimer = () => {
+            const now = new Date();
+            const target = new Date(now);
+            target.setHours(15, 30, 0, 0);
+            const dayOfWeek = now.getDay();
+            const daysUntilThursday = ((4 - dayOfWeek) + 7) % 7 || 7;
+            if (!(dayOfWeek === 4 && now < target)) {
+                target.setDate(target.getDate() + daysUntilThursday);
+            }
+            const diff = target.getTime() - now.getTime();
+            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+            const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+            setTimeToExpiry(`${days}d ${hours}h ${mins}m`);
+        };
+        updateTimer();
+        const interval = setInterval(updateTimer, 60000);
+        return () => clearInterval(interval);
+    }, []);
+    const now = new Date();
+    return (_jsxs(SidebarProvider, { children: [_jsxs("div", { className: "dashboard-shell min-h-screen flex w-full bg-background relative overflow-hidden", children: [_jsx("div", { className: "absolute inset-0 bg-[linear-gradient(180deg,hsl(var(--primary)/0.035)_0%,transparent_22rem),linear-gradient(90deg,hsl(var(--primary)/0.025)_0%,transparent_36rem)] pointer-events-none" }), _jsx("div", { className: "bg-noise" }), _jsx(AppSidebar, {}), _jsxs("div", { className: "flex-1 flex flex-col overflow-hidden relative z-10", children: [_jsxs("header", { className: "min-h-11 flex items-center border-b border-border/70 px-2.5 sm:px-3 shrink-0 bg-background/92 backdrop-blur-xl transition-colors", children: [_jsx(SidebarTrigger, { className: "mr-2 h-6 w-6" }), _jsxs("div", { className: "hidden xl:flex items-center gap-4 overflow-hidden flex-1 mr-2", children: [indices.slice(0, 4).map((idx) => {
+                                                const pos = idx.change >= 0;
+                                                return (_jsxs("div", { className: "flex items-center gap-1.5 shrink-0", children: [_jsx("span", { className: "text-xs text-muted-foreground font-medium uppercase tracking-wider", children: idx.symbol }), _jsx("span", { className: "text-xs font-mono font-semibold tabular-nums", children: idx.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2 }) }), _jsxs("span", { className: `text-xs font-mono font-medium tabular-nums ${pos ? "text-bullish" : "text-bearish"}`, children: [pos ? "+" : "", idx.changePercent.toFixed(2), "%"] })] }, idx.symbol));
+                                            }), _jsxs("div", { className: "flex items-center gap-1.5 shrink-0", children: [_jsx("span", { className: "text-xs text-muted-foreground font-medium uppercase tracking-wider", children: "VIX" }), _jsx("span", { className: `text-xs font-mono font-semibold tabular-nums ${(liveVix?.changePercent ?? 0) >= 0 ? "text-bearish" : "text-bullish"}`, children: liveVix ? liveVix.value.toFixed(2) : "--" }), liveVix && (_jsxs("span", { className: `text-xs font-mono font-medium tabular-nums ${liveVix.changePercent >= 0 ? "text-bearish" : "text-bullish"}`, children: [liveVix.changePercent >= 0 ? "+" : "", liveVix.changePercent.toFixed(2), "%"] }))] }), giftNifty && giftNifty.lastPrice > 0 && (_jsxs("div", { className: "flex items-center gap-1.5 shrink-0 px-1.5 py-0.5 rounded bg-primary/5 border border-primary/10", children: [_jsx(Plane, { className: "h-3 w-3 text-primary" }), _jsx("span", { className: "text-xs text-primary font-medium uppercase tracking-wider", children: "GIFT" }), _jsx("span", { className: "text-xs font-mono font-semibold tabular-nums", children: giftNifty.lastPrice.toLocaleString("en-IN") }), _jsxs("span", { className: `text-xs font-mono font-medium tabular-nums ${giftNifty.change >= 0 ? "text-bullish" : "text-bearish"}`, children: [giftNifty.change >= 0 ? "+" : "", giftNifty.change.toFixed(0)] })] }))] }), _jsxs("div", { className: "flex items-center gap-1 shrink-0 ml-auto", children: [_jsxs(Popover, { children: [_jsx(PopoverTrigger, { asChild: true, children: _jsxs("button", { className: `flex items-center gap-1.5 h-7 px-2 rounded-md border text-xs font-semibold transition-all cursor-pointer hover:opacity-90 ${isLiveData
+                                                                ? "border-bullish/50 text-bullish bg-bullish/5"
+                                                                : "border-muted-foreground/30 text-muted-foreground bg-muted/30"}`, children: [isLiveData ? _jsx(Wifi, { className: "h-3 w-3" }) : _jsx(WifiOff, { className: "h-3 w-3" }), _jsx("span", { className: "hidden sm:inline", children: dataStatus })] }) }), _jsx(PopoverContent, { className: "w-64 p-3", align: "end", children: _jsxs("div", { className: "space-y-3", children: [_jsxs("div", { className: "flex items-center gap-2", children: [_jsx("div", { className: `h-2.5 w-2.5 rounded-full ${isLiveData ? "bg-bullish animate-pulse" : "bg-muted-foreground/50"}` }), _jsx("p", { className: "text-xs font-semibold", children: dataStatus === "LIVE" ? "Live ticks receiving" : dataStatus === "CLOSED" ? "Broker connected · Market closed" : dataStatus === "CONNECTED" ? "Broker connected · Awaiting ticks" : "Data unavailable" })] }), _jsx("div", { className: "space-y-1.5 text-xs", children: _jsxs("div", { className: "flex items-center justify-between", children: [_jsx("span", { className: "text-muted-foreground", children: "Last Refresh" }), _jsx("span", { className: "font-mono", children: lastRefresh.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) })] }) })] }) })] }), _jsx("div", { className: "hidden sm:block w-px h-4 bg-border mx-0.5" }), _jsxs("div", { className: "hidden sm:flex items-center gap-1 px-1.5", children: [_jsx(Timer, { className: "h-3 w-3 text-warning" }), _jsx("span", { className: "text-xs font-mono text-warning tabular-nums", children: timeToExpiry })] }), _jsx("div", { className: "hidden sm:block w-px h-4 bg-border mx-0.5" }), _jsxs(Tooltip, { children: [_jsx(TooltipTrigger, { asChild: true, children: _jsx(Button, { variant: "ghost", size: "icon", className: "h-7 w-7 hover:bg-primary/5", onClick: handleQuickRefresh, children: _jsx(RefreshCw, { className: `h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}` }) }) }), _jsxs(TooltipContent, { side: "bottom", className: "text-xs", children: ["Refresh ", _jsx("kbd", { className: "ml-1 text-xs font-mono bg-muted px-1 rounded", children: "R" })] })] }), _jsxs(Tooltip, { children: [_jsx(TooltipTrigger, { asChild: true, children: _jsx(Button, { variant: "ghost", size: "icon", className: "h-7 w-7 hover:bg-primary/5", onClick: () => setSearchOpen(true), children: _jsx(Search, { className: "h-3.5 w-3.5" }) }) }), _jsxs(TooltipContent, { side: "bottom", className: "text-xs", children: ["Search ", _jsx("kbd", { className: "ml-1 text-xs font-mono bg-muted px-1 rounded", children: "\u2318K" })] })] }), _jsxs(Tooltip, { children: [_jsx(TooltipTrigger, { asChild: true, children: _jsxs(Button, { variant: "ghost", size: "icon", className: "h-7 w-7 relative hover:bg-primary/5", onClick: () => setAlertsOpen(true), children: [_jsx(Bell, { className: "h-3.5 w-3.5" }), _jsx("span", { className: "absolute top-0.5 right-0.5 h-1.5 w-1.5 rounded-full bg-primary animate-pulse" })] }) }), _jsx(TooltipContent, { side: "bottom", className: "text-xs", children: "Alerts" })] }), _jsxs(DropdownMenu, { children: [_jsx(DropdownMenuTrigger, { asChild: true, children: _jsxs(Button, { variant: "ghost", className: "h-7 gap-1.5 px-2 text-xs font-semibold hover:bg-primary/5", children: [_jsx(WalletCards, { className: "h-3.5 w-3.5" }), _jsx("span", { className: "hidden lg:inline", children: "Trading Accounts" })] }) }), _jsxs(DropdownMenuContent, { align: "end", className: "w-80 p-0", children: [_jsxs(DropdownMenuLabel, { className: "flex items-center justify-between px-3 py-2 text-[11px] uppercase tracking-[0.12em] text-muted-foreground", children: [_jsxs("span", { children: ["Trading Accounts (", tradingAccounts.length, ")"] }), _jsx(WalletCards, { className: "h-3.5 w-3.5" })] }), _jsx(DropdownMenuSeparator, { className: "m-0" }), tradingAccounts.length > 0 ? (_jsx(DropdownMenuRadioGroup, { value: activeAccountId ?? "", onValueChange: handleAccountChange, className: "p-1.5", children: tradingAccounts.map((account) => (_jsx(DropdownMenuRadioItem, { value: account.id, className: "items-start gap-2 py-2.5 pl-8 pr-3", children: _jsxs("div", { className: "min-w-0 flex-1", children: [_jsxs("div", { className: "flex items-center justify-between gap-2", children: [_jsx("span", { className: "truncate text-xs font-semibold", children: account.account_code || account.id.slice(0, 8) }), account.status === "active" && _jsx(Check, { className: "h-3.5 w-3.5 text-primary" })] }), _jsxs("div", { className: "mt-1 flex items-center gap-2 text-[10px] text-muted-foreground", children: [_jsx("span", { children: account.status }), _jsxs("span", { children: ["\u20B9", account.balance.toLocaleString("en-IN")] })] })] }) }, account.id))) })) : accountLoading ? (_jsxs("div", { className: "px-3 py-5 text-center", children: [_jsx(WalletCards, { className: "mx-auto h-5 w-5 animate-pulse text-muted-foreground/50" }), _jsx("p", { className: "mt-2 text-xs font-semibold", children: "Loading account context" })] })) : accountError ? (_jsxs("div", { className: "px-3 py-5 text-center", children: [_jsx(WalletCards, { className: "mx-auto h-5 w-5 text-muted-foreground/50" }), _jsx("p", { className: "mt-2 text-xs font-semibold", children: "Account context unavailable" }), _jsx("p", { className: "mt-1 text-[11px] text-muted-foreground", children: "Sign in to load your canonical accounts." })] })) : (_jsxs("div", { className: "px-3 py-5 text-center", children: [_jsx(WalletCards, { className: "mx-auto h-5 w-5 text-muted-foreground/50" }), _jsx("p", { className: "mt-2 text-xs font-semibold", children: "No trading accounts connected" }), _jsx("p", { className: "mt-1 text-[11px] text-muted-foreground", children: "Your linked accounts will appear here." })] }))] })] }), _jsxs(Tooltip, { children: [_jsx(TooltipTrigger, { asChild: true, children: _jsx(Button, { "aria-label": `Sign out ${user?.email ?? "account"}`, variant: "ghost", size: "icon", className: "h-7 w-7 hover:bg-destructive/10 hover:text-destructive", onClick: () => void handleSignOut(), children: _jsx(LogOut, { className: "h-3.5 w-3.5" }) }) }), _jsx(TooltipContent, { side: "bottom", className: "text-xs", children: "Sign out" })] }), _jsx("div", { className: "w-px h-4 bg-border mx-0.5" }), _jsxs("div", { className: "flex items-center gap-1.5", children: [_jsxs("div", { className: "relative", children: [_jsx("span", { className: `block h-1.5 w-1.5 rounded-full ${isMarketOpen ? "bg-bullish" : "bg-muted-foreground/50"}` }), isMarketOpen && _jsx("span", { className: "absolute inset-0 h-1.5 w-1.5 rounded-full bg-bullish animate-ping opacity-50" })] }), _jsx("span", { className: "hidden sm:inline text-xs text-muted-foreground font-medium tracking-wide", children: isMarketOpen ? "LIVE" : "CLOSED" })] }), _jsx("span", { className: "hidden md:inline text-xs text-muted-foreground font-mono tabular-nums ml-1", children: now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) })] })] }), _jsxs("main", { className: "dashboard-main flex min-h-0 flex-1 flex-col overflow-auto p-2.5 sm:p-3 lg:p-4 pb-14 sm:pb-12", children: [accountContext && (_jsx("section", { className: "mb-3 overflow-x-auto rounded-lg border border-border/70 bg-card/70 px-3 py-2", "aria-label": "Account status", children: (() => {
+                                            const account = accountContext.account;
+                                            const risk = accountContext.risk_state;
+                                            const rules = accountContext.rules;
+                                            const formatCurrency = (value) => typeof value === "number" && Number.isFinite(value)
+                                                ? `₹${value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                                : "—";
+                                            const formatPnl = (value) => typeof value === "number" && Number.isFinite(value)
+                                                ? `${value > 0 ? "+" : value < 0 ? "−" : ""}${formatCurrency(Math.abs(value))}`
+                                                : "—";
+                                            const accountType = account.account_type ?? account.challenge_type ?? accountContext.product.name ?? "—";
+                                            const accountStatus = account.status === "active"
+                                                ? risk.status ?? account.status
+                                                : account.status ?? risk.status ?? "UNKNOWN";
+                                            const metrics = [
+                                                ["Account Type", String(accountType).replace(/[_-]+/g, " ")],
+                                                ["Balance", formatCurrency(account.current_balance)],
+                                                ["Equity", formatCurrency(account.equity)],
+                                                ["Available Funds", formatCurrency(account.available_margin)],
+                                                ["Total P&L", formatPnl(risk.profit_current)],
+                                                ["Daily Loss", `${formatCurrency(risk.daily_loss)} / ${formatCurrency(rules.daily_loss_limit)}`],
+                                                ["Max Drawdown", `${formatCurrency(risk.drawdown_amount)} / ${formatCurrency(rules.maximum_drawdown)}`],
+                                                ["Profit Target", risk.profit_target == null ? "—" : `${formatCurrency(risk.profit_current)} / ${formatCurrency(risk.profit_target)}`],
+                                                ["Open Risk Events", String(risk.open_events)],
+                                            ];
+                                            return (_jsxs("div", { className: "grid min-w-[1250px] grid-cols-[1.1fr_1fr_1fr_1.15fr_1fr_1.5fr_1.6fr_1.5fr_1fr_auto] items-center", children: [metrics.map(([label, value], index) => (_jsxs("div", { className: `min-w-0 flex-1 px-2 first:pl-0 ${index > 0 ? "border-l border-border/70" : ""}`, children: [_jsx("p", { className: "whitespace-nowrap text-[9px] leading-3 uppercase text-muted-foreground", children: label }), _jsx("p", { className: `whitespace-nowrap font-mono text-xs leading-4 tabular-nums ${label === "Total P&L" && typeof risk.profit_current === "number" ? risk.profit_current >= 0 ? "text-bullish" : "text-bearish" : ""}`, children: value })] }, label))), _jsx("div", { className: "shrink-0 border-l border-border/70 pl-3", children: _jsx("span", { className: "rounded border border-border px-2 py-1 text-[10px] font-semibold tracking-wide", children: String(accountStatus).toUpperCase() }) })] }));
+                                        })() })), _jsx("div", { className: "page-transition min-h-0 flex-1", children: _jsx(Outlet, {}) }, location.pathname)] })] })] }), _jsx(CommandPalette, { open: searchOpen, onOpenChange: setSearchOpen }), _jsx(AlertSystem, { open: alertsOpen, onOpenChange: setAlertsOpen }), _jsx(StatusFooter, {})] }));
+}

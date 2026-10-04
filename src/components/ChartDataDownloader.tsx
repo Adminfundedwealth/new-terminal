@@ -14,7 +14,7 @@ import {
   FileDown, Clock, BarChart3, TrendingUp, Database, XCircle, CheckSquare, Square,
 } from "lucide-react";
 import { useAccountContext } from "@/hooks/useAccountContext";
-import { requestTerminalMarketData, resolveTerminalMarketDataProvider, toTerminalMarketDataInstrument, type TerminalMarketDataCandle, type TerminalMarketDataInstrument } from "@/lib/terminalApi";
+import { requestTerminalMarketData, resolveTerminalMarketDataProvider, type TerminalMarketDataCandle, type TerminalMarketDataInstrument } from "@/lib/terminalApi";
 import {
   saveCandleHistory, setMetadata,
   type CandleHistory, type CandleData,
@@ -200,39 +200,24 @@ export function ChartDataDownloader() {
         const apiInterval = interval === "D" ? "day" : provider === "kite" ? (interval === "15" ? "15minute" : "60minute") : `${interval}m`;
         const candles = await requestTerminalMarketData<TerminalMarketDataCandle[]>(activeAccountId, provider, {
           operation: "getHistoricalCandles",
-          instrument: toTerminalMarketDataInstrument(instrument, provider),
+          instrument,
           interval: apiInterval,
           fromDate,
           toDate,
         });
-        const rawData = {
-          timestamp: candles.map((candle) => candle.timestamp),
-          open: candles.map((candle) => candle.open),
-          high: candles.map((candle) => candle.high),
-          low: candles.map((candle) => candle.low),
-          close: candles.map((candle) => candle.close),
-          volume: candles.map((candle) => candle.volume),
-        };
+        const candleData: CandleData[] = candles
+          .map((candle) => ({
+            timestamp: Date.parse(candle.timestamp),
+            open: candle.open,
+            high: candle.high,
+            low: candle.low,
+            close: candle.close,
+            volume: candle.volume,
+            oi: candle.openInterest,
+          }))
+          .filter((candle) => Number.isFinite(candle.timestamp));
 
-        if (rawData?.close && Array.isArray(rawData.close) && rawData.close.filter((v: any) => v != null).length > 0) {
-          const candles: CandleData[] = rawData.close
-            .map((_: number, idx: number) => {
-              // Skip null candles (Yahoo sometimes returns null for holidays)
-              if (rawData.close[idx] == null) return null;
-              // Yahoo timestamps are Unix seconds, Dhan may also be seconds
-              const ts = rawData.timestamp?.[idx] || rawData.start_Time?.[idx] || 0;
-              const timestamp = ts > 1e12 ? ts : ts * 1000; // Convert to ms if in seconds
-              return {
-                timestamp,
-                open: rawData.open?.[idx] || rawData.close[idx],
-                high: rawData.high?.[idx] || rawData.close[idx],
-                low: rawData.low?.[idx] || rawData.close[idx],
-                close: rawData.close[idx],
-                volume: rawData.volume?.[idx] || 0,
-                oi: rawData.oi?.[idx],
-              };
-            })
-            .filter(Boolean) as CandleData[];
+        if (candleData.length > 0) {
 
           // Store in IndexedDB
           const history: CandleHistory = {
@@ -240,12 +225,12 @@ export function ChartDataDownloader() {
             symbol: sym.symbol,
             exchangeSegment: sym.segment,
             interval: `${interval}_${timeframe}`,
-            candles,
+            candles: candleData,
             lastUpdated: Date.now(),
           };
           await saveCandleHistory(history);
 
-          newResults.push({ symbol: sym.symbol, status: "done", candles: candles.length });
+          newResults.push({ symbol: sym.symbol, status: "done", candles: candleData.length });
         } else {
           newResults.push({ symbol: sym.symbol, status: "skipped", candles: 0, error: "No data from Terminal OS" });
         }

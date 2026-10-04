@@ -36,6 +36,8 @@ describe("authoritative broker response handling", () => {
     ["transport", { state: "transport_error", message: "connection lost" }],
     ["timeout", { state: "timeout", message: "broker did not respond" }],
     ["unknown", { state: "UNKNOWN", message: "outcome unavailable" }],
+    ["pending with a negative transport flag", { ok: false, state: "PENDING", message: "submission outcome unknown" }],
+    ["timeout with a negative transport flag", { ok: false, state: "TIMEOUT", message: "submission outcome unknown" }],
   ])("keeps %s outcomes non-rejected and pending", (_name, raw) => {
     const result = handleBrokerResponse(order(), raw, context);
     expect(result.ok).toBe(true);

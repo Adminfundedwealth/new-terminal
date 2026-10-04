@@ -1,8 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { useAccountContext } from "@/hooks/useAccountContext";
-import { fetchLiveOptionChain, fetchLiveIndices, fetchExpiryList, fetchAllIndices, fetchLiveFnOStocks, fetchProxyHealth } from "@/lib/marketApi";
+import { fetchLiveOptionChain, fetchLiveIndices, fetchMarketStatus, fetchExpiryList, fetchAllIndices, fetchLiveFnOStocks, fetchProxyHealth } from "@/lib/marketApi";
 import type { FnOStockData } from "@/lib/marketApi";
-import { resolveTerminalMarketDataProvider } from "@/lib/terminalApi";
 import { getMaxPain } from "@/lib/oiUtils";
 import type { OptionData, IndexData, ExpiryDate } from "@/lib/mockData";
 import { findInstrumentsBySymbol } from "@/lib/localDatabase";
@@ -79,19 +77,16 @@ function buildCachedIndices(prices: PriceSnapshot[]): IndexData[] {
 // ── Hook: Live Indices (WebSocket primary, polling fallback, DB cache tertiary) ──
 // NO MOCK FALLBACK — returns empty array when offline
 export function useLiveIndices() {
-  const { activeAccountId, accounts } = useAccountContext();
-  const activeAccount = accounts.find((account) => account.id === activeAccountId);
-  const provider = resolveTerminalMarketDataProvider(activeAccount?.broker_provider);
   const { indices: wsIndices, isConnected: wsConnected } = useWebSocketIndices();
 
   const pollingQuery = useQuery({
-    queryKey: ["terminal-indices", activeAccountId, provider],
+    queryKey: ["nse-indices"],
     queryFn: async () => {
-      if (activeAccountId && provider) {
+      if (shouldTryProxy()) {
         try {
-          const data = await fetchLiveIndices(activeAccountId, provider);
-          if (data.length > 0) return { data, isLive: true, source: "terminal-os" as const };
-        } catch (e) { console.warn("Terminal OS indices fetch failed:", e); }
+          const data = await fetchLiveIndices();
+          if (data && data.length > 0) { markProxyOnline(); return { data, isLive: true }; }
+        } catch (e) { markProxyOffline(); console.warn("Indices fetch failed:", e); }
       }
       // Try local DB prices
       const dbPrices = await getCachedPricesOnce();
@@ -149,6 +144,26 @@ export function useMarketStatus() {
   return useQuery({
     queryKey: ["nse-market-status"],
     queryFn: async () => {
+      if (shouldTryProxy()) {
+        try {
+          const data = await fetchMarketStatus();
+          if (data?.marketState) {
+            markProxyOnline();
+            const nseStatus = data.marketState.find((m: any) => m.market === "Capital Market" || m.market === "CM");
+            const giftNifty = data.giftnifty ? {
+              lastPrice: data.giftnifty.LASTPRICE || 0, change: data.giftnifty.DAYCHANGE || 0,
+              changePercent: data.giftnifty.PERCHANGE || 0, expiry: data.giftnifty.EXPIRYDATE || "",
+              timestamp: data.giftnifty.TIMESTMP || "", contractsTraded: data.giftnifty.CONTRACTSTRADED || 0,
+            } : null;
+            const indicativeNifty = data.indicativenifty50 ? {
+              value: data.indicativenifty50.finalClosingValue || data.indicativenifty50.closingValue || 0,
+              change: data.indicativenifty50.change || 0, changePercent: data.indicativenifty50.perChange || 0,
+              status: data.indicativenifty50.status || "",
+            } : null;
+            return { isOpen: nseStatus?.marketStatus === "Open", status: nseStatus?.marketStatus || "Closed", isLive: true, giftNifty, indicativeNifty };
+          }
+        } catch (e) { markProxyOffline(); console.warn("Market status fetch failed:", e); }
+      }
       const now = new Date();
       const h = now.getHours(), m = now.getMinutes();
       const isOpen = (h > 9 || (h === 9 && m >= 15)) && (h < 15 || (h === 15 && m <= 30));
@@ -162,36 +177,24 @@ export function useMarketStatus() {
 
 // ── Hook: Live Option Chain ──
 // Returns live data during market hours, or cached "last close" data after hours
-interface LiveOptionChainState {
-  chain: OptionData[];
-  spotPrice: number;
-  expiries: ExpiryDate[];
-  lotSize: number;
-  stepSize: number;
-  maxPain: number;
-  totalCEOI: number;
-  totalPEOI: number;
-  isLive: boolean;
-  afterHours: boolean;
-  source: string;
-  cachedAt: string | number | null;
-  greeksAvailable?: boolean;
-  oiChangeAvailable?: boolean;
-  errorMessage?: string | null;
-  unsupported?: boolean;
-}
-
 export function useLiveOptionChain(symbol: string, expiry?: string, enabled = true) {
-  const { activeAccountId, accounts } = useAccountContext();
-  const activeAccount = accounts.find((account) => account.id === activeAccountId);
-  const provider = resolveTerminalMarketDataProvider(activeAccount?.broker_provider);
-  return useQuery<LiveOptionChainState | null>({
-    queryKey: ["live-option-chain", activeAccountId, provider, symbol, expiry],
+  return useQuery({
+    queryKey: ["live-option-chain", symbol, expiry],
+    enabled,
     queryFn: async () => {
-      if (activeAccountId && provider) {
+      if (shouldTryProxy()) {
         try {
-          const result = await fetchLiveOptionChain(symbol, expiry, activeAccountId, provider);
+          const underlying = (await findInstrumentsBySymbol(symbol)).find((instrument) => {
+            const category = classifyInstrument(instrument);
+            return category === "indices" || category === "stocks";
+          });
+          if (!underlying) throw new Error(`Underlying instrument not found in instrument master: ${symbol}`);
+          const result = await fetchLiveOptionChain(symbol, expiry, {
+            securityId: underlying.securityId,
+            exchangeSegment: underlying.exchangeSegment,
+          });
           if (result) {
+            markProxyOnline();
             const stepSize = result.chain.length > 1 ? Math.abs(result.chain[1].strikePrice - result.chain[0].strikePrice) : 50;
             const isAfterHours = !!(result as any).afterHours;
             const hasChainData = result.chain.length > 0;
@@ -207,16 +210,13 @@ export function useLiveOptionChain(symbol: string, expiry?: string, enabled = tr
                 isLive: hasChainData && !isAfterHours, afterHours: isAfterHours,
                 source: result.source || "live",
                 cachedAt: (result as any).cachedAt || null,
-                greeksAvailable: result.greeksAvailable,
-                oiChangeAvailable: result.oiChangeAvailable,
               };
             }
           }
-        } catch (e) { console.warn("Terminal OS option-chain fetch failed:", e); }
+        } catch (e) { markProxyOffline(); console.warn("Option chain fetch failed:", e); }
       }
       return null;
     },
-    enabled: enabled && !!symbol && !!activeAccountId && !!provider,
     refetchInterval: (query) => {
       const data = query.state.data;
       if (data?.isLive) return 3000;         // Live: 3s refresh
@@ -231,21 +231,17 @@ export function useLiveOptionChain(symbol: string, expiry?: string, enabled = tr
 // ── Hook: Expiry List ──
 // NO MOCK FALLBACK — returns empty array
 export function useExpiryList(symbol: string) {
-  const { activeAccountId, accounts } = useAccountContext();
-  const activeAccount = accounts.find((account) => account.id === activeAccountId);
-  const provider = resolveTerminalMarketDataProvider(activeAccount?.broker_provider);
   return useQuery({
-    queryKey: ["expiry-list", activeAccountId, provider, symbol],
+    queryKey: ["expiry-list", symbol],
     queryFn: async () => {
-      if (activeAccountId && provider) {
+      if (shouldTryProxy()) {
         try {
-          const expiries = await fetchExpiryList(symbol, activeAccountId, provider);
-          if (expiries.length > 0) return { expiries, isLive: true };
-        } catch (e) { console.warn("Terminal OS expiry-list fetch failed:", e); }
+          const expiries = await fetchExpiryList(symbol);
+          if (expiries.length > 0) { markProxyOnline(); return { expiries, isLive: true }; }
+        } catch (e) { markProxyOffline(); console.warn("Expiry list fetch failed:", e); }
       }
       return { expiries: [] as ExpiryDate[], isLive: false };
     },
-    enabled: Boolean(symbol && activeAccountId && provider),
     staleTime: 60000,
     refetchInterval: 120000,
     retry: 1,
@@ -305,15 +301,14 @@ export function useAllIndices() {
 // ── Hook: F&O Stocks (Top Movers + Most Active) ──
 // NO MOCK FALLBACK — returns empty arrays when offline
 export function useFnOStocks() {
-  const { activeAccountId, accounts } = useAccountContext();
-  const provider = resolveTerminalMarketDataProvider(accounts.find((account) => account.id === activeAccountId)?.broker_provider);
   return useQuery({
-    queryKey: ["terminal-fno-stocks", activeAccountId, provider],
+    queryKey: ["nse-fno-stocks"],
     queryFn: async () => {
-      if (activeAccountId && provider) {
+      if (shouldTryProxy()) {
         try {
-          const stocks = await fetchLiveFnOStocks(activeAccountId, provider);
+          const stocks = await fetchLiveFnOStocks();
           if (stocks.length > 0) {
+            markProxyOnline();
             const gainers = [...stocks].filter(s => s.changePercent > 0).sort((a, b) => b.changePercent - a.changePercent).slice(0, 5);
             const losers = [...stocks].filter(s => s.changePercent < 0).sort((a, b) => a.changePercent - b.changePercent).slice(0, 5);
             const mostActive = [...stocks].sort((a, b) => (b.volume || 0) - (a.volume || 0)).slice(0, 10).map(s => ({
@@ -321,9 +316,10 @@ export function useFnOStocks() {
               oiInterpretation: getOIInterpretation(s.changePercent, s.oiChange || 0),
             }));
             const hasOI = stocks.some(s => (s.openInterest || 0) > 0);
-            return { gainers, losers, mostActive, allStocks: stocks, isLive: true, source: "terminal-os" as const };
+            const source = hasOI ? "nse" as const : "tradingview" as const;
+            return { gainers, losers, mostActive, allStocks: stocks, isLive: true, source };
           }
-        } catch (e) { console.warn("Terminal OS F&O stock quotes failed:", e); }
+        } catch (e) { markProxyOffline(); console.warn("F&O stocks fetch failed:", e); }
       }
       // Try local DB price snapshots
       const dbPrices = await getCachedPricesOnce();

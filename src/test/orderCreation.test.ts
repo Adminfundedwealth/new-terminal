@@ -3,6 +3,10 @@ import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTerminalOrder } from "@/lib/terminalApi";
 
+vi.hoisted(() => {
+  process.env.VITE_TERMINAL_OS_URL = "https://terminal.example.test";
+});
+
 const { getSession } = vi.hoisted(() => ({ getSession: vi.fn() }));
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: { auth: { getSession } },
@@ -124,6 +128,21 @@ describe("Kite derivative order routing", () => {
     expect(new URL(url, "https://main.test").pathname).toBe("/api/terminal/orders");
     expect(init.method).toBe("POST");
     expect(new Headers(init.headers).get("Authorization")).toBe(`Bearer ${accessToken}`);
-    expect(JSON.parse(String(init.body))).toEqual(request);
+    const command = JSON.parse(String(init.body));
+    expect(command).toMatchObject({
+      account_id: request.account_id,
+      client_order_id: expect.any(String),
+      symbol: request.symbol,
+      exchange: request.exchange,
+      segment: request.segment,
+      side: request.side,
+      quantity: request.quantity,
+      order_type: request.order_type,
+      price: request.price,
+      product: request.product,
+      time_in_force: "DAY",
+      is_overnight: false,
+    });
+    expect(command).not.toHaveProperty("instrument");
   });
 });

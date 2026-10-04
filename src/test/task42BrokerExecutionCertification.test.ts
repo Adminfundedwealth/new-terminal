@@ -107,6 +107,37 @@ describe("Task 42 broker execution certification", () => {
     expect(service.getPositions("other-account")).toEqual([]);
   });
 
+  it("accumulates split fills exactly once and updates canonical order and valuation", async () => {
+    const orderStatus = {
+      status: "PARTIALLY_FILLED" as "PARTIALLY_FILLED" | "FILLED",
+      brokerOrderId: "broker-split-42",
+      clientOrderId: "client-split-42",
+      fills: [{ brokerExecutionId: "fill-split-4", brokerOrderId: "broker-split-42", localOrderId: "order:acct-42:client-split-42", accountId: "acct-42", symbol: "NIFTY", side: "BUY" as const, quantity: 4, price: 100, executedAt: "2026-09-25T09:15:00.000Z" }],
+    };
+    const runtime = createMockBrokerRuntime({
+      orderAcks: { "client-split-42": { ok: true, state: "ACK", brokerOrderId: "broker-split-42" } },
+      orderStatusMap: { "broker-split-42": orderStatus },
+    });
+    const service = new ExecutionService(createBrokerRouter([]), realOptions(runtime));
+    const receipt = await service.placeOrder({ accountId: "acct-42", brokerId: "dhan", symbol: "NIFTY", exchange: "NSE", side: "BUY", quantity: 10, orderType: "MARKET", idempotencyKey: "client-split-42", authUserId: "user-42" });
+
+    const first = await service.syncBrokerOrder(receipt.brokerOrderId, "acct-42", "user-42");
+    expect(first.position?.quantity).toBe(4);
+    expect(service.exportCanonicalState().orders[0].status).toBe("partially_filled");
+
+    orderStatus.fills.push({ brokerExecutionId: "fill-split-6", brokerOrderId: "broker-split-42", localOrderId: "order:acct-42:client-split-42", accountId: "acct-42", symbol: "NIFTY", side: "BUY", quantity: 6, price: 110, executedAt: "2026-09-25T09:16:00.000Z" });
+    orderStatus.status = "FILLED";
+    const second = await service.syncBrokerOrder(receipt.brokerOrderId, "acct-42", "user-42");
+    await service.syncBrokerOrder(receipt.brokerOrderId, "acct-42", "user-42");
+
+    expect(second.position?.quantity).toBe(10);
+    expect(service.getPositions("acct-42")[0]).toMatchObject({ quantity: 10, side: "LONG", averageEntryPrice: 106 });
+    expect(service.getAccountValuation("acct-42", 1_000)).toMatchObject({ balance: 1_000, equity: 1_000, realizedPnl: 0 });
+    expect(service.exportCanonicalState().orders[0]).toMatchObject({ status: "filled", filledQuantity: 10, brokerOrderId: "broker-split-42" });
+    expect(service.exportCanonicalState().executions.map((execution) => execution.externalExecutionId)).toEqual(["FILL-SPLIT-4", "FILL-SPLIT-6"]);
+    expect(service.exportCanonicalState().executions).toHaveLength(2);
+  });
+
   it("keeps cancellation idempotent and prevents terminal modification", async () => {
     let cancelCalls = 0;
     const cancelled = await cancelOrder({ order: lifecycleOrder(), authUserId: "user-42", accountId: "acct-42", brokerAdapter: { cancelOrder: async () => { cancelCalls += 1; return { state: "CANCELLED", message: "confirmed" }; } } });

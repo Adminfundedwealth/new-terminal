@@ -46,11 +46,12 @@ function firstText(source: Record<string, unknown>, keys: string[]): string | nu
 function statusOutcome(status: string | null, state: string | null, ok: boolean | null): BrokerResponseOutcome {
   const value = (status ?? state ?? "").toLowerCase().replace(/[\s-]/g, "_");
   if (["cancelled", "canceled", "cancelled_by_user", "cancelled_successfully"].includes(value)) return "cancelled";
-  if (ok === false || ["rejected", "reject", "failed", "error"].includes(value)) return "rejected";
+  if (["rejected", "reject"].includes(value)) return "rejected";
   if (["pending", "queued", "processing"].includes(value)) return "pending";
-  if (["ack", "accepted", "submitted", "open"].includes(value) || ok === true) return "accepted";
   if (["timeout", "timed_out"].includes(value)) return "timeout";
   if (["transport_error", "network_error"].includes(value)) return "transport_error";
+  if (["failed", "error"].includes(value) || ok === false) return "rejected";
+  if (["ack", "accepted", "submitted", "open"].includes(value) || ok === true) return "accepted";
   return "unknown";
 }
 
