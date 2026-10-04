@@ -14,13 +14,11 @@
  */
 
 import http from "node:http";
-import { createHash, randomBytes } from "node:crypto";
 import { URL } from "node:url";
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
-import { resolveAllowedOrigin } from "./proxy-origin.mjs";
 
 // ── Load .env manually (no external deps needed) ──
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -43,10 +41,13 @@ try {
 const PORT = parseInt(process.env.PROXY_PORT || "4002", 10);
 const DHAN_BASE = "https://api.dhan.co/v2";
 const NSE_BASE = "https://www.nseindia.com";
-const KITE_BASE = "https://api.kite.trade";
-const KITE_LOGIN_BASE = "https://kite.zerodha.com/connect/login";
-const KITE_SESSION_COOKIE = "kite_session";
-const kiteSessions = new Map();
+
+// ── Import broker backend modules ──
+import { DhanMarketDataProvider } from "./server-lib/brokers/dhan.js";
+import { KiteMarketDataProvider } from "./server-lib/brokers/kite.js";
+import { getCentralCredentialsForAccount, getBrokerConnectionById } from "./server-lib/services/broker-connections.js";
+import { isEncryptionAvailable } from "./server-lib/security/broker-encryption.js";
+import { createHash } from "node:crypto";
 const INDIAN_NEWS_FEEDS = [
   { name: "Moneycontrol", url: "https://www.moneycontrol.com/rss/marketreports.xml" },
   { name: "Economic Times", url: "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms" },
@@ -54,53 +55,6 @@ const INDIAN_NEWS_FEEDS = [
 ];
 const INDIAN_NEWS_TERMS = /\b(india|indian|nse|bse|nifty|banknifty|finnifty|sensex|sebi|rbi|dalal|mumbai|rupee|inr|f&o|fno|listed|ipo|stock market|shares?|equities?|earnings?|quarterly results?|dividend|buyback)\b/i;
 const EXCLUDED_NEWS_TERMS = /\b(crypto(?:currency)?|bitcoin|ethereum|nasdaq|dow jones|s&p 500|wall street|us stocks?|american stocks?|european stocks?|forex|oil prices?|gold prices?|global markets?|federal reserve|fed rate)\b/i;
-
-function kiteRedirectUrl() { return process.env.KITE_REDIRECT_URL || "http://localhost:4001/api/kite/callback"; }
-function getKiteSession(id) {
-  const session = id && kiteSessions.get(id);
-  if (!session || session.expiresAt <= Date.now()) { if (id) kiteSessions.delete(id); return null; }
-  return session;
-}
-function parseCookies(header = "") {
-  return Object.fromEntries(header.split(";").map((part) => part.trim().split("=")).filter(([key, value]) => key && value));
-}
-function kiteCredentials(req, params) {
-  const cookies = parseCookies(req.headers.cookie);
-  const session = getKiteSession(cookies[KITE_SESSION_COOKIE]);
-  return { apiKey: req.headers["x-kite-api-key"] || session?.apiKey || process.env.KITE_API_KEY, accessToken: req.headers["x-kite-access-token"] || session?.accessToken };
-}
-async function kiteFetch(endpoint, params, credentials) {
-  if (!credentials.apiKey || !credentials.accessToken) throw new Error("Kite API key or access token is not configured.");
-  let path;
-  if (endpoint === "profile") path = "/user/profile";
-  else if (endpoint === "margins") path = "/user/margins";
-  else if (endpoint === "holdings") path = "/portfolio/holdings";
-  else if (endpoint === "positions") path = "/portfolio/positions";
-  else if (endpoint === "orders") path = "/orders";
-  else if (endpoint === "order-status") path = `/orders/${encodeURIComponent(params.orderId)}`;
-  else if (endpoint === "instruments") path = "/instruments";
-  else if (endpoint === "quote") {
-    const instruments = (params.instruments || params.instrument || "").split(",").filter(Boolean);
-    path = `/quote?${instruments.map((instrument) => `i=${encodeURIComponent(instrument)}`).join("&")}`;
-  } else if (endpoint === "historical") {
-    path = `/instruments/historical/${encodeURIComponent(params.instrumentToken)}/${encodeURIComponent(params.interval)}?${new URLSearchParams({ from: params.from || "", to: params.to || "" })}`;
-  } else throw new Error(`Unsupported Kite endpoint: ${endpoint}`);
-  const response = await fetch(`${KITE_BASE}${path}`, { headers: { "X-Kite-Version": "3", Authorization: `token ${credentials.apiKey}:${credentials.accessToken}`, Accept: "application/json, text/csv" } });
-  const text = await response.text();
-  if (!response.ok) throw new Error(`Kite API error [${response.status}]: ${text.slice(0, 240)}`);
-  if (endpoint !== "instruments") return JSON.parse(text);
-  const lines = text.split(/\r?\n/).filter(Boolean);
-  const headers = lines.shift().split(",");
-  return { status: "success", data: lines.map((line) => { const values = parseCsvLine(line); return Object.fromEntries(headers.map((header, index) => [header, values[index] || ""])); }) };
-}
-async function exchangeKiteToken(requestToken) {
-  const apiKey = process.env.KITE_API_KEY; const apiSecret = process.env.KITE_API_SECRET;
-  if (!apiKey || !apiSecret) throw new Error("Kite OAuth credentials are not configured.");
-  const checksum = createHash("sha256").update(`${apiKey}${requestToken}${apiSecret}`).digest("hex");
-  const response = await fetch(`${KITE_BASE}/session/token`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ api_key: apiKey, request_token: requestToken, checksum }) });
-  const body = await response.json(); if (!response.ok || body.status !== "success") throw new Error(body.message || "Kite token exchange failed.");
-  return { apiKey, accessToken: body.data.access_token };
-}
 
 // ══════════════════════════════════════════════
 // ── SECTION 1: In-Memory Cache ──
@@ -311,12 +265,12 @@ const UNDERLYING_MAP = {
   MIDCPNIFTY: { underlyingScrip: 442, expirySegment: "NSE_FNO", ocSegment: "IDX_I" },
 };
 
-async function dhanFetch(path, body, method = "POST") {
-  const clientId = process.env.DHAN_CLIENT_ID || dhanWSCredentials.clientId;
-  const accessToken = process.env.DHAN_ACCESS_TOKEN || dhanWSCredentials.accessToken;
+async function dhanFetch(path, body, method = "POST", customClientId, customAccessToken) {
+  const clientId = customClientId || process.env.DHAN_CLIENT_ID;
+  const accessToken = customAccessToken || process.env.DHAN_ACCESS_TOKEN;
 
   if (!clientId || !accessToken) {
-    throw new Error("DHAN_CLIENT_ID or DHAN_ACCESS_TOKEN not configured on the proxy server.");
+    throw new Error("DHAN_CLIENT_ID or DHAN_ACCESS_TOKEN not configured. Add them to .env or pass via headers.");
   }
 
   const url = `${DHAN_BASE}${path}`;
@@ -334,32 +288,31 @@ async function dhanFetch(path, body, method = "POST") {
   }
 
   const res = await fetch(url, options);
-  const responseText = await res.text();
   if (!res.ok) {
-    let responseBody;
-    try { responseBody = JSON.parse(responseText); } catch { responseBody = null; }
-    const errorCode = responseBody?.errorCode || responseBody?.error_code || responseBody?.code || "unknown";
-    console.error(`  ❌ Dhan REST ${method} ${path} -> HTTP ${res.status}, errorCode ${errorCode}: ${responseText.slice(0, 240)}`);
-    const error = new Error(`Dhan API error [${res.status}] code ${errorCode}: ${responseText}`);
-    error.status = res.status;
-    error.errorCode = errorCode;
-    throw error;
+    const errText = await res.text();
+    throw new Error(`Dhan API error [${res.status}]: ${errText}`);
   }
-  return JSON.parse(responseText);
+  return res.json();
 }
 
-async function handleDhanProxy(params) {
+async function handleDhanProxy(params, userClientId, userAccessToken) {
   const endpoint = params.get("endpoint");
   const symbol = (params.get("symbol") || "NIFTY").toUpperCase();
   const expiry = params.get("expiry");
-  const cacheKey = `dhan:${endpoint}:${symbol}:${expiry || ""}`;
+  const userPrefix = userClientId ? `user:${userClientId}:` : "";
+  const cacheKey = `dhan:${userPrefix}${endpoint}:${symbol}:${expiry || ""}`;
 
   const cached = getCached(cacheKey);
   if (cached) return { data: cached, cacheHit: true };
 
   switch (endpoint) {
     case "option-chain": {
-      const underlying = UNDERLYING_MAP[symbol];
+      const requestedUnderlying = params.get("underlyingScrip");
+      const requestedSegment = params.get("underlyingSeg");
+      const mappedUnderlying = UNDERLYING_MAP[symbol];
+      const underlying = requestedUnderlying && requestedSegment
+        ? { underlyingScrip: requestedUnderlying, expirySegment: requestedSegment, ocSegment: requestedSegment }
+        : mappedUnderlying;
       if (!underlying) throw new Error(`Unknown symbol: ${symbol}. Supported: ${Object.keys(UNDERLYING_MAP).join(", ")}`);
       const lastGoodKey = `lastgood:oc:${symbol}:${expiry || "nearest"}`;
 
@@ -373,7 +326,7 @@ async function handleDhanProxy(params) {
               expiryList = await dhanFetch("/optionchain/expirylist", {
                 UnderlyingScrip: underlying.underlyingScrip,
                 UnderlyingSeg: underlying.expirySegment,
-              });
+              }, "POST", userClientId, userAccessToken);
               setCache(expiryListKey, expiryList, 300000);
             }
             if (expiryList?.data?.length > 0) expiryDate = expiryList.data[0];
@@ -391,13 +344,13 @@ async function handleDhanProxy(params) {
 
         let result;
         try {
-          result = await dhanFetch("/optionchain", body);
+          result = await dhanFetch("/optionchain", body, "POST", userClientId, userAccessToken);
         } catch (ocErr) {
           // If "Invalid Expiry Date" error, retry without expiry
           if (ocErr.message.includes("Invalid Expiry") && expiryDate) {
             console.log(`  🔄 Retrying OC for ${symbol} without expiry date...`);
             const retryBody = { UnderlyingScrip: underlying.underlyingScrip, UnderlyingSeg: underlying.ocSegment };
-            result = await dhanFetch("/optionchain", retryBody);
+            result = await dhanFetch("/optionchain", retryBody, "POST", userClientId, userAccessToken);
           } else {
             throw ocErr;
           }
@@ -443,7 +396,12 @@ async function handleDhanProxy(params) {
     }
 
     case "expiry-list": {
-      const underlying = UNDERLYING_MAP[symbol];
+      const requestedUnderlying = params.get("underlyingScrip");
+      const requestedSegment = params.get("underlyingSeg");
+      const mappedUnderlying = UNDERLYING_MAP[symbol];
+      const underlying = requestedUnderlying && requestedSegment
+        ? { underlyingScrip: requestedUnderlying, expirySegment: requestedSegment }
+        : mappedUnderlying;
       if (!underlying) throw new Error(`Unknown symbol: ${symbol}`);
       const lastGoodKey = `lastgood:expiry:${symbol}`;
 
@@ -451,7 +409,7 @@ async function handleDhanProxy(params) {
         const result = await dhanFetch("/optionchain/expirylist", {
           UnderlyingScrip: underlying.underlyingScrip,
           UnderlyingSeg: underlying.expirySegment,
-        });
+        }, "POST", userClientId, userAccessToken);
         if (result?.data?.length > 0) {
           setLastGood(lastGoodKey, result);
         }
@@ -473,7 +431,7 @@ async function handleDhanProxy(params) {
 
       const result = await dhanFetch("/marketfeed/ltp", {
         [secInfo.exchSeg]: [secInfo.secId],
-      });
+      }, "POST", userClientId, userAccessToken);
       setCache(cacheKey, result, 2000);
       return { data: result, cacheHit: false };
     }
@@ -502,15 +460,15 @@ async function handleDhanProxy(params) {
         "NSE:E": "NSE_EQ",
         "NSE:D": "NSE_FNO",
         "NSE:I": "IDX_I",
-        "NSE:C": "NSE_CDS",
+        "NSE:C": "NSE_CUR",
         "NSE:M": "NSE_MF",
         "BSE:E": "BSE_EQ",
         "BSE:D": "BSE_FNO",
         "BSE:I": "BSE_IDX",
-        "BSE:C": "BSE_CDS",
+        "BSE:C": "BSE_CUR",
         "MCX:M": "MCX_COMM",
       };
-      const ALLOWED_SEGMENTS = new Set(["NSE_EQ", "NSE_FNO", "IDX_I", "NSE_CDS", "BSE_EQ", "BSE_FNO", "BSE_IDX", "BSE_CDS", "MCX_COMM"]);
+      const ALLOWED_SEGMENTS = new Set(["NSE_EQ", "NSE_FNO", "IDX_I"]);
 
       const lines = csvText.split(/\r?\n/).filter(Boolean);
       const header = parseCsvLine(lines[0]).map(h => h.trim());
@@ -532,7 +490,6 @@ async function handleDhanProxy(params) {
         const expiryDate = cols[header.indexOf("SEM_EXPIRY_DATE")]?.trim();
         const strikePrice = parseFloat(cols[header.indexOf("SEM_STRIKE_PRICE")]?.trim()) || 0;
         const optionType = cols[header.indexOf("SEM_OPTION_TYPE")]?.trim();
-        const tickSize = parseFloat(cols[header.indexOf("SEM_TICK_SIZE")]?.trim()) || 0;
 
         // Map exchange + segment code → combined segment name
         const exchangeSegment = SEGMENT_MAP[`${exchId}:${segCode}`];
@@ -548,7 +505,6 @@ async function handleDhanProxy(params) {
           exchangeSegment,
           instrumentType: instrName,
           lotSize,
-          tickSize,
           expiryDate: expiryDate && expiryDate !== "0001-01-01" ? expiryDate : undefined,
           strikePrice: strikePrice || undefined,
           optionType: optionType && optionType !== "XX" ? optionType : undefined,
@@ -618,7 +574,7 @@ async function handleDhanProxy(params) {
       }
 
       console.log(`  📊 Fetching ${isDailyCandle ? "daily" : "intraday"} chart: ${secId} (${from} → ${to}), interval=${interval}`);
-      const result = await dhanFetch(apiPath, body);
+      const result = await dhanFetch(apiPath, body, "POST", userClientId, userAccessToken);
       setCache(historicalCacheKey, result, isDailyCandle ? 300000 : 60000); // 5min cache for daily, 1min for intraday
       return { data: result, cacheHit: false };
     }
@@ -731,9 +687,7 @@ async function handleNSEProxy(params) {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const cookies = await getNSESession();
-      const nseUrl = `${NSE_BASE}${apiPath}`;
-      console.log(`  🌐 NSE GET ${nseUrl}`);
-      const nseRes = await fetch(nseUrl, {
+      const nseRes = await fetch(`${NSE_BASE}${apiPath}`, {
         headers: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
           Accept: "application/json, text/plain, */*",
@@ -745,7 +699,6 @@ async function handleNSEProxy(params) {
       });
 
       if (!nseRes.ok) {
-        console.error(`  ❌ NSE GET ${nseUrl} -> HTTP ${nseRes.status}`);
         throw new Error(`NSE HTTP ${nseRes.status}`);
       }
 
@@ -907,7 +860,6 @@ const YAHOO_SYMBOL_MAP = {
   "BANKNIFTY": "^NSEBANK",
   "FINNIFTY": "NIFTY_FIN_SERVICE.NS",
   "MIDCPNIFTY": "NIFTY_MID_SELECT.NS",
-  "NIFTY_MIDCAP_50": "^NSEMDCP50",
   "INDIAVIX": "^INDIAVIX",
   "SENSEX": "^BSESN",
   // F&O Stocks — append .NS for NSE
@@ -1136,27 +1088,9 @@ let dhanWSReconnectTimer = null;
 let dhanWSReconnectDelay = 1000;
 let dhanWSConnected = false;
 let dhanWSCredentials = { clientId: null, accessToken: null };
-let dhanWSBlockedUntil = 0;
-let dhanWSUnavailableReason = null;
-let dhanWSStableTimer = null;
-const DHAN_WS_MAX_BACKOFF = 120000;
-const DHAN_WS_RATE_LIMIT_BACKOFF = 10 * 60 * 1000;
-
-function blockDhanWebSocket(reason, duration = DHAN_WS_RATE_LIMIT_BACKOFF) {
-  dhanWSBlockedUntil = Date.now() + duration;
-  dhanWSReconnectDelay = duration;
-  dhanWSUnavailableReason = reason;
-  console.log(`  ⏳ Dhan WebSocket unavailable: ${reason}. Retry suppressed for ${duration / 60000}min`);
-  broadcastToClients({ type: "status", provider: "dhan", connected: false, state: "UNAVAILABLE", unavailableUntil: dhanWSBlockedUntil, reason });
-}
 
 function connectDhanWebSocket(clientId, accessToken) {
-  if (Date.now() < dhanWSBlockedUntil) {
-    console.log(`  ⏸️  Dhan WebSocket unavailable; retry suppressed for ${Math.ceil((dhanWSBlockedUntil - Date.now()) / 1000)}s`);
-    return;
-  }
-
-  if (dhanWS && (dhanWS.readyState === WebSocket.OPEN || dhanWS.readyState === WebSocket.CONNECTING)) {
+  if (dhanWS && dhanWS.readyState === WebSocket.OPEN) {
     console.log("  ℹ️  Dhan WebSocket already connected");
     return;
   }
@@ -1167,10 +1101,9 @@ function connectDhanWebSocket(clientId, accessToken) {
   }
 
   dhanWSCredentials = { clientId, accessToken };
-  dhanWSUnavailableReason = null;
 
   const wsUrl = `wss://api-feed.dhan.co?version=2&token=${accessToken}&clientId=${clientId}&authType=2`;
-  console.log(`  🔌 Connecting to Dhan WebSocket wss://api-feed.dhan.co?version=2&authType=2 (credentials redacted)`);
+  console.log(`  🔌 Connecting to Dhan WebSocket...`);
 
   try {
     dhanWS = new WebSocket(wsUrl);
@@ -1183,12 +1116,7 @@ function connectDhanWebSocket(clientId, accessToken) {
   dhanWS.on("open", () => {
     console.log("  ✅ Dhan WebSocket connected!");
     dhanWSConnected = true;
-    if (dhanWSStableTimer) clearTimeout(dhanWSStableTimer);
-    dhanWSStableTimer = setTimeout(() => {
-      dhanWSReconnectDelay = 1000;
-      dhanWSStableTimer = null;
-      console.log("  ✅ Dhan WebSocket connection stable; backoff reset");
-    }, 30000);
+    dhanWSReconnectDelay = 1000;
 
     // Subscribe to index instruments (Quote data = RequestCode 17)
     const subscribeMsg = JSON.stringify({
@@ -1196,13 +1124,11 @@ function connectDhanWebSocket(clientId, accessToken) {
       InstrumentCount: WS_INSTRUMENTS.length,
       InstrumentList: WS_INSTRUMENTS,
     });
-    if (dhanWS?.readyState === WebSocket.OPEN) {
-      dhanWS.send(subscribeMsg);
-      console.log(`  📡 Subscribed to ${WS_INSTRUMENTS.length} instruments (Quote mode)`);
-    }
+    dhanWS.send(subscribeMsg);
+    console.log(`  📡 Subscribed to ${WS_INSTRUMENTS.length} instruments (Quote mode)`);
 
     // Broadcast connection status to browser clients
-    broadcastToClients({ type: "status", provider: "dhan", connected: true, instrumentCount: WS_INSTRUMENTS.length });
+    broadcastToClients({ type: "status", connected: true, instrumentCount: WS_INSTRUMENTS.length });
   });
 
   dhanWS.on("message", (data) => {
@@ -1210,11 +1136,7 @@ function connectDhanWebSocket(clientId, accessToken) {
       // Dhan sends binary data
       const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
       const parsed = parseDhanBinaryPacket(buf);
-      if (!parsed) return;
-      if (parsed.type === "disconnect") {
-        if (parsed.disconnectCode === 806) blockDhanWebSocket("Dhan entitlement error 806");
-        return;
-      }
+      if (!parsed || parsed.type === "disconnect") return;
 
       // Merge into latest tick cache
       const key = parsed.securityId;
@@ -1239,16 +1161,17 @@ function connectDhanWebSocket(clientId, accessToken) {
   dhanWS.on("close", (code, reason) => {
     console.log(`  🔴 Dhan WebSocket closed (${code}): ${reason || "no reason"}`);
     dhanWSConnected = false;
-    broadcastToClients({ type: "status", provider: "dhan", connected: false, state: dhanWSUnavailableReason ? "UNAVAILABLE" : "RECONNECTING", unavailableUntil: dhanWSBlockedUntil || undefined, reason: dhanWSUnavailableReason || undefined });
+    broadcastToClients({ type: "status", connected: false });
     scheduleDhanReconnect();
   });
 
   dhanWS.on("error", (err) => {
     console.error("  ❌ Dhan WebSocket error:", err.message);
     dhanWSConnected = false;
-    // A 429 is provider rate limiting, so stop retrying until the circuit opens.
-    if (err.message && /429|Unexpected server response: 429/i.test(err.message)) {
-      blockDhanWebSocket("Dhan WebSocket HTTP 429 rate limit");
+    // If rate-limited (429), use longer backoff
+    if (err.message && err.message.includes("429")) {
+      dhanWSReconnectDelay = 120000; // 2 minutes
+      console.log("  ⏳ Rate-limited by Dhan. Will retry in 120s...");
     }
   });
 
@@ -1257,11 +1180,9 @@ function connectDhanWebSocket(clientId, accessToken) {
 
 function scheduleDhanReconnect() {
   if (dhanWSReconnectTimer) clearTimeout(dhanWSReconnectTimer);
-  if (Date.now() < dhanWSBlockedUntil) {
-    console.log(`  ⏸️  Dhan WebSocket reconnect suppressed until ${new Date(dhanWSBlockedUntil).toISOString()}`);
-    return;
-  }
-  dhanWSReconnectDelay = Math.min(Math.max(dhanWSReconnectDelay * 2, 2000), DHAN_WS_MAX_BACKOFF);
+  // Only double the delay if not already set higher (e.g. by rate-limit handler)
+  const doubled = Math.min(dhanWSReconnectDelay * 2, 30000);
+  dhanWSReconnectDelay = Math.max(dhanWSReconnectDelay, doubled);
   console.log(`  🔄 Reconnecting in ${dhanWSReconnectDelay / 1000}s...`);
   dhanWSReconnectTimer = setTimeout(() => {
     connectDhanWebSocket(dhanWSCredentials.clientId, dhanWSCredentials.accessToken);
@@ -1287,11 +1208,7 @@ localWSS.on("connection", (ws) => {
   // Send current status
   ws.send(JSON.stringify({
     type: "status",
-    provider: "dhan",
     connected: dhanWSConnected,
-    state: dhanWSUnavailableReason ? "UNAVAILABLE" : dhanWSConnected ? "CONNECTED" : "DISCONNECTED",
-    unavailableUntil: dhanWSBlockedUntil || undefined,
-    reason: dhanWSUnavailableReason || undefined,
     instrumentCount: WS_INSTRUMENTS.length,
   }));
 
@@ -1300,10 +1217,19 @@ localWSS.on("connection", (ws) => {
     ws.send(JSON.stringify(tickData));
   }
 
-  // Handle non-sensitive subscription messages from browser.
+  // Handle messages from browser (e.g., credential updates, custom subscriptions)
   ws.on("message", (msg) => {
     try {
       const parsed = JSON.parse(msg.toString());
+
+      if (parsed.type === "configure") {
+        // Browser is sending Dhan credentials for WebSocket
+        const { clientId, accessToken } = parsed;
+        if (clientId && accessToken) {
+          console.log("  🔑 Received Dhan credentials from browser, connecting WebSocket...");
+          connectDhanWebSocket(clientId, accessToken);
+        }
+      }
 
       if (parsed.type === "subscribe" && parsed.instruments) {
         // Dynamic subscription support (future: option chain instruments)
@@ -1330,52 +1256,329 @@ localWSS.on("connection", (ws) => {
 // ══════════════════════════════════════════════
 
 const CORS_HEADERS = {
-  "Access-Control-Allow-Credentials": "true",
+  "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Content-Type, x-dhan-client-id, x-dhan-access-token",
 };
 
-function corsHeaders(origin) {
-  const allowedOrigin = resolveAllowedOrigin(origin);
-  return { ...CORS_HEADERS, ...(allowedOrigin ? { "Access-Control-Allow-Origin": allowedOrigin } : {}) };
+// ══════════════════════════════════════════════
+// ── Helper: Read JSON Body from Request ──
+// ══════════════════════════════════════════════
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", chunk => { body += chunk.toString(); });
+    req.on("end", () => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch (err) {
+        reject(new Error("Invalid JSON body"));
+      }
+    });
+    req.on("error", reject);
+  });
 }
+
+// ══════════════════════════════════════════════
+// ── HTTP Server ──
+// ══════════════════════════════════════════════
 
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
-    res.writeHead(204, corsHeaders(req.headers.origin));
+    res.writeHead(204, CORS_HEADERS);
     return res.end();
   }
 
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const params = url.searchParams;
+
   res.setHeader("Content-Type", "application/json");
-  Object.entries(corsHeaders(req.headers.origin)).forEach(([k, v]) => res.setHeader(k, v));
+  Object.entries(CORS_HEADERS).forEach(([k, v]) => res.setHeader(k, v));
 
   try {
-    if (url.pathname === "/api/kite/login") {
-      const apiKey = process.env.KITE_API_KEY;
-      if (!apiKey) throw new Error("KITE_API_KEY is not configured.");
-      res.setHeader("Location", `${KITE_LOGIN_BASE}?v=3&api_key=${encodeURIComponent(apiKey)}&redirect_url=${encodeURIComponent(kiteRedirectUrl())}`);
-      res.writeHead(302); return res.end();
-    } else if (url.pathname === "/api/kite/callback") {
+    // ──────────────────────────────────────────────
+    // ── Broker Backend Endpoints ──
+    // ──────────────────────────────────────────────
+
+    if (url.pathname === "/api/broker/connections/test" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const { connection_id, broker_id, environment } = body;
+      
+      if (!connection_id || !broker_id || !environment) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ error: "Missing required fields: connection_id, broker_id, environment" }));
+        return;
+      }
+      
+      try {
+        const { credentials } = await getBrokerConnectionById(connection_id, { broker_id, environment });
+        
+        // Test authentication
+        let provider;
+        if (broker_id === "dhan") {
+          provider = new DhanMarketDataProvider(credentials);
+        } else if (broker_id === "zerodha") {
+          provider = new KiteMarketDataProvider(credentials);
+        } else {
+          throw new Error("Unsupported broker");
+        }
+        
+        await provider.authenticate();
+        
+        res.writeHead(200);
+        res.end(JSON.stringify({ 
+          success: true, 
+          message: "Authentication successful",
+          broker_id,
+          environment 
+        }));
+      } catch (error) {
+        console.error("Broker test error:", error);
+        res.writeHead(error.upstreamStatus || 500);
+        res.end(JSON.stringify({ 
+          success: false, 
+          error: error.message,
+          code: error.code 
+        }));
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/broker/instruments/search" && req.method === "GET") {
+      const query = params.get("query");
+      const accountId = params.get("account_id");
+      const brokerId = params.get("broker_id") || "dhan";
+      
+      if (!query || !accountId) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ error: "Missing query or account_id parameter" }));
+        return;
+      }
+      
+      try {
+        const credentials = await getCentralCredentialsForAccount(accountId, { 
+          broker_id: brokerId, 
+          environment: "production" 
+        });
+        
+        const provider = brokerId === "dhan" 
+          ? new DhanMarketDataProvider(credentials)
+          : new KiteMarketDataProvider(credentials);
+        
+        const instruments = await provider.searchInstruments(query);
+        
+        res.writeHead(200);
+        res.end(JSON.stringify({ data: instruments, count: instruments.length }));
+      } catch (error) {
+        console.error("Instrument search error:", error);
+        res.writeHead(error.upstreamStatus || 500);
+        res.end(JSON.stringify({ error: error.message, code: error.code }));
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/broker/quote" && req.method === "GET") {
+      const symbol = params.get("symbol");
+      const exchange = params.get("exchange") || "NSE";
+      const accountId = params.get("account_id");
+      const tradingSymbol = params.get("trading_symbol") || symbol;
+      const instrumentId = params.get("instrument_id");
+      const brokerId = params.get("broker_id") || "dhan";
+      const exchangeSegment = params.get("exchange_segment") || (exchange === "NSE" ? "IDX_I" : exchange);
+      const instrumentType = params.get("instrument_type") || "INDEX";
+      
+      if (!symbol || !accountId) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ error: "Missing symbol or account_id parameter" }));
+        return;
+      }
+      
+      try {
+        const credentials = await getCentralCredentialsForAccount(accountId, { 
+          broker_id: brokerId, 
+          environment: "production" 
+        });
+        
+        const provider = brokerId === "dhan" 
+          ? new DhanMarketDataProvider(credentials)
+          : new KiteMarketDataProvider(credentials);
+        
+        const instrument = {
+          provider: brokerId,
+          symbol,
+          tradingSymbol,
+          exchange,
+          exchangeSegment,
+          providerInstrumentId: instrumentId || symbol,
+          instrumentType
+        };
+        
+        const quote = await provider.getQuote(instrument);
+        
+        res.writeHead(200);
+        res.end(JSON.stringify({ data: quote }));
+      } catch (error) {
+        console.error("Quote error:", error);
+        res.writeHead(error.upstreamStatus || 500);
+        res.end(JSON.stringify({ error: error.message, code: error.code }));
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/broker/historical" && req.method === "GET") {
+      const symbol = params.get("symbol");
+      const interval = params.get("interval") || "5";
+      const fromDate = params.get("from");
+      const toDate = params.get("to");
+      const accountId = params.get("account_id");
+      const exchange = params.get("exchange") || "NSE";
+      const instrumentId = params.get("instrument_id");
+      const brokerId = params.get("broker_id") || "dhan";
+      const exchangeSegment = params.get("exchange_segment") || (exchange === "NSE" ? "IDX_I" : exchange);
+      const instrumentType = params.get("instrument_type") || "INDEX";
+      
+      if (!symbol || !fromDate || !toDate || !accountId) {
+        res.writeHead(400);
+        res.end(JSON.stringify({ error: "Missing required parameters: symbol, from, to, account_id" }));
+        return;
+      }
+      
+      try {
+        const credentials = await getCentralCredentialsForAccount(accountId, { 
+          broker_id: brokerId, 
+          environment: "production" 
+        });
+        
+        const provider = brokerId === "dhan" 
+          ? new DhanMarketDataProvider(credentials)
+          : new KiteMarketDataProvider(credentials);
+        
+        const instrument = {
+          provider: brokerId,
+          symbol,
+          tradingSymbol: symbol,
+          exchange,
+          exchangeSegment,
+          providerInstrumentId: instrumentId || symbol,
+          instrumentType
+        };
+        
+        const candles = await provider.getHistoricalCandles(instrument, interval, fromDate, toDate);
+        
+        res.writeHead(200);
+        res.end(JSON.stringify({ data: candles, count: candles.length }));
+      } catch (error) {
+        console.error("Historical data error:", error);
+        res.writeHead(error.upstreamStatus || 500);
+        res.end(JSON.stringify({ error: error.message, code: error.code }));
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/kite/login" && req.method === "GET") {
+      const apiKey = params.get("api_key") || process.env.KITE_API_KEY;
+      
+      if (!apiKey) {
+        res.writeHead(500);
+        res.end(JSON.stringify({ error: "Kite API Key not configured" }));
+        return;
+      }
+      
+      const redirectUrl = process.env.KITE_REDIRECT_URL || 
+        `https://new-terminal-production.up.railway.app/api/kite/callback`;
+      
+      const loginUrl = new URL("https://kite.trade/connect/login");
+      loginUrl.searchParams.set("api_key", apiKey);
+      loginUrl.searchParams.set("v", "3");
+      
+      res.writeHead(302, { "Location": loginUrl.toString() });
+      res.end();
+      return;
+    }
+
+    if (url.pathname === "/api/kite/callback" && req.method === "GET") {
       const requestToken = params.get("request_token");
-      if (!requestToken) throw new Error("Missing Kite request token.");
-      const session = await exchangeKiteToken(requestToken);
-      const sessionId = randomBytes(32).toString("base64url");
-      kiteSessions.set(sessionId, { ...session, expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
-      res.setHeader("Set-Cookie", `${KITE_SESSION_COOKIE}=${sessionId}; HttpOnly; SameSite=Lax; Path=/`);
-      res.setHeader("Location", "http://localhost:4001/broker-settings?kite=connected");
-      res.writeHead(302); return res.end();
-    } else if (url.pathname === "/api/kite/status") {
-      const session = getKiteSession(parseCookies(req.headers.cookie)[KITE_SESSION_COOKIE]);
-      res.writeHead(200); return res.end(JSON.stringify({ authenticated: Boolean(session), provider: "zerodha" }));
-    } else if (url.pathname === "/api/kite-proxy") {
-      const credentials = kiteCredentials(req, params);
-      const requestParams = Object.fromEntries(params.entries()); delete requestParams.endpoint;
-      const data = await kiteFetch(params.get("endpoint"), requestParams, credentials);
-      res.writeHead(200); return res.end(JSON.stringify(data));
-    } else if (url.pathname === "/api/dhan-proxy") {
-      const { data, cacheHit } = await handleDhanProxy(params);
+      const status = params.get("status");
+      
+      if (status !== "success" || !requestToken) {
+        res.writeHead(400, { "Content-Type": "text/html" });
+        res.end("<h1>Kite Login Failed</h1><p>OAuth flow was cancelled or failed.</p>");
+        return;
+      }
+      
+      try {
+        const apiKey = process.env.KITE_API_KEY;
+        const apiSecret = process.env.KITE_API_SECRET;
+        
+        if (!apiKey || !apiSecret) {
+          throw new Error("Kite OAuth credentials not configured");
+        }
+        
+        // Generate checksum: sha256(api_key + request_token + api_secret)
+        const checksum = createHash("sha256")
+          .update(apiKey + requestToken + apiSecret)
+          .digest("hex");
+        
+        // Exchange request_token for access_token
+        const tokenResponse = await fetch("https://api.kite.trade/session/token", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Kite-Version": "3"
+          },
+          body: new URLSearchParams({
+            api_key: apiKey,
+            request_token: requestToken,
+            checksum: checksum
+          })
+        });
+        
+        const tokenData = await tokenResponse.json();
+        
+        if (tokenData.status !== "success" || !tokenData.data?.access_token) {
+          throw new Error("Failed to obtain Kite access token");
+        }
+        
+        // Return HTML page with access token for user to copy
+        const html = `
+          <!DOCTYPE html>
+          <html>
+          <head><title>Kite OAuth Success</title></head>
+          <body style="font-family: sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">
+            <h1>✅ Kite Authentication Successful</h1>
+            <p>Your Kite access token:</p>
+            <textarea readonly style="width: 100%; height: 100px; font-family: monospace; padding: 10px;">
+${tokenData.data.access_token}
+            </textarea>
+            <p><strong>User ID:</strong> ${tokenData.data.user_id}</p>
+            <p><strong>User Name:</strong> ${tokenData.data.user_name}</p>
+            <p style="color: #666; font-size: 0.9em;">
+              Copy this token and save it in your broker connection settings. 
+              This token is valid until 6:00 AM IST tomorrow.
+            </p>
+            <button onclick="window.close()" style="margin-top: 20px; padding: 10px 20px;">Close</button>
+          </body>
+          </html>
+        `;
+        
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(html);
+      } catch (error) {
+        console.error("Kite OAuth error:", error);
+        res.writeHead(500, { "Content-Type": "text/html" });
+        res.end(`<h1>Kite OAuth Error</h1><pre>${error.message}</pre>`);
+      }
+      return;
+    }
+
+    // ──────────────────────────────────────────────
+    // ── Original Proxy Endpoints ──
+    // ──────────────────────────────────────────────
+
+    if (url.pathname === "/api/dhan-proxy") {
+      const userClientId = req.headers["x-dhan-client-id"];
+      const userAccessToken = req.headers["x-dhan-access-token"];
+      const { data, cacheHit } = await handleDhanProxy(params, userClientId, userAccessToken);
       res.setHeader("X-Cache", cacheHit ? "HIT" : "MISS");
       res.writeHead(200);
       res.end(JSON.stringify(data));
@@ -1400,11 +1603,13 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200);
       res.end(JSON.stringify(data));
     } else if (url.pathname === "/api/test-connection") {
-      // Test Dhan API connection with proxy-server credentials.
+      // Test Dhan API connection with user credentials
+      const userClientId = req.headers["x-dhan-client-id"];
+      const userAccessToken = req.headers["x-dhan-access-token"];
       try {
         const result = await dhanFetch("/optionchain/expirylist", {
           UnderlyingScrip: 13, UnderlyingSeg: "NSE_FNO",
-        });
+        }, "POST", userClientId, userAccessToken);
         res.writeHead(200);
         res.end(JSON.stringify({ status: "success", message: "Dhan API connected", data: result }));
       } catch (err) {
@@ -1416,6 +1621,10 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({
         status: "ok",
         uptime: process.uptime(),
+        broker_backend: {
+          encryption_available: isEncryptionAvailable(),
+          supabase_configured: !!(process.env.SUPABASE_URL && process.env.SUPABASE_SECRET_KEY),
+        },
         websocket: {
           dhanConnected: dhanWSConnected,
           browserClients: localWSS.clients.size,
@@ -1423,7 +1632,7 @@ const server = http.createServer(async (req, res) => {
           cachedTicks: latestTicks.size,
         },
         sources: {
-          dhan: Boolean(process.env.DHAN_CLIENT_ID || dhanWSCredentials.clientId),
+          dhan: !!process.env.DHAN_CLIENT_ID,
           tradingview: true,
           nse: true,
           yahoo: true,
@@ -1452,17 +1661,15 @@ server.on("upgrade", (request, socket, head) => {
   }
 });
 
-const HOST = process.env.NODE_ENV === "production" || process.env.RAILWAY_ENVIRONMENT ? "0.0.0.0" : "127.0.0.1";
-
-server.listen(PORT, HOST, () => {
+server.listen(PORT, () => {
   console.log("");
   console.log("  🚀 Mr. Chartist Proxy Server");
-  console.log(`  ├─ HTTP:       http://${HOST === "0.0.0.0" ? "0.0.0.0" : "localhost"}:${PORT}`);
-  console.log(`  ├─ WebSocket:  ws://${HOST === "0.0.0.0" ? "0.0.0.0" : "localhost"}:${PORT}/ws`);
-  console.log(`  ├─ Health:     http://${HOST === "0.0.0.0" ? "0.0.0.0" : "localhost"}:${PORT}/health`);
-  console.log(`  ├─ Dhan (1°):  http://${HOST === "0.0.0.0" ? "0.0.0.0" : "localhost"}:${PORT}/api/dhan-proxy?endpoint=option-chain&symbol=NIFTY`);
-  console.log(`  ├─ NSE  (2°):  http://${HOST === "0.0.0.0" ? "0.0.0.0" : "localhost"}:${PORT}/api/nse-proxy?endpoint=indices`);
-  console.log(`  └─ TV Scanner: http://${HOST === "0.0.0.0" ? "0.0.0.0" : "localhost"}:${PORT}/api/tv-scan?type=stocks`);
+  console.log(`  ├─ HTTP:       http://localhost:${PORT}`);
+  console.log(`  ├─ WebSocket:  ws://localhost:${PORT}/ws`);
+  console.log(`  ├─ Health:     http://localhost:${PORT}/health`);
+  console.log(`  ├─ Dhan (1°):  http://localhost:${PORT}/api/dhan-proxy?endpoint=option-chain&symbol=NIFTY`);
+  console.log(`  ├─ NSE  (2°):  http://localhost:${PORT}/api/nse-proxy?endpoint=indices`);
+  console.log(`  └─ TV Scanner: http://localhost:${PORT}/api/tv-scan?type=stocks`);
   console.log("");
   console.log("  Data Priority: Dhan → NSE → TradingView");
   console.log("  Dhan credentials:", process.env.DHAN_CLIENT_ID ? "✅ Loaded from .env" : "⚠️  Not set (configure in .env or Broker Settings)");
