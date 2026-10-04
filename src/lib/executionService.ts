@@ -347,7 +347,10 @@ export class ExecutionService {
     const fills = status?.fills ?? [];
     const receipt = [...this.idempotency.values()].find((candidate) => candidate.brokerOrderId === brokerOrderId && candidate.accountId === accountId);
     if (receipt?.canonicalOrder?.ownerUserId === authUserId) {
-      this.executionLedger.registerOrder(receipt.canonicalOrder);
+      // Only register the order if it's not already in the ledger (to avoid overwriting updates)
+      if (!this.executionLedger.getOrder(receipt.canonicalOrder.id)) {
+        this.executionLedger.registerOrder(receipt.canonicalOrder);
+      }
     }
     const engine = this.positionEngines.get(accountId) ?? new PositionEngine(accountId);
     this.positionEngines.set(accountId, engine);
