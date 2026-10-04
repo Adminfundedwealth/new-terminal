@@ -47,7 +47,6 @@ export class KiteMarketDataProvider implements MarketDataProvider {
   async authenticate(): Promise<{ authenticated: true }> {
     const payload = await this.readJson(await this.fetcher(`${KITE_API}/user/profile`, {
       headers: this.headers(),
-      cache: "no-store",
     }));
     if (payload.status !== "success" || !payload.data) {
       throw new MarketDataProviderError("kite", "INVALID_CREDENTIALS");
@@ -71,7 +70,6 @@ export class KiteMarketDataProvider implements MarketDataProvider {
     const query = new URLSearchParams({ i: key });
     const payload = await this.readJson(await this.fetcher(`${KITE_API}/quote?${query}`, {
       headers: this.headers(),
-      cache: "no-store",
     }));
     const quote = payload.data?.[key];
     if (!quote) throw new MarketDataProviderError("kite", "INVALID_INSTRUMENT");
@@ -111,7 +109,7 @@ export class KiteMarketDataProvider implements MarketDataProvider {
     const query = new URLSearchParams({ from: fromDate, to: toDate });
     const payload = await this.readJson(await this.fetcher(
       `${KITE_API}/instruments/historical/${encodeURIComponent(instrument.providerInstrumentId)}/${interval}?${query}`,
-      { headers: this.headers(), cache: "no-store" }
+      { headers: this.headers() }
     ));
     const candles = payload.data?.candles;
     if (!Array.isArray(candles)) throw new MarketDataProviderError("kite", "UPSTREAM_ERROR");
@@ -140,7 +138,7 @@ export class KiteMarketDataProvider implements MarketDataProvider {
       const batch = selectedContracts.slice(offset, offset + OPTION_QUOTE_BATCH_SIZE);
       const query = new URLSearchParams();
       for (const instrument of batch) query.append("i", `${instrument.exchange}:${instrument.tradingSymbol}`);
-      const payload = await this.readJson(await this.fetcher(`${KITE_API}/quote?${query}`, { headers: this.headers(), cache: "no-store" }));
+      const payload = await this.readJson(await this.fetcher(`${KITE_API}/quote?${query}`, { headers: this.headers() }));
       for (const instrument of batch) { const quote = payload.data?.[`${instrument.exchange}:${instrument.tradingSymbol}`]; if (quote) quoteRows.push([instrument, quote]); }
     }
     const strikes = new Map<number, { call: MarketOptionLeg | null; put: MarketOptionLeg | null }>();
@@ -152,7 +150,7 @@ export class KiteMarketDataProvider implements MarketDataProvider {
     return normalizeMarketOptionChain({ provider: "kite", underlying: normalizedUnderlying, expiry: selectedExpiry, expiries, spotPrice, rows: [...strikes.entries()].map(([strike, legs]) => ({ strike, ...legs })) });
   }
 
-  private headers(): HeadersInit {
+  private headers(): Record<string, string> {
     return {
       Accept: "application/json",
       "X-Kite-Version": "3",
@@ -193,7 +191,7 @@ export class KiteMarketDataProvider implements MarketDataProvider {
     if (this.instrumentCache && this.instrumentCache.expiresAt > Date.now()) {
       return this.instrumentCache.rows;
     }
-    const response = await this.fetcher(`${KITE_API}/instruments`, { headers: this.headers(), cache: "no-store" });
+    const response = await this.fetcher(`${KITE_API}/instruments`, { headers: this.headers() });
     if (!response.ok) {
       throw new MarketDataProviderError(
         "kite",

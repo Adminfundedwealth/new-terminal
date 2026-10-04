@@ -43,10 +43,10 @@ const DHAN_BASE = "https://api.dhan.co/v2";
 const NSE_BASE = "https://www.nseindia.com";
 
 // ── Import broker backend modules ──
-import { DhanMarketDataProvider } from "./server-lib/brokers/dhan.js";
-import { KiteMarketDataProvider } from "./server-lib/brokers/kite.js";
-import { getCentralCredentialsForAccount, getBrokerConnectionById } from "./server-lib/services/broker-connections.js";
-import { isEncryptionAvailable } from "./server-lib/security/broker-encryption.js";
+import { DhanMarketDataProvider } from "./dist/brokers/dhan.js";
+import { KiteMarketDataProvider } from "./dist/brokers/kite.js";
+import { getCentralCredentialsForAccount, getBrokerConnectionById } from "./dist/services/broker-connections.js";
+import { isEncryptionAvailable } from "./dist/security/broker-encryption.js";
 import { createHash } from "node:crypto";
 const INDIAN_NEWS_FEEDS = [
   { name: "Moneycontrol", url: "https://www.moneycontrol.com/rss/marketreports.xml" },

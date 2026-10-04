@@ -1,0 +1,229 @@
+- generic [active] [ref=f5e1]:
+  - generic [ref=f5e2]:
+    - complementary [ref=f5e3]:
+      - generic [ref=f5e8]:
+        - generic [ref=f5e9]: FundedWealth
+        - generic [ref=f5e10]: Terminal OS
+      - navigation "Main navigation" [ref=f5e14]:
+        - generic [ref=f5e15]:
+          - paragraph [ref=f5e16]: Overview
+          - list [ref=f5e17]:
+            - listitem [ref=f5e18]:
+              - link "Dashboard" [ref=f5e19] [cursor=pointer]:
+                - /url: /dashboard
+        - generic [ref=f5e25]:
+          - paragraph [ref=f5e26]: Trading
+          - list [ref=f5e27]:
+            - listitem [ref=f5e28]:
+              - link "Trading Accounts" [ref=f5e29] [cursor=pointer]:
+                - /url: /trading-accounts
+            - listitem [ref=f5e34]:
+              - link "Orders" [ref=f5e35] [cursor=pointer]:
+                - /url: /orders
+            - listitem [ref=f5e39]:
+              - link "Executions" [ref=f5e40] [cursor=pointer]:
+                - /url: /executions
+            - listitem [ref=f5e43]:
+              - link "Positions" [ref=f5e44] [cursor=pointer]:
+                - /url: /positions
+        - generic [ref=f5e48]:
+          - paragraph [ref=f5e49]: Risk
+          - list [ref=f5e50]:
+            - listitem [ref=f5e51]:
+              - link "Risk Management" [ref=f5e52] [cursor=pointer]:
+                - /url: /risk
+            - listitem [ref=f5e55]:
+              - link "Risk Events" [ref=f5e56] [cursor=pointer]:
+                - /url: /risk/events
+            - listitem [ref=f5e59]:
+              - link "Account Metrics" [ref=f5e60] [cursor=pointer]:
+                - /url: /risk/metrics
+            - listitem [ref=f5e64]:
+              - link "Rule Management" [ref=f5e65] [cursor=pointer]:
+                - /url: /rules
+            - listitem [ref=f5e68]:
+              - link "Daily Performance" [ref=f5e69] [cursor=pointer]:
+                - /url: /performance
+        - generic [ref=f5e72]:
+          - paragraph [ref=f5e73]: Market
+          - list [ref=f5e74]:
+            - listitem [ref=f5e75]:
+              - link "Instruments" [ref=f5e76] [cursor=pointer]:
+                - /url: /instruments
+            - listitem [ref=f5e78]:
+              - link "Market Data" [ref=f5e79] [cursor=pointer]:
+                - /url: /market-data
+            - listitem [ref=f5e82]:
+              - link "Providers" [ref=f5e83] [cursor=pointer]:
+                - /url: /providers
+            - listitem [ref=f5e87]:
+              - link "WebSocket" [ref=f5e88] [cursor=pointer]:
+                - /url: /websocket
+        - generic [ref=f5e95]:
+          - paragraph [ref=f5e96]: User Data
+          - list [ref=f5e97]:
+            - listitem [ref=f5e98]:
+              - link "Watchlists" [ref=f5e99] [cursor=pointer]:
+                - /url: /watchlists
+            - listitem [ref=f5e102]:
+              - link "Alerts" [ref=f5e103] [cursor=pointer]:
+                - /url: /alerts
+            - listitem [ref=f5e107]:
+              - link "Journal" [ref=f5e108] [cursor=pointer]:
+                - /url: /journal
+        - generic [ref=f5e112]:
+          - paragraph [ref=f5e113]: Operations
+          - list [ref=f5e114]:
+            - listitem [ref=f5e115]:
+              - link "Activity Log" [ref=f5e116] [cursor=pointer]:
+                - /url: /activity
+            - listitem [ref=f5e121]:
+              - link "System Health" [ref=f5e122] [cursor=pointer]:
+                - /url: /system-health
+            - listitem [ref=f5e126]:
+              - link "Audit Log" [ref=f5e127] [cursor=pointer]:
+                - /url: /audit
+        - generic [ref=f5e132]:
+          - paragraph [ref=f5e133]: Administration
+          - list [ref=f5e134]:
+            - listitem [ref=f5e135]:
+              - link "Broker API Keys" [ref=f5e136] [cursor=pointer]:
+                - /url: /broker
+            - listitem [ref=f5e139]:
+              - link "Employees" [ref=f5e140] [cursor=pointer]:
+                - /url: /employees
+            - listitem [ref=f5e153]:
+              - link "Permissions" [ref=f5e154] [cursor=pointer]:
+                - /url: /permissions
+            - listitem [ref=f5e158]:
+              - link "Terminal Settings" [ref=f5e159] [cursor=pointer]:
+                - /url: /settings
+    - generic [ref=f5e163]:
+      - banner [ref=f5e164]:
+        - generic [ref=f5e165]:
+          - generic [ref=f5e166]: Terminal OS
+          - textbox "Search Terminal OS" [ref=f5e171]:
+            - /placeholder: Search accounts, orders…
+        - generic [ref=f5e172]:
+          - generic [ref=f5e173]: System Online
+          - button "Notifications" [ref=f5e177] [cursor=pointer]
+          - button "Employee menu" [ref=f5e179] [cursor=pointer]:
+            - generic [ref=f5e184]:
+              - paragraph [ref=f5e185]: adminfundedwealth@gmail.com
+              - paragraph [ref=f5e186]: Super Admin
+      - main [ref=f5e189]:
+        - generic [ref=f5e191]:
+          - generic [ref=f5e193]:
+            - heading "Orders" [level=1] [ref=f5e194]
+            - paragraph [ref=f5e195]: All orders across all trading accounts
+          - generic [ref=f5e196]:
+            - generic [ref=f5e197]:
+              - textbox "Symbol…" [ref=f5e202]
+              - generic [ref=f5e203]:
+                - button "All Status" [ref=f5e204] [cursor=pointer]
+                - button "PENDING" [ref=f5e205] [cursor=pointer]
+                - button "OPEN" [ref=f5e206] [cursor=pointer]
+                - button "PARTIALLY_FILLED" [ref=f5e207] [cursor=pointer]
+                - button "FILLED" [ref=f5e208] [cursor=pointer]
+                - button "CANCELLED" [ref=f5e209] [cursor=pointer]
+                - button "REJECTED" [ref=f5e210] [cursor=pointer]
+                - button "EXPIRED" [ref=f5e211] [cursor=pointer]
+              - generic [ref=f5e212]:
+                - button "All Sides" [ref=f5e213] [cursor=pointer]
+                - button "BUY" [ref=f5e214] [cursor=pointer]
+                - button "SELL" [ref=f5e215] [cursor=pointer]
+              - button [disabled]
+            - grid [ref=f5e218]:
+              - rowgroup [ref=f5e219]:
+                - row [ref=f5e220]:
+                  - columnheader "Order ID" [ref=f5e221]
+                  - columnheader "Account" [ref=f5e222]
+                  - columnheader "Symbol" [ref=f5e223]
+                  - columnheader "Side" [ref=f5e224]
+                  - columnheader "Type" [ref=f5e225]
+                  - columnheader "Qty" [ref=f5e226]
+                  - columnheader "Price" [ref=f5e227]
+                  - columnheader "Status" [ref=f5e228]
+                  - columnheader "Placed" [ref=f5e229]
+              - rowgroup [ref=f5e230]:
+                - row [ref=f5e231]:
+                  - gridcell [ref=f5e232]
+                  - gridcell [ref=f5e234]
+                  - gridcell [ref=f5e236]
+                  - gridcell [ref=f5e238]
+                  - gridcell [ref=f5e240]
+                  - gridcell [ref=f5e242]
+                  - gridcell [ref=f5e244]
+                  - gridcell [ref=f5e246]
+                  - gridcell [ref=f5e248]
+                - row [ref=f5e250]:
+                  - gridcell [ref=f5e251]
+                  - gridcell [ref=f5e253]
+                  - gridcell [ref=f5e255]
+                  - gridcell [ref=f5e257]
+                  - gridcell [ref=f5e259]
+                  - gridcell [ref=f5e261]
+                  - gridcell [ref=f5e263]
+                  - gridcell [ref=f5e265]
+                  - gridcell [ref=f5e267]
+                - row [ref=f5e269]:
+                  - gridcell [ref=f5e270]
+                  - gridcell [ref=f5e272]
+                  - gridcell [ref=f5e274]
+                  - gridcell [ref=f5e276]
+                  - gridcell [ref=f5e278]
+                  - gridcell [ref=f5e280]
+                  - gridcell [ref=f5e282]
+                  - gridcell [ref=f5e284]
+                  - gridcell [ref=f5e286]
+                - row [ref=f5e288]:
+                  - gridcell [ref=f5e289]
+                  - gridcell [ref=f5e291]
+                  - gridcell [ref=f5e293]
+                  - gridcell [ref=f5e295]
+                  - gridcell [ref=f5e297]
+                  - gridcell [ref=f5e299]
+                  - gridcell [ref=f5e301]
+                  - gridcell [ref=f5e303]
+                  - gridcell [ref=f5e305]
+                - row [ref=f5e307]:
+                  - gridcell [ref=f5e308]
+                  - gridcell [ref=f5e310]
+                  - gridcell [ref=f5e312]
+                  - gridcell [ref=f5e314]
+                  - gridcell [ref=f5e316]
+                  - gridcell [ref=f5e318]
+                  - gridcell [ref=f5e320]
+                  - gridcell [ref=f5e322]
+                  - gridcell [ref=f5e324]
+                - row [ref=f5e326]:
+                  - gridcell [ref=f5e327]
+                  - gridcell [ref=f5e329]
+                  - gridcell [ref=f5e331]
+                  - gridcell [ref=f5e333]
+                  - gridcell [ref=f5e335]
+                  - gridcell [ref=f5e337]
+                  - gridcell [ref=f5e339]
+                  - gridcell [ref=f5e341]
+                  - gridcell [ref=f5e343]
+                - row [ref=f5e345]:
+                  - gridcell [ref=f5e346]
+                  - gridcell [ref=f5e348]
+                  - gridcell [ref=f5e350]
+                  - gridcell [ref=f5e352]
+                  - gridcell [ref=f5e354]
+                  - gridcell [ref=f5e356]
+                  - gridcell [ref=f5e358]
+                  - gridcell [ref=f5e360]
+                  - gridcell [ref=f5e362]
+                - row [ref=f5e364]:
+                  - gridcell [ref=f5e365]
+                  - gridcell [ref=f5e367]
+                  - gridcell [ref=f5e369]
+                  - gridcell [ref=f5e371]
+                  - gridcell [ref=f5e373]
+                  - gridcell [ref=f5e375]
+                  - gridcell [ref=f5e377]
+                  - gridcell [ref=f5e379]
+                  - gridcell [ref=f5e381]
+  - alert [ref=f5e383]

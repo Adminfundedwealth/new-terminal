@@ -121,4 +121,4 @@ export interface MarketDataProvider {
 }
 
 export type BrokerCredentialMap = Readonly<Record<string, string>>;
-export type Fetcher = (input: URL | RequestInfo, init?: RequestInit) => Promise<Response>;
+export type Fetcher = (input: string | URL, init?: RequestInit) => Promise<Response>;

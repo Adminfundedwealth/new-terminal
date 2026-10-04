@@ -1,0 +1,25 @@
+- generic [active] [ref=f4e1]:
+  - main [ref=f4e2]:
+    - generic [ref=f4e4]:
+      - generic [ref=f4e5]:
+        - heading "FundedWealth" [level=1] [ref=f4e9]
+        - paragraph [ref=f4e10]: Terminal OS
+      - generic [ref=f4e11]:
+        - generic [ref=f4e12]:
+          - heading "Sign In" [level=2] [ref=f4e13]
+          - paragraph [ref=f4e14]: Authorized employee access only
+        - generic [ref=f4e15]:
+          - generic [ref=f4e16]:
+            - text: Email
+            - textbox "Email" [ref=f4e17]:
+              - /placeholder: employee@fundedwealth.com
+          - generic [ref=f4e18]:
+            - generic [ref=f4e19]:
+              - generic [ref=f4e20]: Password
+              - link "Forgot password?" [ref=f4e21] [cursor=pointer]:
+                - /url: /forgot-password
+            - textbox "Password" [ref=f4e22]:
+              - /placeholder: ••••••••
+          - button "Sign in to Terminal OS" [ref=f4e23] [cursor=pointer]: Sign In
+      - paragraph [ref=f4e24]: FundedWealth Terminal OS · Internal Use Only
+  - alert [ref=f4e25]

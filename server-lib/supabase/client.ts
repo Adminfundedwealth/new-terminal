@@ -1,8 +1,8 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-let cachedClient = null;
+let cachedClient: SupabaseClient | null = null;
 
-export function getSupabaseClient() {
+export function getSupabaseClient(): SupabaseClient {
   if (cachedClient) return cachedClient;
   
   const supabaseUrl = process.env.SUPABASE_URL;

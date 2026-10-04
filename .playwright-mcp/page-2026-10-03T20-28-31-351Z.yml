@@ -1,0 +1,192 @@
+- generic [ref=f5e21]:
+  - generic [ref=f5e24]:
+    - link "Skip to content" [ref=f5e26] [cursor=pointer]:
+      - /url: "#main"
+    - banner [ref=f5e29]:
+      - generic [ref=f5e30]:
+        - generic [ref=f5e31]:
+          - link "Supabase Back to organization home" [ref=f5e32] [cursor=pointer]:
+            - /url: /dashboard/org/ypbthqbzwxxedibeionn
+            - img "Supabase" [ref=f5e33]
+            - generic [ref=f5e34]: Back to organization home
+          - generic [ref=f5e35]:
+            - generic [ref=f5e39]:
+              - link "fundedwealth.ind@gmail.com's Org Pro" [ref=f5e40] [cursor=pointer]:
+                - /url: /dashboard/org/ypbthqbzwxxedibeionn
+                - generic [ref=f5e51]: fundedwealth.ind@gmail.com's Org
+                - generic [ref=f5e52]: Pro
+              - button "Show organizations" [ref=f5e53] [cursor=pointer]
+            - generic [ref=f5e58]:
+              - generic [ref=f5e62]:
+                - link "fundedwealth-terminal" [ref=f5e63] [cursor=pointer]:
+                  - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq
+                - button "Show organization projects" [ref=f5e68] [cursor=pointer]
+              - generic [ref=f5e76]:
+                - link "main Production" [ref=f5e77] [cursor=pointer]:
+                  - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq
+                  - generic "main" [ref=f5e78]
+                  - generic [ref=f5e79]: Production
+                - button "Show project branches" [ref=f5e80] [cursor=pointer]
+          - button "Connect" [ref=f5e86] [cursor=pointer]
+        - generic [ref=f5e91]:
+          - button "Feedback" [ref=f5e92] [cursor=pointer]
+          - generic [ref=f5e94]:
+            - button [ref=f5e95] [cursor=pointer]:
+              - paragraph [ref=f5e100]: Search...
+              - generic [ref=f5e102]: Ctrl K
+            - button "Help" [ref=f5e103] [cursor=pointer]
+            - button "Advisor Center" [ref=f5e110] [cursor=pointer]
+            - button "SQL Editor" [ref=f5e116] [cursor=pointer]
+            - button "AI Assistant" [ref=f5e121] [cursor=pointer]
+          - button [ref=f5e129] [cursor=pointer]:
+            - figure [ref=f5e131]
+    - generic [ref=f5e134]:
+      - generic [ref=f5e138]:
+        - navigation [ref=f5e140]:
+          - list [ref=f5e142]:
+            - listitem [ref=f5e143]:
+              - link "Project Overview" [ref=f5e144] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq
+            - listitem [ref=f5e147]:
+              - link "Table Editor" [ref=f5e148] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/editor
+            - listitem [ref=f5e151]:
+              - link "SQL Editor" [ref=f5e152] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/sql
+          - list [ref=f5e156]:
+            - listitem [ref=f5e157]:
+              - link "Database" [ref=f5e158] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/database/schemas
+            - listitem [ref=f5e163]:
+              - link "Authentication" [ref=f5e164] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/auth/users
+            - listitem [ref=f5e167]:
+              - link "Storage" [ref=f5e168] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/storage/files
+            - listitem [ref=f5e171]:
+              - link "Edge Functions" [ref=f5e172] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/functions
+            - listitem [ref=f5e178]:
+              - link "Realtime" [ref=f5e179] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/realtime/inspector
+          - list [ref=f5e183]:
+            - listitem [ref=f5e184]:
+              - link "Advisors" [ref=f5e185] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/advisors/security
+            - listitem [ref=f5e189]:
+              - link "Observability" [ref=f5e190] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/observability
+            - listitem [ref=f5e199]:
+              - link "Logs" [ref=f5e200] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/logs
+            - listitem [ref=f5e202]:
+              - link "Integrations" [ref=f5e203] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/integrations
+          - list [ref=f5e208]:
+            - listitem [ref=f5e209]:
+              - link "Project Settings" [ref=f5e210] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/settings/general
+        - button "Sidebar control" [ref=f5e216] [cursor=pointer]
+      - main [ref=f5e223]:
+        - generic [ref=f5e225]:
+          - generic [ref=f5e229]:
+            - heading "SQL Editor" [level=4] [ref=f5e231]
+            - generic [ref=f5e233]:
+              - generic [ref=f5e234]:
+                - generic [ref=f5e235]:
+                  - generic [ref=f5e237]:
+                    - generic [ref=f5e238]: Search queries
+                    - textbox "Search queries..." [ref=f5e239]
+                    - button [ref=f5e240]
+                  - button "Create a new query" [ref=f5e247] [cursor=pointer]
+                - button "Shared" [ref=f5e252]
+                - button "Favorites" [ref=f5e258]
+                - generic [ref=f5e263]:
+                  - button "PRIVATE" [expanded] [ref=f5e264]
+                  - tree "private-snippets" [ref=f5e408]:
+                    - generic "Check Presence of Broker Connection Tables" [ref=f5e409] [cursor=pointer]
+                - button "Logs" [ref=f5e275]
+                - generic [ref=f5e280]:
+                  - button "Reference" [expanded] [ref=f5e281]
+                  - generic [ref=f5e285]:
+                    - link "templates" [ref=f5e286] [cursor=pointer]:
+                      - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/sql/templates
+                    - link "examples" [ref=f5e289] [cursor=pointer]:
+                      - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/sql/examples
+              - link "View running queries" [ref=f5e294] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/observability/connections
+          - separator [ref=f5e296]
+          - main [ref=f5e307]:
+            - generic [ref=f5e308]:
+              - generic [ref=f5e309]:
+                - generic [ref=f5e310]:
+                  - button "Collapse sidebar" [ref=f5e311]
+                  - tablist [ref=f5e316]:
+                    - generic [ref=f5e317]:
+                      - generic [ref=f5e419]:
+                        - generic [ref=f5e420]:
+                          - tab "Check Presence of Broker Connection Tables" [selected] [ref=f5e421] [cursor=pointer]
+                          - button "Close tab" [ref=f5e434] [cursor=pointer]
+                        - separator [ref=f5e438]
+                      - button [ref=f5e439]
+                - status [ref=f5e330]
+              - generic [ref=f5e332]:
+                - generic [ref=f5e333]:
+                  - generic [ref=f5e441]: Unsaved edits
+                  - generic [ref=f5e334]:
+                    - button "Enable Intellisense" [ref=f5e335] [cursor=pointer]
+                    - button "Add to favorites" [ref=f5e339] [cursor=pointer]
+                    - button "Prettify SQL" [ref=f5e343] [cursor=pointer]
+                  - generic [ref=f5e346]:
+                    - 'button "Query source: Database" [ref=f5e347] [cursor=pointer]':
+                      - generic [ref=f5e353]: Database
+                    - generic [ref=f5e357]:
+                      - button "Save" [ref=f5e442] [cursor=pointer]:
+                        - generic [ref=f5e445]: Ctrl S
+                      - button "Run" [ref=f5e358] [cursor=pointer]:
+                        - generic [ref=f5e1171]: Ctrl ↵
+                - generic [ref=f5e362]:
+                  - code [ref=f5e370]:
+                    - generic [ref=f5e371]:
+                      - generic [aria-hidden] [ref=f5e373]:
+                        - generic [ref=f5e1172]: "1"
+                        - generic [ref=f5e1174]: "2"
+                        - generic [ref=f5e1176]: "3"
+                        - generic [ref=f5e1178]: "4"
+                        - generic [ref=f5e1180]: "5"
+                      - generic [aria-hidden] [ref=f5e381]:
+                        - generic [ref=f5e1189]: SELECT ta.id, ta.external_account_id, ta.prop_firm, tabc.broker_connection_id, bc.broker_id
+                        - generic [ref=f5e1191]: FROM public.trading_accounts ta
+                        - generic [ref=f5e1193]: LEFT JOIN public.trading_account_broker_connections tabc ON tabc.trading_account_id = ta.id
+                        - generic [ref=f5e1195]: LEFT JOIN public.broker_connections bc ON bc.id = tabc.broker_connection_id
+                        - generic [ref=f5e1197]: WHERE ta.prop_firm = 'D6B_TEST' OR ta.external_account_id LIKE 'D6B%';
+                      - textbox "Editor content" [active] [ref=f5e384]: SELECT ta.id, ta.external_account_id, ta.prop_firm, tabc.broker_connection_id, bc.broker_id FROM public.trading_accounts ta LEFT JOIN public.trading_account_broker_connections tabc ON tabc.trading_account_id = ta.id LEFT JOIN public.broker_connections bc ON bc.id = tabc.broker_connection_id WHERE ta.prop_firm = 'D6B_TEST' OR ta.external_account_id LIKE 'D6B%';
+                  - separator [ref=f5e385]
+                  - generic [ref=f5e396]:
+                    - tablist [ref=f5e397]:
+                      - generic [ref=f5e398]:
+                        - tab "Results" [selected] [ref=f5e399] [cursor=pointer]
+                        - tab "Chart" [ref=f5e401] [cursor=pointer]
+                      - generic [ref=f5e476]:
+                        - button "1 row(Limited to only 100 rows)" [ref=f5e1199]:
+                          - paragraph [ref=f5e1200]:
+                            - generic [ref=f5e1201]: 1 row
+                            - text: (Limited to only 100 rows)
+                        - button "Export" [ref=f5e480] [cursor=pointer]
+                    - grid [ref=f5e1202]:
+                      - row [ref=f5e1203]:
+                        - columnheader "id" [ref=f5e1204]
+                        - columnheader "external_account_id" [ref=f5e1207]
+                        - columnheader "prop_firm" [ref=f5e1210]
+                        - columnheader "broker_connection_id" [ref=f5e1213]
+                        - columnheader "broker_id" [ref=f5e1216]
+                      - row [ref=f5e1219]:
+                        - gridcell "d6b00000-0000-4000-8000-000000000002" [ref=f5e1220]
+                        - gridcell "D6B-SYNTHETIC-ACCOUNT" [ref=f5e1222]
+                        - gridcell "D6B_TEST" [ref=f5e1224]
+                        - gridcell "d6b00000-0000-4000-8000-000000000003" [ref=f5e1226]
+                        - gridcell "dhan" [ref=f5e1228]
+  - alert [ref=f5e406]: SQL Editor | fundedwealth-terminal | fundedwealth.ind@gmail.com's Org | Supabase
+  - generic [ref=f5e407]:
+    - alert
+    - alert

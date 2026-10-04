@@ -53,7 +53,7 @@ export class DhanMarketDataProvider implements MarketDataProvider {
   }
 
   async authenticate(): Promise<{ authenticated: true }> {
-    const response = await this.fetcher(`${DHAN_API}/profile`, { headers: this.headers(), cache: "no-store" });
+    const response = await this.fetcher(`${DHAN_API}/profile`, { headers: this.headers() });
     const payload = await this.readJson(response);
     if (!payload || payload.status !== "success" || !payload.data) {
       throw new MarketDataProviderError("dhan", "INVALID_CREDENTIALS", response.status);
@@ -77,7 +77,6 @@ export class DhanMarketDataProvider implements MarketDataProvider {
       method: "POST",
       headers: { ...this.headers(), "Content-Type": "application/json" },
       body: JSON.stringify({ [instrument.exchangeSegment]: [Number(instrument.providerInstrumentId)] }),
-      cache: "no-store",
     });
     const payload = await this.readJson(response);
     const quote = payload.data?.[instrument.exchangeSegment]?.[instrument.providerInstrumentId];
@@ -132,7 +131,6 @@ export class DhanMarketDataProvider implements MarketDataProvider {
       method: "POST",
       headers: { ...this.headers(), "Content-Type": "application/json" },
       body: JSON.stringify(body),
-      cache: "no-store",
     });
     const payload = await this.readJson(response);
     const data = payload.data;
@@ -159,7 +157,7 @@ export class DhanMarketDataProvider implements MarketDataProvider {
     if (!expiry) {
       const expiryResponse = await this.fetcher(`${DHAN_API}/optionchain/expirylist`, {
         method: "POST", headers: { ...this.headers(), "Content-Type": "application/json" },
-        body: JSON.stringify({ UnderlyingScrip: underlyingScrip, UnderlyingSeg: "NSE_FNO" }), cache: "no-store",
+        body: JSON.stringify({ UnderlyingScrip: underlyingScrip, UnderlyingSeg: "NSE_FNO" }),
       });
       const expiryPayload = await this.readJson(expiryResponse);
       if (expiryPayload.status !== "success" || !Array.isArray(expiryPayload.data)) throw new MarketDataProviderError("dhan", "UPSTREAM_ERROR", expiryResponse.status);
@@ -170,7 +168,7 @@ export class DhanMarketDataProvider implements MarketDataProvider {
 
     const response = await this.fetcher(`${DHAN_API}/optionchain`, {
       method: "POST", headers: { ...this.headers(), "Content-Type": "application/json" },
-      body: JSON.stringify({ UnderlyingScrip: underlyingScrip, UnderlyingSeg: "IDX_I", Expiry: selectedExpiry }), cache: "no-store",
+      body: JSON.stringify({ UnderlyingScrip: underlyingScrip, UnderlyingSeg: "IDX_I", Expiry: selectedExpiry }),
     });
     const payload = await this.readJson(response);
     const data = payload.status === "success" ? payload.data : null;
@@ -189,7 +187,7 @@ export class DhanMarketDataProvider implements MarketDataProvider {
     return normalizeMarketOptionChain({ provider: "dhan", underlying: normalizedUnderlying, expiry: selectedExpiry, expiries, spotPrice, rows });
   }
 
-  private headers(): HeadersInit {
+  private headers(): Record<string, string> {
     return {
       Accept: "application/json",
       "Content-Type": "application/json",
@@ -227,7 +225,7 @@ export class DhanMarketDataProvider implements MarketDataProvider {
     if (this.instrumentCache && this.instrumentCache.expiresAt > Date.now()) {
       return this.instrumentCache.rows;
     }
-    const response = await this.fetcher(DHAN_INSTRUMENT_MASTER, { headers: { Accept: "text/csv" }, cache: "no-store" });
+    const response = await this.fetcher(DHAN_INSTRUMENT_MASTER, { headers: { Accept: "text/csv" } });
     if (!response.ok) throw new MarketDataProviderError("dhan", "UPSTREAM_ERROR", response.status);
     const rows = parseCsv(await response.text()).map((row) => this.toInstrument(row)).filter((row): row is MarketInstrument => row !== null);
     this.instrumentCache = { rows, expiresAt: Date.now() + 60 * 60 * 1000 };

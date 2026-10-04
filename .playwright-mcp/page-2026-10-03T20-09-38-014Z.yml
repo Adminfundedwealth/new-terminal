@@ -1,0 +1,174 @@
+- generic [active] [ref=f5e21]:
+  - generic [ref=f5e24]:
+    - link "Skip to content" [ref=f5e26] [cursor=pointer]:
+      - /url: "#main"
+    - banner [ref=f5e29]:
+      - generic [ref=f5e30]:
+        - generic [ref=f5e31]:
+          - link "Supabase Back to organization home" [ref=f5e32] [cursor=pointer]:
+            - /url: /dashboard/org/ypbthqbzwxxedibeionn
+            - img "Supabase" [ref=f5e33]
+            - generic [ref=f5e34]: Back to organization home
+          - generic [ref=f5e35]:
+            - generic [ref=f5e39]:
+              - link "fundedwealth.ind@gmail.com's Org Pro" [ref=f5e40] [cursor=pointer]:
+                - /url: /dashboard/org/ypbthqbzwxxedibeionn
+                - generic [ref=f5e51]: fundedwealth.ind@gmail.com's Org
+                - generic [ref=f5e52]: Pro
+              - button "Show organizations" [ref=f5e53] [cursor=pointer]
+            - generic [ref=f5e58]:
+              - generic [ref=f5e62]:
+                - link "fundedwealth-terminal" [ref=f5e63] [cursor=pointer]:
+                  - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq
+                - button "Show organization projects" [ref=f5e68] [cursor=pointer]
+              - generic [ref=f5e76]:
+                - link "main Production" [ref=f5e77] [cursor=pointer]:
+                  - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq
+                  - generic "main" [ref=f5e78]
+                  - generic [ref=f5e79]: Production
+                - button "Show project branches" [ref=f5e80] [cursor=pointer]
+          - button "Connect" [ref=f5e86] [cursor=pointer]
+        - generic [ref=f5e91]:
+          - button "Feedback" [ref=f5e92] [cursor=pointer]
+          - generic [ref=f5e94]:
+            - button [ref=f5e95] [cursor=pointer]:
+              - paragraph [ref=f5e100]: Search...
+              - generic [ref=f5e102]: Ctrl K
+            - button "Help" [ref=f5e103] [cursor=pointer]
+            - button "Advisor Center" [ref=f5e110] [cursor=pointer]
+            - button "SQL Editor" [ref=f5e116] [cursor=pointer]
+            - button "AI Assistant" [ref=f5e121] [cursor=pointer]
+          - button [ref=f5e129] [cursor=pointer]:
+            - figure [ref=f5e131]
+    - generic [ref=f5e134]:
+      - generic [ref=f5e138]:
+        - navigation [ref=f5e140]:
+          - list [ref=f5e142]:
+            - listitem [ref=f5e143]:
+              - link "Project Overview" [ref=f5e144] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq
+            - listitem [ref=f5e147]:
+              - link "Table Editor" [ref=f5e148] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/editor
+            - listitem [ref=f5e151]:
+              - link "SQL Editor" [ref=f5e152] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/sql
+          - list [ref=f5e156]:
+            - listitem [ref=f5e157]:
+              - link "Database" [ref=f5e158] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/database/schemas
+            - listitem [ref=f5e163]:
+              - link "Authentication" [ref=f5e164] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/auth/users
+            - listitem [ref=f5e167]:
+              - link "Storage" [ref=f5e168] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/storage/files
+            - listitem [ref=f5e171]:
+              - link "Edge Functions" [ref=f5e172] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/functions
+            - listitem [ref=f5e178]:
+              - link "Realtime" [ref=f5e179] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/realtime/inspector
+          - list [ref=f5e183]:
+            - listitem [ref=f5e184]:
+              - link "Advisors" [ref=f5e185] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/advisors/security
+            - listitem [ref=f5e189]:
+              - link "Observability" [ref=f5e190] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/observability
+            - listitem [ref=f5e199]:
+              - link "Logs" [ref=f5e200] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/logs
+            - listitem [ref=f5e202]:
+              - link "Integrations" [ref=f5e203] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/integrations
+          - list [ref=f5e208]:
+            - listitem [ref=f5e209]:
+              - link "Project Settings" [ref=f5e210] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/settings/general
+        - button "Sidebar control" [ref=f5e216] [cursor=pointer]
+      - main [ref=f5e223]:
+        - generic [ref=f5e225]:
+          - generic [ref=f5e229]:
+            - heading "SQL Editor" [level=4] [ref=f5e231]
+            - generic [ref=f5e233]:
+              - generic [ref=f5e234]:
+                - generic [ref=f5e235]:
+                  - generic [ref=f5e237]:
+                    - generic [ref=f5e238]: Search queries
+                    - textbox "Search queries..." [ref=f5e239]
+                    - button [ref=f5e240]
+                  - button "Create a new query" [ref=f5e247] [cursor=pointer]
+                - button "Shared" [ref=f5e252]
+                - button "Favorites" [ref=f5e258]
+                - generic [ref=f5e263]:
+                  - button "PRIVATE" [expanded] [ref=f5e264]
+                  - generic [ref=f5e270]:
+                    - paragraph [ref=f5e271]: No private queries created yet
+                    - paragraph [ref=f5e272]: Queries will be automatically saved once you start writing in the editor
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic "dummy_query_1"
+                        - generic:
+                          - generic "dummy_query_2"
+                        - generic:
+                          - generic "dummy_query_3"
+                        - generic:
+                          - generic "dummy_query_4"
+                - button "Logs" [ref=f5e275]
+                - generic [ref=f5e280]:
+                  - button "Reference" [expanded] [ref=f5e281]
+                  - generic [ref=f5e285]:
+                    - link "templates" [ref=f5e286] [cursor=pointer]:
+                      - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/sql/templates
+                    - link "examples" [ref=f5e289] [cursor=pointer]:
+                      - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/sql/examples
+              - link "View running queries" [ref=f5e294] [cursor=pointer]:
+                - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/observability/connections
+          - separator [ref=f5e296]
+          - main [ref=f5e307]:
+            - generic [ref=f5e308]:
+              - generic [ref=f5e309]:
+                - generic [ref=f5e310]:
+                  - button "Collapse sidebar" [ref=f5e311]
+                  - tablist [ref=f5e316]:
+                    - generic [ref=f5e318]:
+                      - tab "New" [selected] [ref=f5e319] [cursor=pointer]
+                      - button "Close new tab" [ref=f5e325] [cursor=pointer]
+                - status [ref=f5e330]
+              - generic [ref=f5e332]:
+                - generic [ref=f5e333]:
+                  - generic [ref=f5e334]:
+                    - button "Enable Intellisense" [ref=f5e335] [cursor=pointer]
+                    - button "Add to favorites" [ref=f5e339] [cursor=pointer]
+                    - button "Prettify SQL" [ref=f5e343] [cursor=pointer]
+                  - generic [ref=f5e346]:
+                    - 'button "Query source: Database" [ref=f5e347] [cursor=pointer]':
+                      - generic [ref=f5e353]: Database
+                    - generic [ref=f5e357]:
+                      - button "Save" [disabled]:
+                        - generic [aria-hidden]:
+                          - generic: Ctrl S
+                      - button "Run" [ref=f5e358] [cursor=pointer]:
+                        - generic [ref=f5e361]: Ctrl ↵
+                - generic [ref=f5e362]:
+                  - code [ref=f5e370]:
+                    - generic [ref=f5e371]:
+                      - generic [ref=f5e374]: "1"
+                      - textbox "Editor content" [ref=f5e384]
+                      - generic: Hit CTRL+SHIFT+K to generate query or just start typing
+                  - separator [ref=f5e385]
+                  - generic [ref=f5e396]:
+                    - tablist [ref=f5e397]:
+                      - generic [ref=f5e398]:
+                        - tab "Results" [selected] [ref=f5e399] [cursor=pointer]
+                        - tab "Chart" [ref=f5e401] [cursor=pointer]
+                    - paragraph [ref=f5e404]:
+                      - text: Click
+                      - code [ref=f5e405]: Run
+                      - text: to execute your query
+  - alert [ref=f5e406]: SQL Editor | Supabase
+  - generic [ref=f5e407]:
+    - alert
+    - alert

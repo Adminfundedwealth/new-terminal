@@ -1,0 +1,221 @@
+- generic [active] [ref=f4e1]:
+  - alert [ref=f4e25]: Dashboard — Terminal OS
+  - generic [ref=f4e26]:
+    - complementary [ref=f4e27]:
+      - generic [ref=f4e32]:
+        - generic [ref=f4e33]: FundedWealth
+        - generic [ref=f4e34]: Terminal OS
+      - navigation "Main navigation" [ref=f4e38]:
+        - generic [ref=f4e39]:
+          - paragraph [ref=f4e40]: Overview
+          - list [ref=f4e41]:
+            - listitem [ref=f4e42]:
+              - link "Dashboard" [ref=f4e43] [cursor=pointer]:
+                - /url: /dashboard
+        - generic [ref=f4e49]:
+          - paragraph [ref=f4e50]: Trading
+          - list [ref=f4e51]:
+            - listitem [ref=f4e52]:
+              - link "Trading Accounts" [ref=f4e53] [cursor=pointer]:
+                - /url: /trading-accounts
+            - listitem [ref=f4e58]:
+              - link "Orders" [ref=f4e59] [cursor=pointer]:
+                - /url: /orders
+            - listitem [ref=f4e63]:
+              - link "Executions" [ref=f4e64] [cursor=pointer]:
+                - /url: /executions
+            - listitem [ref=f4e67]:
+              - link "Positions" [ref=f4e68] [cursor=pointer]:
+                - /url: /positions
+        - generic [ref=f4e72]:
+          - paragraph [ref=f4e73]: Risk
+          - list [ref=f4e74]:
+            - listitem [ref=f4e75]:
+              - link "Risk Management" [ref=f4e76] [cursor=pointer]:
+                - /url: /risk
+            - listitem [ref=f4e79]:
+              - link "Risk Events" [ref=f4e80] [cursor=pointer]:
+                - /url: /risk/events
+            - listitem [ref=f4e83]:
+              - link "Account Metrics" [ref=f4e84] [cursor=pointer]:
+                - /url: /risk/metrics
+            - listitem [ref=f4e88]:
+              - link "Rule Management" [ref=f4e89] [cursor=pointer]:
+                - /url: /rules
+            - listitem [ref=f4e92]:
+              - link "Daily Performance" [ref=f4e93] [cursor=pointer]:
+                - /url: /performance
+        - generic [ref=f4e96]:
+          - paragraph [ref=f4e97]: Market
+          - list [ref=f4e98]:
+            - listitem [ref=f4e99]:
+              - link "Instruments" [ref=f4e100] [cursor=pointer]:
+                - /url: /instruments
+            - listitem [ref=f4e102]:
+              - link "Market Data" [ref=f4e103] [cursor=pointer]:
+                - /url: /market-data
+            - listitem [ref=f4e106]:
+              - link "Providers" [ref=f4e107] [cursor=pointer]:
+                - /url: /providers
+            - listitem [ref=f4e111]:
+              - link "WebSocket" [ref=f4e112] [cursor=pointer]:
+                - /url: /websocket
+        - generic [ref=f4e119]:
+          - paragraph [ref=f4e120]: User Data
+          - list [ref=f4e121]:
+            - listitem [ref=f4e122]:
+              - link "Watchlists" [ref=f4e123] [cursor=pointer]:
+                - /url: /watchlists
+            - listitem [ref=f4e126]:
+              - link "Alerts" [ref=f4e127] [cursor=pointer]:
+                - /url: /alerts
+            - listitem [ref=f4e131]:
+              - link "Journal" [ref=f4e132] [cursor=pointer]:
+                - /url: /journal
+        - generic [ref=f4e136]:
+          - paragraph [ref=f4e137]: Operations
+          - list [ref=f4e138]:
+            - listitem [ref=f4e139]:
+              - link "Activity Log" [ref=f4e140] [cursor=pointer]:
+                - /url: /activity
+            - listitem [ref=f4e145]:
+              - link "System Health" [ref=f4e146] [cursor=pointer]:
+                - /url: /system-health
+            - listitem [ref=f4e150]:
+              - link "Audit Log" [ref=f4e151] [cursor=pointer]:
+                - /url: /audit
+        - generic [ref=f4e156]:
+          - paragraph [ref=f4e157]: Administration
+          - list [ref=f4e158]:
+            - listitem [ref=f4e159]:
+              - link "Broker API Keys" [ref=f4e160] [cursor=pointer]:
+                - /url: /broker
+            - listitem [ref=f4e163]:
+              - link "Employees" [ref=f4e164] [cursor=pointer]:
+                - /url: /employees
+            - listitem [ref=f4e177]:
+              - link "Permissions" [ref=f4e178] [cursor=pointer]:
+                - /url: /permissions
+            - listitem [ref=f4e182]:
+              - link "Terminal Settings" [ref=f4e183] [cursor=pointer]:
+                - /url: /settings
+    - generic [ref=f4e187]:
+      - banner [ref=f4e188]:
+        - generic [ref=f4e189]:
+          - generic [ref=f4e190]: Terminal OS
+          - textbox "Search Terminal OS" [ref=f4e195]:
+            - /placeholder: Search accounts, orders…
+        - generic [ref=f4e196]:
+          - generic [ref=f4e197]: System Online
+          - button "Notifications" [ref=f4e201] [cursor=pointer]
+          - button "Employee menu" [ref=f4e203] [cursor=pointer]:
+            - generic [ref=f4e208]:
+              - paragraph [ref=f4e209]: adminfundedwealth@gmail.com
+              - paragraph [ref=f4e210]: Super Admin
+      - main [ref=f4e213]:
+        - generic [ref=f4e215]:
+          - generic [ref=f4e217]:
+            - heading "Dashboard" [level=1] [ref=f4e218]
+            - paragraph [ref=f4e219]: FundedWealth Terminal OS — operational overview
+          - generic [ref=f4e220]:
+            - generic [ref=f4e222]:
+              - paragraph [ref=f4e224]: Total Accounts
+              - generic [ref=f4e230]: "2"
+              - paragraph [ref=f4e231]: All trading accounts
+            - generic [ref=f4e233]:
+              - paragraph [ref=f4e235]: Active Accounts
+              - generic [ref=f4e240]: "2"
+              - paragraph [ref=f4e241]: Currently active
+            - generic [ref=f4e243]:
+              - paragraph [ref=f4e245]: Orders Today
+              - generic [ref=f4e250]: "0"
+              - paragraph [ref=f4e251]: Orders placed today
+            - generic [ref=f4e253]:
+              - paragraph [ref=f4e255]: Executions Today
+              - generic [ref=f4e259]: "0"
+              - paragraph [ref=f4e260]: Filled today
+            - generic [ref=f4e262]:
+              - paragraph [ref=f4e264]: Open Positions
+              - generic [ref=f4e269]: "1"
+              - paragraph [ref=f4e270]: Currently open
+            - generic [ref=f4e272]:
+              - paragraph [ref=f4e274]: Total Exposure
+              - generic [ref=f4e278]: ₹100.00
+              - paragraph [ref=f4e279]: Open position value
+            - generic [ref=f4e281]:
+              - paragraph [ref=f4e283]: Risk Events Today
+              - generic [ref=f4e287]: "0"
+              - paragraph [ref=f4e288]: Risk alerts today
+            - generic [ref=f4e290]:
+              - paragraph [ref=f4e292]: System
+              - generic [ref=f4e296]: Online
+              - paragraph [ref=f4e297]: Database health
+          - generic [ref=f4e298]:
+            - generic [ref=f4e299]:
+              - heading "Recent Accounts" [level=2] [ref=f4e300]
+              - table "Recent trading accounts" [ref=f4e302]:
+                - rowgroup [ref=f4e303]:
+                  - row [ref=f4e304]:
+                    - columnheader "Account" [ref=f4e305]
+                    - columnheader "Status" [ref=f4e306]
+                    - columnheader "Balance" [ref=f4e307]
+                    - columnheader "Created" [ref=f4e308]
+                - rowgroup [ref=f4e309]:
+                  - row [ref=f4e310]:
+                    - cell [ref=f4e311]:
+                      - link:
+                        - /url: /trading-accounts/d6b00000-0000-4000-8000-000000000002
+                      - paragraph [ref=f4e312]: synthetic
+                    - cell "active" [ref=f4e313]
+                    - cell "₹1,00,000.00" [ref=f4e315]
+                    - cell "1d ago" [ref=f4e316]
+                  - row [ref=f4e317]:
+                    - cell [ref=f4e318]:
+                      - link "FW-LOCAL-TEST" [ref=f4e319] [cursor=pointer]:
+                        - /url: /trading-accounts/93196367-d48f-47d7-87fa-6f297e7350b0
+                      - paragraph [ref=f4e320]: SIMULATED
+                    - cell "active" [ref=f4e321]
+                    - cell "₹1,00,000.00" [ref=f4e323]
+                    - cell "11d ago" [ref=f4e324]
+            - generic [ref=f4e325]:
+              - heading "Recent Orders" [level=2] [ref=f4e326]
+              - table "Recent orders" [ref=f4e328]:
+                - rowgroup [ref=f4e329]:
+                  - row [ref=f4e330]:
+                    - columnheader "Symbol" [ref=f4e331]
+                    - columnheader "Side" [ref=f4e332]
+                    - columnheader "Status" [ref=f4e333]
+                    - columnheader "Qty" [ref=f4e334]
+                    - columnheader "Time" [ref=f4e335]
+                - rowgroup [ref=f4e336]:
+                  - row [ref=f4e337]:
+                    - cell [ref=f4e338]:
+                      - link "D6BSYNTH" [ref=f4e339] [cursor=pointer]:
+                        - /url: /orders/28a945f5-73ff-48be-a78d-36e8024fe959
+                    - cell "buy" [ref=f4e340]
+                    - cell "filled" [ref=f4e341]
+                    - cell "1" [ref=f4e343]
+                    - cell "1d ago" [ref=f4e344]
+            - generic [ref=f4e345]:
+              - heading "Recent Risk Events" [level=2] [ref=f4e346]
+              - generic [ref=f4e347]:
+                - heading "No risk events" [level=3] [ref=f4e351]
+                - paragraph [ref=f4e352]: Risk events will appear here when triggered.
+          - generic [ref=f4e353]:
+            - heading "System Health" [level=2] [ref=f4e354]
+            - generic [ref=f4e355]:
+              - generic [ref=f4e361]:
+                - paragraph [ref=f4e362]: Database
+                - generic [ref=f4e363]: Healthy
+              - generic [ref=f4e369]:
+                - paragraph [ref=f4e370]: Market Data
+                - generic [ref=f4e371]: Unknown
+              - generic [ref=f4e381]:
+                - paragraph [ref=f4e382]: WebSocket
+                - generic [ref=f4e383]: Unknown
+              - generic [ref=f4e389]:
+                - paragraph [ref=f4e390]: Order Service
+                - generic [ref=f4e391]: Unknown
+              - generic [ref=f4e397]:
+                - paragraph [ref=f4e398]: Risk Service
+                - generic [ref=f4e399]: Unknown

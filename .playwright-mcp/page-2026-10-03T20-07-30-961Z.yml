@@ -1,0 +1,237 @@
+- generic:
+  - generic:
+    - generic:
+      - generic:
+        - generic [aria-hidden]:
+          - link:
+            - /url: "#main"
+            - generic: Skip to content
+        - generic [aria-hidden]:
+          - banner:
+            - generic:
+              - generic:
+                - link:
+                  - /url: /dashboard/org/ypbthqbzwxxedibeionn
+                  - generic: Back to organization home
+                - generic:
+                  - generic:
+                    - link:
+                      - /url: /dashboard/org/ypbthqbzwxxedibeionn
+                      - generic: fundedwealth.ind@gmail.com's Org
+                      - generic: Pro
+                    - button
+                  - generic:
+                    - generic:
+                      - link:
+                        - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq
+                        - generic: fundedwealth-terminal
+                      - button
+                - generic:
+                  - button:
+                    - generic: Connect
+              - generic:
+                - button:
+                  - generic: Feedback
+                - generic:
+                  - button:
+                    - generic:
+                      - paragraph: Search...
+                    - generic [aria-hidden]:
+                      - generic: Ctrl K
+                  - button:
+                    - generic: Help
+                  - generic:
+                    - button:
+                      - generic: Advisor Center
+                  - button:
+                    - generic: SQL Editor
+                  - button:
+                    - generic: AI Assistant
+                - button:
+                  - generic:
+                    - figure
+        - generic:
+          - generic [aria-hidden]:
+            - generic:
+              - generic:
+                - generic:
+                  - navigation:
+                    - generic:
+                      - list:
+                        - listitem:
+                          - link:
+                            - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq
+                        - listitem:
+                          - link:
+                            - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/editor
+                        - listitem:
+                          - link:
+                            - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/sql
+                    - generic:
+                      - list:
+                        - listitem:
+                          - link:
+                            - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/database/schemas
+                        - listitem:
+                          - link:
+                            - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/auth/users
+                        - listitem:
+                          - link:
+                            - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/storage/files
+                        - listitem:
+                          - link:
+                            - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/functions
+                        - listitem:
+                          - link:
+                            - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/realtime/inspector
+                    - generic:
+                      - list:
+                        - listitem:
+                          - link:
+                            - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/advisors/security
+                            - generic: Advisors
+                        - listitem:
+                          - link:
+                            - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/observability
+                        - listitem:
+                          - link:
+                            - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/logs
+                        - listitem:
+                          - link:
+                            - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/integrations
+                    - generic:
+                      - list:
+                        - listitem:
+                          - link:
+                            - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/settings/general
+                - generic:
+                  - generic:
+                    - button
+          - generic:
+            - generic:
+              - generic:
+                - main:
+                  - generic:
+                    - generic:
+                      - generic [aria-hidden]:
+                        - generic:
+                          - generic:
+                            - generic:
+                              - generic:
+                                - heading [level=4]: SQL Editor
+                              - generic:
+                                - generic:
+                                  - generic:
+                                    - generic:
+                                      - generic:
+                                        - generic:
+                                          - generic: Search queries
+                                          - textbox:
+                                            - /placeholder: Search queries...
+                                          - button
+                                      - button
+                                    - generic:
+                                      - button:
+                                        - generic: Shared
+                                    - generic:
+                                      - button:
+                                        - generic: Favorites
+                                    - generic:
+                                      - button [expanded]:
+                                        - generic: PRIVATE
+                                    - generic:
+                                      - button:
+                                        - generic: Logs
+                                    - generic:
+                                      - button [expanded]:
+                                        - generic: Reference
+                                      - generic:
+                                        - link:
+                                          - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/sql/templates
+                                          - text: templates
+                                        - link:
+                                          - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/sql/examples
+                                          - text: examples
+                                  - generic:
+                                    - link:
+                                      - /url: /dashboard/project/zxqwtqlbrlegwdodjhiq/observability/connections
+                                      - generic: View running queries
+                      - separator [aria-hidden]
+                      - generic:
+                        - generic:
+                          - main:
+                            - generic:
+                              - generic:
+                                - generic [aria-hidden]:
+                                  - button:
+                                    - generic: Collapse sidebar
+                                  - tablist:
+                                    - generic:
+                                      - generic:
+                                        - tab [selected]:
+                                          - generic: New
+                                        - button
+                                - status
+                              - generic [aria-hidden]:
+                                - generic:
+                                  - generic:
+                                    - generic:
+                                      - button
+                                      - button
+                                      - button
+                                    - generic:
+                                      - button:
+                                        - generic: Database
+                                      - generic:
+                                        - button [disabled]:
+                                          - generic: Save
+                                          - generic [aria-hidden]:
+                                            - generic: Ctrl S
+                                        - button:
+                                          - generic: Run
+                                          - generic [aria-hidden]:
+                                            - generic: Ctrl ↵
+                                  - generic:
+                                    - generic:
+                                      - generic:
+                                        - generic:
+                                          - generic:
+                                            - generic:
+                                              - generic:
+                                                - generic:
+                                                  - code:
+                                                    - generic:
+                                                      - generic [aria-hidden]:
+                                                        - generic [aria-hidden]:
+                                                          - generic: "1"
+                                                      - textbox
+                                                      - generic: Hit CTRL+SHIFT+K to generate query or just start typing
+                                    - separator
+                                    - generic:
+                                      - generic:
+                                        - generic:
+                                          - tablist:
+                                            - generic:
+                                              - tab [selected]:
+                                                - generic: Results
+                                              - tab:
+                                                - generic: Chart
+                                          - generic:
+                                            - paragraph:
+                                              - text: Click
+                                              - code: Run
+                                              - text: to execute your query
+  - generic:
+    - alert: SQL Editor | Supabase
+  - dialog [ref=f5e2]:
+    - generic [ref=f5e3]:
+      - heading "Snippets no longer save automatically" [level=2] [ref=f5e4]
+      - paragraph [ref=f5e5]: The SQL Editor now saves your snippets only when you save them.
+    - list [ref=f5e8]:
+      - listitem [ref=f5e9]:
+        - text: Save with the Save button next to Run, or with
+        - generic [ref=f5e10]: Ctrl S
+      - listitem [ref=f5e11]: Tabs with unsaved edits show a dot
+      - listitem [ref=f5e12]: Closing a tab with unsaved edits discards them
+    - button "Understood" [active] [ref=f5e14] [cursor=pointer]
+    - button "Close" [ref=f5e16]
