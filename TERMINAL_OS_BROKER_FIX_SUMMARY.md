@@ -24,8 +24,8 @@ The Terminal OS broker connection test functionality has been reviewed and found
 ❌ **Environment Configuration:**
 1. Supabase pgcrypto extension must be enabled
 2. RPC functions for encryption/decryption must be deployed
-3. `BROKER_ENCRYPTION_KEY` must be set in Vercel environment
-4. Terminal OS must be redeployed
+3. `BROKER_ENCRYPTION_KEY` must be set in the Hostinger Terminal OS runtime environment
+4. Terminal OS must be restarted or redeployed from Hostinger
 
 **Estimated Time:** 30-45 minutes
 
@@ -49,16 +49,15 @@ The Terminal OS broker connection test functionality has been reviewed and found
    - Run the SQL from: `.agents/tasks/terminal-os-fix/db-fix.sql`
    - Verify: `SELECT * FROM pg_proc WHERE proname LIKE '%broker_credentials%';`
 
-3. **Set encryption key in Vercel:**
-   - Dashboard: https://vercel.com/dashboard
-   - Project: Terminal OS
-   - Settings → Environment Variables
+3. **Set encryption key in Hostinger:**
+   - Open the Hostinger hPanel site for Terminal OS
+   - Open the Node.js application/runtime environment settings
    - Add: `BROKER_ENCRYPTION_KEY` (get value from existing .env.local or secure store)
    - Important: Do NOT use `NEXT_PUBLIC_` prefix
 
-4. **Redeploy Terminal OS:**
-   - Vercel → Terminal OS → Deployments
-   - Click "Redeploy" on latest deployment
+4. **Restart/redeploy Terminal OS:**
+   - Apply the updated runtime environment in Hostinger
+   - Restart or redeploy the Terminal OS application
 
 5. **Test:**
    - Go to: https://terminal-os.fundedwealth.com/broker-management/api-keys
@@ -74,11 +73,11 @@ The Terminal OS broker connection test functionality has been reviewed and found
 
 ### Current Approach (Option A - Quick Fix)
 
-**Decision:** Keep broker business logic in Terminal OS (Vercel) temporarily to fix production quickly.
+**Decision:** Keep broker business logic in the Hostinger-hosted Terminal OS runtime.
 
 **Flow:**
 ```
-Terminal OS (Vercel) 
+Terminal OS (Hostinger)
   → Query Supabase 
   → Decrypt credentials 
   → Call Dhan API 
@@ -87,7 +86,7 @@ Terminal OS (Vercel)
 
 **Status:** ✅ Works correctly (pending environment setup)
 
-**Trade-off:** Broker logic runs on Vercel serverless instead of Railway backend (architectural debt)
+**Trade-off:** Broker logic runs in the Hostinger Terminal OS runtime instead of the Railway backend (architectural debt)
 
 ---
 
@@ -97,7 +96,7 @@ Terminal OS (Vercel)
 
 **Flow:**
 ```
-Terminal OS (Vercel - thin proxy) 
+Terminal OS (Hostinger - thin proxy)
   → Railway backend 
   → Supabase 
   → Dhan API
@@ -113,8 +112,8 @@ Terminal OS (Vercel - thin proxy)
 
 | Finding | Status | Resolution |
 |---|---|---|
-| Broker logic on Vercel | ✅ ACCEPTED | Temporary compromise (Option A approach) |
-| Credential decryption on Vercel | ✅ ACCEPTED | Same as above |
+| Broker logic on Hostinger | ✅ ACCEPTED | Temporary compromise (Option A approach) |
+| Credential decryption on Hostinger | ✅ ACCEPTED | Same as above |
 | Railway backend unused | ✅ DOCUMENTED | Future work - requires finding Railway source code |
 | BROKER_ENCRYPTION_KEY missing | ✅ DOCUMENTED | Manual action required (cannot set from agent) |
 | Kite OAuth flow missing | ⚠️ DEFERRED | Separate follow-up task |
@@ -178,7 +177,7 @@ Terminal OS (Vercel - thin proxy)
 **If manual setup fails:**
 
 1. Check access to:
-   - Vercel (Terminal OS project)
+   - Hostinger (Terminal OS site/runtime)
    - Supabase (zxqwtqlbrlegwdodjhiq)
    - Credential store (for BROKER_ENCRYPTION_KEY)
 
@@ -186,7 +185,7 @@ Terminal OS (Vercel - thin proxy)
    - `C:\Users\jitro\TERMINAL-OS\.env.local` (may contain BROKER_ENCRYPTION_KEY)
 
 3. Verify deployment:
-   - Check Vercel deployment logs for errors
+   - Check Hostinger application logs for errors
    - Check Supabase logs for RPC call failures
 
 **If Dhan credentials are invalid:**

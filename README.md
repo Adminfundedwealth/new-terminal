@@ -828,7 +828,7 @@ This means you're hitting Dhan's rate limit. The proxy caches responses to minim
 - [ ] GEX (Gamma Exposure) analysis
 - [ ] FII/DII activity dashboard
 - [ ] Mobile-responsive layout improvements
-- [ ] Production deployment guide (Vercel + VPS proxy)
+- [ ] Production deployment guide (Hostinger + proxy service)
 
 ### 🤔 Known Gaps (Help Wanted!)
 
@@ -841,24 +841,24 @@ This means you're hitting Dhan's rate limit. The proxy caches responses to minim
 
 ## 🌐 Deploying to Production
 
-### Deploy on Vercel / Netlify (Frontend Only)
+### Deploy the Frontend on Hostinger
 
 ```bash
 npm run build
 ```
 
-Upload the `dist/` folder to any static hosting (Vercel, Netlify, GitHub Pages).
+Publish the generated `dist/` folder using the Hostinger website's deployment method.
 
-> **Note:** Without the proxy server, live data won't work. The frontend will show empty states gracefully. For full functionality, you need the proxy running somewhere.
+> **Note:** Without the proxy server, live data won't work. The frontend will show empty states gracefully. For full functionality, keep the proxy service running and configure `VITE_PROXY_URL` for the production build.
 
 ### Deploy Full Stack (Frontend + Proxy)
 
 For a complete deployment with live data:
 
-1. Deploy the **proxy server** (`proxy-server.mjs`) on a VPS (DigitalOcean, AWS, Railway, Render, etc.)
+1. Deploy the **proxy server** (`proxy-server.mjs`) as a Node.js service on Hostinger or the configured backend host.
 2. Set `VITE_PROXY_URL` in `.env` to your proxy's public URL
-3. Deploy the frontend on Vercel/Netlify
-4. Set environment variables on the VPS: `DHAN_CLIENT_ID`, `DHAN_ACCESS_TOKEN`
+3. Build and publish the frontend on Hostinger
+4. Set the required server-side environment variables in the proxy service's hosting configuration.
 
 ---
 

@@ -75,7 +75,7 @@ The system has strong structural foundations — a fully durable execution engin
 | P45 | Broker Certification | ❌ | All broker capabilities `not_verified`/`not_supported`; worker hard-locked to mock-safe |
 | P46 | Market Data Compliance | ❌ | No vendor agreement, display rule, redistribution, or storage policy documented |
 | P47 | Compliance / Legal | ❌ | No SEBI/exchange regulatory documentation, KYC flow, or legal review documented |
-| P48 | Production Deployment | 🟡 | D8 worker on Railway confirmed healthy; Terminal OS on Vercel confirmed HTTP 200; Customer Terminal Vercel unconfirmed |
+| P48 | Production Deployment | 🟡 | Hostinger domains are live; Railway services are confirmed in the prior audit; no end-to-end production certification is recorded |
 | P49 | CI/CD | ❌ | `ci.yml` exists with tsc/lint/test/build gates; no CD step, no smoke test, no rollback procedure |
 | P50 | Production Readiness Gates | ❌ | 0 of 50 phases fully COMPLETE; 11 phases explicitly NOT COMPLETE; all 10 audit domains have blockers |
 
@@ -249,21 +249,21 @@ The system has strong structural foundations — a fully durable execution engin
 
 | Service | URL | HTTP | Health Status | Production-Live? |
 |---|---|:---:|---|:---:|
-| Terminal OS (Vercel) | `https://terminal-os.fundedwealth.com` | ✅ 200 | Auth wall active, Next.js rendering | ✅ Yes |
+| Terminal OS (Hostinger) | `https://terminal-os.fundedwealth.com` | ✅ 307 | Hostinger LiteSpeed; redirects to login | ✅ Yes |
 | d6b-execution-worker (Railway) | `https://d6b-execution-worker-production.up.railway.app/healthz` | ✅ 200 | READY — DB connected, claim_loop running | ❌ Mock-safe only |
 | terminal-os-realtime (Railway) | `https://terminal-os-realtime-production.up.railway.app/healthz` | ✅ 200 | `{ "status": "ok", "provider_mode": "mock" }` | ❌ Mock only |
 | new-terminal (Railway) | `https://new-terminal-production.up.railway.app/health` | ✅ 200 | ok, uptime 70+ hrs, `dhanConnected: false` | ❌ Dhan WS down |
 | Redis (Railway internal) | Internal `redis-volume` | ✅ Online | Inferred from worker health | ✅ Yes |
-| Customer Terminal (Vercel) | Not confirmed in audit | ❓ Unverified | Build passes locally | ❓ Unknown |
+| Customer Terminal (Hostinger) | `https://charts.fundedwealth.com` | ✅ 200 | Hostinger CDN; SPA served | ✅ Yes |
 
 ### CI/CD
 - `ci.yml` (GitHub Actions) covers: `npm ci` → `tsc --noEmit` → `npm run lint` → `npm run test` → `npm run build`
-- **No CD step** — Railway/Vercel deployments triggered by their own GitHub integrations, not the CI workflow
+- **No CD step** — hosting deployments are not triggered by the CI workflow
 - No post-deploy smoke test
 - No secrets validation step
 - No rollback procedure documented
 
-**Deployment Overall: PARTIAL** — all 4 confirmed services are online; all 3 Railway services run in mock/test mode; Customer Terminal Vercel deployment unconfirmed.
+**Deployment Overall: PARTIAL** — both Hostinger sites respond, while the Railway services and end-to-end production data path remain uncertified.
 
 ---
 
@@ -406,7 +406,7 @@ No regressions from prior baselines.
 **Impact:** No live market quotes, no live option chain updates, no live P&L updates reach browser clients. The trading UI displays stale or zero data.  
 **Exact fix required:**
 1. Set `REALTIME_PROVIDER_MODE=live` and connect Dhan/Kite broker credentials in the realtime service Railway environment
-2. Set `VITE_REALTIME_URL` in the Customer Terminal Vercel/production environment to the deployed realtime service WSS URL
+2. Set `VITE_REALTIME_URL` in the Customer Terminal Hostinger build environment to the deployed realtime service WSS URL
 3. Reconnect the Dhan WebSocket in the `new-terminal` proxy service
 
 ---
@@ -446,10 +446,10 @@ No regressions from prior baselines.
 
 ---
 
-### B12 — Customer Terminal Vercel Deployment Unconfirmed
-**Description:** The Customer Terminal Vite SPA build passes locally and `dist/` artifacts are generated. However, no Vercel deployment URL was confirmed during audit. `VITE_TERMINAL_OS_URL` is empty in `.env.example`.  
+### B12 — Customer Terminal Production Build Configuration Unverified
+**Description:** The Customer Terminal is served at `https://charts.fundedwealth.com` from Hostinger, but the current production build environment variables have not been verified. `VITE_TERMINAL_OS_URL` is empty in `.env.example`.
 **Impact:** Without a confirmed production URL, the Customer Terminal may not be accessible to real customers. If deployed without `VITE_TERMINAL_OS_URL` set, every order submission, account context load, and market data call will fail immediately.  
-**Exact fix required:** Confirm the Vercel deployment URL and verify all required `VITE_*` environment variables are set at build time in the Vercel project settings.
+**Exact fix required:** Verify the required `VITE_*` variables in the Hostinger build/deployment configuration.
 
 ---
 
@@ -493,7 +493,7 @@ No regressions from prior baselines.
 
 18. **D6B mock provider functions in a production migration** — `d6b_mock_provider_submit`, `d6b_mock_provider_lookup`, `d6b_mock_provider_consume_crash` are synthetic test infrastructure in a production migration. Confirm this is acceptable or isolate behind a feature flag.
 
-19. **No post-deploy smoke test in CI** — Railway/Vercel deployments are not gated by a health check after deploy. A broken deploy could go undetected.
+19. **No post-deploy smoke test in CI** — Hostinger/Railway deployments are not gated by a health check after deploy. A broken deploy could go undetected.
 
 20. **No no global `window.unhandledrejection` listener** — unhandled promise rejections (e.g., from `void somePromise()` patterns) are silently swallowed in production.
 
@@ -517,7 +517,7 @@ The following must be completed before production readiness can be declared. Ord
 7. **Set `REALTIME_PROVIDER_MODE=live`** and connect broker WS feed in realtime service (B6)
 8. **Reconnect Dhan WebSocket** in `new-terminal` proxy (B6)
 9. **Implement or migrate Kite proxy handler** (B9)
-10. **Confirm Customer Terminal Vercel deployment** and set all `VITE_*` env vars (B12)
+10. **Verify Customer Terminal Hostinger build configuration** and set all required `VITE_*` variables (B12)
 
 ### Tier 3 — Financial Accuracy (required for correct P&L, challenge compliance, and risk)
 
@@ -559,7 +559,7 @@ Scores reflect the fraction of production requirements that are currently met (0
 | **Broker/Market Data** | 20/100 | Dhan and Kite server paths implemented but not live-certified; 5 of 7 brokers are pure stubs; no orders can be placed; Kite proxy broken |
 | **Execution** | 55/100 | D8 execution engine is production-grade for mock-safe synthetic path; real broker adapter is entirely absent; architecture is sound |
 | **Realtime** | 40/100 | Architecture and service deployment are correct; `provider_mode: mock` hardcoded; frontend not wired; Dhan WS disconnected |
-| **Deployment** | 50/100 | All 4 confirmed services online with HTTP 200; CI pipeline exists; all Railway services in mock/test mode; no CD/smoke test; Customer Terminal Vercel unconfirmed |
+| **Deployment** | 50/100 | Hostinger sites respond; CI pipeline exists; Railway services and live data chain remain in mock/test mode; no CD/smoke test |
 | **Security** | 50/100 | RLS, RBAC, and credential masking are solid; in-memory rate limiting, `VITE_` prefix risk, wildcard CORS, no WAF/SAST/pentest, audit log absent |
 | | | |
 | **Overall** | **22/100** | No single end-to-end production workflow involving real customers and real broker orders has been certified. All 10 domains have blockers. |

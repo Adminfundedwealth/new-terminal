@@ -4,7 +4,7 @@
 
 D6-A adds independent hardening primitives and regression infrastructure. D6-B now connects worker-side error classification, bounded provider calls, submission markers, provider lookup recovery, bounded safe retry decisions, structured telemetry, and the D4 PostgreSQL RPC contract. D2 account-scoped command idempotency and D3 owner-scoped RLS remain authoritative and unchanged. No live broker adapter is enabled, and all new provider tests use the mock-safe adapter.
 
-The checked-in repository does not include a deployed execution-worker entrypoint: the Docker image starts the market-data proxy, and the Vercel configuration serves the SPA. `SupabaseExecutionRepository` therefore accepts an injected service-role client, but this workspace does not demonstrate a running worker deployment. The in-memory repository tests simulate worker recreation but are not PostgreSQL crash/restart certification.
+The checked-in repository does not include a deployed execution-worker entrypoint: the Docker image starts the market-data proxy, while the production frontend is hosted on Hostinger. `SupabaseExecutionRepository` therefore accepts an injected service-role client, but this workspace does not demonstrate a running worker deployment. The in-memory repository tests simulate worker recreation but are not PostgreSQL crash/restart certification.
 
 ## Implemented controls
 
@@ -32,6 +32,6 @@ The checked-in repository does not include a deployed execution-worker entrypoin
 ## Explicitly pending
 
 - PostgreSQL: execute the additive migration and D4/D6 SQL assertions in a local or staging PostgreSQL environment; run concurrent account-scoped idempotency tests and a database-backed worker restart test. This workspace has no Supabase CLI or Docker runtime.
-- Runtime: add and deploy a dedicated execution-worker process that constructs the repository with a server-only service-role client and uses only the mock provider in synthetic verification. No such process is configured in the checked-in Docker or Vercel deployment.
+- Runtime: add and deploy a dedicated execution-worker process that constructs the repository with a server-only service-role client and uses only the mock provider in synthetic verification. No such process is configured in the checked-in Docker deployment.
 - Security/operations: enforce bounded rate limiting on the actual order ingress, deploy authenticated readiness probes for database/worker/provider/realtime/queue state, and verify cross-account behavior against PostgreSQL.
 - Production: no migration or deployment was performed as part of local test work. Production verification still requires the deployed worker/runtime, synthetic admin scope, external monitoring, backup/restore drill, and production-equivalent load results.
