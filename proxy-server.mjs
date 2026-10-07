@@ -290,7 +290,9 @@ async function dhanFetch(path, body, method = "POST", customClientId, customAcce
   const res = await fetch(url, options);
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`Dhan API error [${res.status}]: ${errText}`);
+    const error = new Error(`Dhan API error [${res.status}]: ${errText}`);
+    error.upstreamStatus = res.status;
+    throw error;
   }
   return res.json();
 }
@@ -374,9 +376,11 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
           return { data: afterHoursResult, cacheHit: false };
         }
         
-        // No last-good — return the empty result (not a 500!)
-        setCache(cacheKey, result, 30000); // Cache empty result for 30s to avoid hammering
-        return { data: result, cacheHit: false };
+        const error = new Error(
+          `Dhan returned an empty option chain for ${symbol} and no cached snapshot is available`
+        );
+        error.upstreamStatus = 503;
+        throw error;
       } catch (e) {
         // Dhan API failed — try last-good cache
         const lastGood = getLastGood(lastGoodKey);
@@ -385,13 +389,8 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
           const afterHoursResult = { ...lastGood.data, afterHours: true, cachedAt: lastGood.timestamp };
           return { data: afterHoursResult, cacheHit: false };
         }
-        // No cache — return clean empty response instead of 500
-        const is429 = e.message.includes("429") || e.message.includes("Too many");
-        const cacheTTL = is429 ? 120000 : 60000; // 2min for rate-limits, 1min for others
-        console.log(`  ⚠️ OC unavailable for ${symbol} (no cache): ${e.message}${is429 ? " [rate-limited, backing off 2min]" : ""}`);
-        const emptyResult = { status: "success", data: { oc: {} }, afterHours: true };
-        setCache(cacheKey, emptyResult, cacheTTL);
-        return { data: emptyResult, cacheHit: false };
+        console.log(`  ⚠️ OC unavailable for ${symbol} (no cache): ${e.message}`);
+        throw e;
       }
     }
 
@@ -1644,7 +1643,12 @@ ${tokenData.data.access_token}
     }
   } catch (err) {
     console.error(`[Proxy Error] ${url.pathname}:`, err.message);
-    res.writeHead(500);
+    const status = Number.isInteger(err?.upstreamStatus) &&
+      err.upstreamStatus >= 400 &&
+      err.upstreamStatus <= 599
+      ? err.upstreamStatus
+      : 500;
+    res.writeHead(status);
     res.end(JSON.stringify({ error: err.message }));
   }
 });
