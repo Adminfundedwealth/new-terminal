@@ -681,6 +681,7 @@ async function handleNSEProxy(params) {
   }
 
   const lastGoodKey = `lastgood:nse:${endpoint}:${symbol || ""}`;
+  let lastError;
   
   // Try NSE with session retry
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -698,7 +699,9 @@ async function handleNSEProxy(params) {
       });
 
       if (!nseRes.ok) {
-        throw new Error(`NSE HTTP ${nseRes.status}`);
+        const error = new Error(`NSE HTTP ${nseRes.status}`);
+        error.upstreamStatus = nseRes.status;
+        throw error;
       }
 
       const contentType = nseRes.headers.get("content-type") || "";
@@ -716,17 +719,23 @@ async function handleNSEProxy(params) {
       const data = await nseRes.json();
       
       // Validate the data is not empty/malformed
-      const isValidOC = endpoint === "option-chain" ? (data?.records?.data?.length > 0) : true;
-      const isValidData = data && Object.keys(data).length > 0 && isValidOC;
-      
-      if (isValidData) {
-        setLastGood(lastGoodKey, data);
+      const hasRows = endpoint === "option-chain"
+        ? Array.isArray(data?.records?.data) && data.records.data.length > 0
+        : endpoint === "equity-derivatives"
+          ? Array.isArray(data?.data) && data.data.length > 0
+          : true;
+      if (!data || Object.keys(data).length === 0 || !hasRows) {
+        const error = new Error(`NSE returned empty or invalid data for ${endpoint}`);
+        error.upstreamStatus = 503;
+        throw error;
       }
       
+      setLastGood(lastGoodKey, data);
       const ttl = endpoint === "fii-dii" ? 300000 : 30000;
       setCache(cacheKey, data, ttl);
       return { data, cacheHit: false };
     } catch (nseErr) {
+      lastError = nseErr;
       if (attempt === 0) {
         // Invalidate session and retry
         nseSessionCookies = "";
@@ -746,8 +755,7 @@ async function handleNSEProxy(params) {
     return { data: lastGood.data, cacheHit: false };
   }
   
-  // No cache — return empty object
-  return { data: {}, cacheHit: false };
+  throw lastError || new Error(`NSE returned no data for ${endpoint}`);
 }
 
 // ══════════════════════════════════════════════
