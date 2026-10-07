@@ -25,6 +25,7 @@ vi.mock("@/lib/marketApi", () => ({
 }));
 
 vi.mock("@/lib/terminalApi", () => ({
+  createClientOrderId: vi.fn(() => "mock-client-order-id"),
   createTerminalOrder: vi.fn().mockResolvedValue({ ok: true, order: { id: "mock-order" } }),
   modifyTerminalPositionProtection: vi.fn().mockResolvedValue({}),
   fetchTerminalPositions: vi.fn().mockResolvedValue({

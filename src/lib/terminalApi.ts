@@ -184,7 +184,7 @@ function clearPendingOrderCommand(command: TerminalOrderCommandRequest): void {
   }
 }
 
-function createClientOrderId(): string {
+export function createClientOrderId(): string {
   const cryptoApi = globalThis.crypto;
   if (typeof cryptoApi?.randomUUID === "function") return cryptoApi.randomUUID();
   if (typeof cryptoApi?.getRandomValues !== "function") {

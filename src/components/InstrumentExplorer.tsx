@@ -14,7 +14,7 @@ import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { classifyInstrument, isProductionInstrument } from "@/lib/instrumentClassification";
 import { fetchInstrumentMaster } from "@/lib/marketApi";
 import { getPreferredMarketAdapter } from "@/lib/brokerRouter";
-import { createTerminalOrder, fetchTerminalPositions, modifyTerminalPositionProtection } from "@/lib/terminalApi";
+import { createClientOrderId, createTerminalOrder, fetchTerminalPositions, modifyTerminalPositionProtection } from "@/lib/terminalApi";
 import type { Instrument } from "@/lib/localDatabase";
 
 export type ExplorerAsset = "stocks" | "indices" | "futures";
@@ -363,7 +363,7 @@ export function InstrumentExplorer({
         : undefined;
       const result = await createTerminalOrder({
         account_id: activeAccountId,
-        client_order_id: `customer-${crypto.randomUUID()}`,
+        client_order_id: `customer-${createClientOrderId()}`,
         symbol: orderInstrument?.tradingSymbol ?? chartSymbol,
         exchange: orderInstrument?.exchange ?? "NSE",
         segment: orderInstrument?.exchangeSegment ?? preferredSelectedInstrument?.exchangeSegment ?? "NSE_EQ",
