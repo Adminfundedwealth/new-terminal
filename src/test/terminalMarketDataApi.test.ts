@@ -7,6 +7,7 @@ vi.mock("@/integrations/supabase/client", () => ({
 }));
 
 import {
+  fetchTerminalSystemHealth,
   fetchTerminalMarketDataStatus,
   requestTerminalMarketData,
   requestTerminalRealtimeTicket,
@@ -31,6 +32,18 @@ afterEach(() => {
 });
 
 describe("Main Terminal market-data contract", () => {
+  it("authenticates Terminal OS health checks with the current customer session", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: [], checked_at: "2026-10-07T00:00:00Z" }), { status: 200 }));
+
+    await fetchTerminalSystemHealth();
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(new URL(url, "https://main.test").pathname).toBe("/api/terminal/system-health");
+    expect(new Headers(init.headers).get("Authorization")).toBe(`Bearer ${accessToken}`);
+    expect(init.credentials).toBe("omit");
+    expect(init.cache).toBe("no-store");
+  });
+
   it("sends Supabase identity proof with explicit account and provider context", async () => {
     await requestTerminalMarketData(accountId, "dhan", { operation: "authenticate" });
 

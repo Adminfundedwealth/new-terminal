@@ -344,9 +344,14 @@ export interface TerminalWatchlist {
 }
 
 async function fetchTerminalJson<T>(path: string): Promise<T> {
+  const accessToken = await getCustomerAccessToken();
   const response = await fetch(`${TERMINAL_OS_BASE}${path}`, {
-    credentials: "include",
-    headers: { Accept: "application/json" },
+    credentials: "omit",
+    cache: "no-store",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
   });
 
   if (!response.ok) {

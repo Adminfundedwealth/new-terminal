@@ -11,7 +11,7 @@ const sensitiveKey = /(authorization|access.?token|refresh.?token|secret|passwor
 
 function redactText(value: string): string {
   return value
-    .replace(/\b(Bearer|token)\s+[A-Za-z0-9._~+\/-]+=*/gi, "$1 [REDACTED]")
+    .replace(/\b(Bearer|token)\s+[A-Za-z0-9._~+/-]+=*/gi, "$1 [REDACTED]")
     .replace(/\b((?:access|refresh|api)[_-]?(?:token|key)|token|secret|password|credential)\s*[:=]\s*["']?[^\s,"']+/gi, "$1=[REDACTED]")
     .slice(0, 2_000);
 }
