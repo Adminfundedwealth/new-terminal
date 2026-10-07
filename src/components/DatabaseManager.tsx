@@ -8,7 +8,7 @@ import {
   Database, Download, RefreshCw, Trash2, CheckCircle2, Clock, HardDrive, BarChart3,
   Loader2, AlertCircle, Radio, Layers, CandlestickChart, TrendingUp,
 } from "lucide-react";
-import { fetchInstrumentMaster, fetchHistoricalCandles } from "@/lib/marketApi";
+import { fetchCashQuotes, fetchInstrumentMaster, fetchHistoricalCandles } from "@/lib/marketApi";
 import {
   saveInstruments, savePriceSnapshots, saveCandleHistory, getDatabaseStats,
   clearAllData, setMetadata, type DatabaseStats, type Instrument,
@@ -102,40 +102,47 @@ export function DatabaseManager() {
 
       await setMetadata("lastInstrumentUpdate", new Date().toISOString());
 
-      // ── Phase 2: Save Price Snapshots from NSE data (if available) ──
-      setProgress({ phase: "prices", current: 0, total: 100, message: "Fetching F&O price snapshots from NSE..." });
+      // ── Phase 2: Save cash-market price snapshots from Dhan quotes ──
+      setProgress({ phase: "prices", current: 0, total: 100, message: "Fetching cash-market quotes from Dhan..." });
 
       try {
-        const nseRes = await fetch("http://localhost:4002/api/nse-proxy?endpoint=equity-derivatives");
-        if (nseRes.ok) {
-          const nseData = await nseRes.json();
-          if (nseData?.data) {
-            const priceSnapshots = nseData.data
-              .filter((d: any) => d.symbol && d.lastPrice > 0)
-              .map((d: any) => ({
-                securityId: d.identifier || d.symbol,
-                symbol: d.symbol,
-                ltp: d.lastPrice,
-                open: d.open || d.lastPrice,
-                high: d.dayHigh || d.lastPrice,
-                low: d.dayLow || d.lastPrice,
-                close: d.previousClose || d.lastPrice,
-                change: d.change || 0,
-                changePercent: d.pChange || 0,
-                volume: d.totalTradedVolume || 0,
-                oi: d.openInterest || 0,
-                timestamp: Date.now(),
-              }));
-
-            if (priceSnapshots.length > 0) {
-              await savePriceSnapshots(priceSnapshots);
-              await setMetadata("lastPriceUpdate", new Date().toISOString());
-            }
-            setProgress({ phase: "prices", current: 100, total: 100, message: `Saved ${priceSnapshots.length} price snapshots` });
-          }
+        const quoteTargets = [...INDEX_CANDLE_TARGETS, ...FNO_STOCK_CANDLE_TARGETS];
+        const targetsBySegment = new Map<string, string[]>();
+        for (const target of quoteTargets) {
+          const ids = targetsBySegment.get(target.segment) || [];
+          ids.push(target.securityId);
+          targetsBySegment.set(target.segment, ids);
         }
-      } catch {
-        setProgress({ phase: "prices", current: 100, total: 100, message: "Price snapshots skipped (NSE unavailable)" });
+        const quoteGroups = await Promise.all(
+          [...targetsBySegment.entries()].map(async ([segment, ids]) => [segment, await fetchCashQuotes(segment, ids)] as const),
+        );
+        const quotesById = Object.assign({}, ...quoteGroups.map(([, quotes]) => quotes));
+        const priceSnapshots = quoteTargets.flatMap((target) => {
+          const quote = quotesById[target.securityId];
+          if (!quote) return [];
+          const previousClose = quote.previousClose ?? quote.ltp;
+          return [{
+            securityId: target.securityId,
+            symbol: target.symbol,
+            ltp: quote.ltp,
+            open: quote.open ?? quote.ltp,
+            high: quote.high ?? quote.ltp,
+            low: quote.low ?? quote.ltp,
+            close: previousClose,
+            change: quote.ltp - previousClose,
+            changePercent: previousClose ? ((quote.ltp - previousClose) / previousClose) * 100 : 0,
+            volume: quote.volume,
+            oi: 0,
+            timestamp: Date.now(),
+          }];
+        });
+        if (priceSnapshots.length === 0) throw new Error("Dhan returned no cash-market quotes for the selected instruments");
+        await savePriceSnapshots(priceSnapshots);
+        await setMetadata("lastPriceUpdate", new Date().toISOString());
+        setProgress({ phase: "prices", current: 100, total: 100, message: `Saved ${priceSnapshots.length} cash-market price snapshots` });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown quote error";
+        setProgress({ phase: "prices", current: 100, total: 100, message: `Price snapshots unavailable: ${message}` });
       }
 
       // ── Phase 3: Download Historical Candles for Indices ──

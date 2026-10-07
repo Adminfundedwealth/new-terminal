@@ -362,6 +362,57 @@ export async function fetchLiveIndices() {
   return parseNSEIndices(raw);
 }
 
+export interface CashMarketQuote {
+  ltp: number;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  previousClose: number | null;
+  volume: number;
+}
+
+export async function fetchCashQuotes(exchangeSegment: string, securityIds: string[]): Promise<Record<string, CashMarketQuote>> {
+  const allowedSegments = new Set(["NSE_EQ", "BSE_EQ", "IDX_I", "BSE_IDX"]);
+  const uniqueIds = [...new Set(securityIds.map((id) => id.trim()))];
+  if (!allowedSegments.has(exchangeSegment)) throw new Error(`Unsupported cash quote segment: ${exchangeSegment}`);
+  if (uniqueIds.length === 0) return {};
+  if (uniqueIds.length > 1000 || uniqueIds.some((id) => !/^\d+$/.test(id))) {
+    throw new Error("Cash quote requests require up to 1,000 numeric security IDs");
+  }
+
+  const response = await fetchDhanProxy("cash-quotes", {
+    exchangeSegment,
+    securityIds: uniqueIds.join(","),
+  });
+  const quotes = response?.data?.data?.[exchangeSegment] || {};
+  return Object.fromEntries(
+    Object.entries(quotes).flatMap(([securityId, rawQuote]) => {
+      const quote = rawQuote as {
+        last_price?: number;
+        ltp?: number;
+        open?: number;
+        high?: number;
+        low?: number;
+        close?: number;
+        previous_close?: number;
+        volume?: number;
+        ohlc?: { open?: number; high?: number; low?: number; close?: number };
+      };
+      const ltp = Number(quote.last_price ?? quote.ltp);
+      if (!Number.isFinite(ltp) || ltp <= 0) return [];
+      const readValue = (value: number | undefined) => value == null || !Number.isFinite(Number(value)) ? null : Number(value);
+      return [[securityId, {
+        ltp,
+        open: readValue(quote.ohlc?.open ?? quote.open),
+        high: readValue(quote.ohlc?.high ?? quote.high),
+        low: readValue(quote.ohlc?.low ?? quote.low),
+        previousClose: readValue(quote.ohlc?.close ?? quote.previous_close ?? quote.close),
+        volume: Number(quote.volume) || 0,
+      }]];
+    }),
+  );
+}
+
 export async function fetchMarketStatus() {
   return fetchNSEProxy("market-status");
 }

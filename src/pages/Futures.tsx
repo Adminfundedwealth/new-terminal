@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
-import { classifyInstrument } from "@/lib/instrumentClassification";
+import { classifyInstrument, isProductionInstrument, isTradableContract } from "@/lib/instrumentClassification";
 
 export default function Futures() {
   const { instruments, isLoaded } = useInstrumentLookup();
@@ -14,7 +14,12 @@ export default function Futures() {
   const futures = useMemo(() => {
     const query = search.trim().toUpperCase();
     return instruments
-      .filter((instrument) => classifyInstrument(instrument) === "futures")
+      .filter((instrument) =>
+        isProductionInstrument(instrument) &&
+        classifyInstrument(instrument) === "futures" &&
+        isTradableContract(instrument, "futures") &&
+        Date.parse(instrument.expiryDate || "") >= Date.now()
+      )
       .filter((instrument) => !query || instrument.symbol.toUpperCase().includes(query) || instrument.tradingSymbol.toUpperCase().includes(query))
       .sort((a, b) => a.symbol.localeCompare(b.symbol) || (a.expiryDate || "").localeCompare(b.expiryDate || ""));
   }, [instruments, search]);

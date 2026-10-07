@@ -28,12 +28,13 @@ export function isProductionInstrument(instrument: Instrument | Partial<Instrume
   // Production instruments should have valid trading symbols and not be marked as test
   if (!instrument?.symbol && !instrument?.tradingSymbol) return false;
   
-  const symbol = (instrument.symbol || instrument.tradingSymbol || "").toUpperCase();
-  const tradingSymbol = (instrument.tradingSymbol || "").toUpperCase();
+  const symbol = normalized(instrument.symbol);
+  const tradingSymbol = normalized(instrument.tradingSymbol);
   
   // Exclude common test prefixes/patterns
-  if (symbol.startsWith("TEST") || symbol.startsWith("DEMO") || symbol.startsWith("SYNTH")) return false;
-  if (tradingSymbol.startsWith("TEST") || tradingSymbol.startsWith("DEMO")) return false;
+  if ([symbol, tradingSymbol].some((value) =>
+    value.includes("NSETEST") || /^(TEST|DEMO|SYNTH)/.test(value)
+  )) return false;
   
   return true;
 }

@@ -202,9 +202,7 @@ export function useInstrumentLookup() {
     const q = query.toUpperCase();
     return allInstruments
       .filter((i) => (!category || classifyInstrument(i) === category) &&
-        i.symbol.toUpperCase().includes(q) || 
-        i.tradingSymbol.toUpperCase().includes(q)
-      )
+        (i.symbol.toUpperCase().includes(q) || i.tradingSymbol.toUpperCase().includes(q)))
       .slice(0, limit);
   }, [allInstruments]);
 

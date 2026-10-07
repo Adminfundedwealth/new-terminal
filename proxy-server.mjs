@@ -302,7 +302,14 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
   const symbol = (params.get("symbol") || "NIFTY").toUpperCase();
   const expiry = params.get("expiry");
   const userPrefix = userClientId ? `user:${userClientId}:` : "";
-  const cacheKey = `dhan:${userPrefix}${endpoint}:${symbol}:${expiry || ""}`;
+  const quoteSegment = params.get("exchangeSegment") || "";
+  const quoteIds = (params.get("securityIds") || "").split(",").map((id) => id.trim()).filter(Boolean);
+  const quoteHash = endpoint === "cash-quotes"
+    ? createHash("sha256").update(`${quoteSegment}:${quoteIds.join(",")}`).digest("hex").slice(0, 16)
+    : "";
+  const cacheKey = endpoint === "cash-quotes"
+    ? `dhan:${userPrefix}cash-quotes:${quoteHash}`
+    : `dhan:${userPrefix}${endpoint}:${symbol}:${expiry || ""}`;
 
   const cached = getCached(cacheKey);
   if (cached) return { data: cached, cacheHit: true };
@@ -432,6 +439,20 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
         [secInfo.exchSeg]: [secInfo.secId],
       }, "POST", userClientId, userAccessToken);
       setCache(cacheKey, result, 2000);
+      return { data: result, cacheHit: false };
+    }
+
+    case "cash-quotes": {
+      const allowedSegments = new Set(["NSE_EQ", "BSE_EQ", "IDX_I", "BSE_IDX"]);
+      if (!allowedSegments.has(quoteSegment)) throw new Error(`Unsupported cash quote segment: ${quoteSegment || "(missing)"}`);
+      if (quoteIds.length === 0 || quoteIds.length > 1000 || quoteIds.some((id) => !/^\d+$/.test(id))) {
+        throw new Error("Cash quotes require between 1 and 1,000 numeric security IDs");
+      }
+
+      const result = await dhanFetch("/marketfeed/quote", {
+        [quoteSegment]: quoteIds.map(Number),
+      }, "POST", userClientId, userAccessToken);
+      setCache(cacheKey, result, 5000);
       return { data: result, cacheHit: false };
     }
 

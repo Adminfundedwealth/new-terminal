@@ -69,7 +69,7 @@ export interface DatabaseMetadata {
 // ── IndexedDB Manager ──
 
 const DB_NAME = "mrchartist_market_db";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -88,6 +88,10 @@ function openDB(): Promise<IDBDatabase> {
         instrumentStore.createIndex("symbol", "symbol", { unique: false });
         instrumentStore.createIndex("exchangeSegment", "exchangeSegment", { unique: false });
         instrumentStore.createIndex("instrumentType", "instrumentType", { unique: false });
+      }
+      const instrumentStore = (event.target as IDBOpenDBRequest).transaction?.objectStore("instruments");
+      if (instrumentStore && !instrumentStore.indexNames.contains("tradingSymbol")) {
+        instrumentStore.createIndex("tradingSymbol", "tradingSymbol", { unique: false });
       }
 
       // Price snapshots
@@ -217,7 +221,12 @@ export async function findInstrumentBySymbol(symbol: string): Promise<Instrument
 }
 
 export async function findInstrumentsBySymbol(symbol: string): Promise<Instrument[]> {
-  return getItemsByIndex<Instrument>("instruments", "symbol", symbol.toUpperCase());
+  const normalizedSymbol = symbol.trim().toUpperCase();
+  const [symbolMatches, tradingSymbolMatches] = await Promise.all([
+    getItemsByIndex<Instrument>("instruments", "symbol", normalizedSymbol),
+    getItemsByIndex<Instrument>("instruments", "tradingSymbol", normalizedSymbol),
+  ]);
+  return [...new Map([...symbolMatches, ...tradingSymbolMatches].map((instrument) => [instrument.securityId, instrument])).values()];
 }
 
 // Get all F&O stocks (unique equity symbols in NSE_FNO segment)

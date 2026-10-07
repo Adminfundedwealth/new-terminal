@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyInstrument, isTradableContract, validateInstrumentForOrder } from "@/lib/instrumentClassification";
+import { classifyInstrument, isProductionInstrument, isTradableContract, validateInstrumentForOrder } from "@/lib/instrumentClassification";
 import type { Instrument } from "@/lib/localDatabase";
 
 const instrument = (overrides: Partial<Instrument>): Instrument => ({
@@ -31,5 +31,10 @@ describe("instrument classification", () => {
     expect(isTradableContract(future, "stocks")).toBe(false);
     expect(validateInstrumentForOrder(future, "futures")).toBeNull();
     expect(validateInstrumentForOrder({ ...future, expiryDate: "2020-01-01" }, "futures")).toBe("Instrument contract has expired");
+  });
+
+  it("filters synthetic test instruments from production lists", () => {
+    expect(isProductionInstrument(instrument({ symbol: "011NSETEST", tradingSymbol: "NSETEST" }))).toBe(false);
+    expect(isProductionInstrument(instrument({ symbol: "RELIANCE INDUSTRIES LTD", tradingSymbol: "RELIANCE" }))).toBe(true);
   });
 });
