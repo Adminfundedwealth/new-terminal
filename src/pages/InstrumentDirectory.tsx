@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { fetchCashQuotes } from "@/lib/marketApi";
-import { classifyInstrument, isProductionInstrument } from "@/lib/instrumentClassification";
+import { classifyInstrument, isCashEquityListing, isProductionInstrument } from "@/lib/instrumentClassification";
 
 const PAGE_SIZE = 50;
 
@@ -19,7 +19,11 @@ export default function InstrumentDirectory({ category }: { category: "stocks" |
   const filteredRows = useMemo(() => {
     const query = search.trim().toUpperCase();
     return instruments
-      .filter((instrument) => isProductionInstrument(instrument) && classifyInstrument(instrument) === category)
+      .filter((instrument) =>
+        isProductionInstrument(instrument) &&
+        classifyInstrument(instrument) === category &&
+        (category !== "stocks" || isCashEquityListing(instrument))
+      )
       .filter((instrument) => !query || instrument.symbol.toUpperCase().includes(query) || instrument.tradingSymbol.toUpperCase().includes(query))
       .sort((a, b) => a.tradingSymbol.localeCompare(b.tradingSymbol));
   }, [category, instruments, search]);

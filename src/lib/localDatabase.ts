@@ -21,6 +21,7 @@ export interface Instrument {
   exchangeSegment: string;
   instrumentType: string;
   lotSize: number;
+  series?: string;
   expiryDate?: string;
   strikePrice?: number;
   optionType?: string;

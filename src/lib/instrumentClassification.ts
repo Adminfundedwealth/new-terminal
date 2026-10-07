@@ -4,6 +4,7 @@ export type InstrumentCategory = "stocks" | "indices" | "futures" | "options";
 
 const EQUITY_SEGMENTS = new Set(["NSE_EQ", "BSE_EQ"]);
 const INDEX_SEGMENTS = new Set(["IDX_I", "BSE_IDX"]);
+const NSE_EQUITY_SERIES = new Set(["EQ", "BE", "BZ", "SM", "ST", "X", "XT"]);
 
 function normalized(value: string | undefined): string {
   return (value || "").trim().toUpperCase();
@@ -37,6 +38,13 @@ export function isProductionInstrument(instrument: Instrument | Partial<Instrume
   )) return false;
   
   return true;
+}
+
+export function isCashEquityListing(instrument: Instrument): boolean {
+  if (classifyInstrument(instrument) !== "stocks") return false;
+  const series = normalized(instrument.series);
+  if (series) return NSE_EQUITY_SERIES.has(series);
+  return !/(?:%|\bNCD\b|\bDEB(?:ENTURE)?\b|\bSTRPP\b|\bSR\.?\s+[A-Z0-9])/i.test(instrument.symbol);
 }
 
 export function isTradableContract(instrument: Instrument, category?: InstrumentCategory): boolean {

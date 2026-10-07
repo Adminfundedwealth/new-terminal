@@ -6,7 +6,8 @@ describe("Dhan cash-equity quote requests", () => {
 
   it("returns LTPs from the configured proxy for cash security IDs", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      data: { data: { NSE_EQ: { "2885": { last_price: 1425.5, ohlc: { open: 1410, high: 1430, low: 1405, close: 1400 }, volume: 7890 } } } },
+      data: { NSE_EQ: { "2885": { last_price: 1425.5, ohlc: { open: 1410, high: 1430, low: 1405, close: 1400 }, volume: 7890 } } },
+      status: "success",
     }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 

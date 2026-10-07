@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyInstrument, isProductionInstrument, isTradableContract, validateInstrumentForOrder } from "@/lib/instrumentClassification";
+import { classifyInstrument, isCashEquityListing, isProductionInstrument, isTradableContract, validateInstrumentForOrder } from "@/lib/instrumentClassification";
 import type { Instrument } from "@/lib/localDatabase";
 
 const instrument = (overrides: Partial<Instrument>): Instrument => ({
@@ -36,5 +36,12 @@ describe("instrument classification", () => {
   it("filters synthetic test instruments from production lists", () => {
     expect(isProductionInstrument(instrument({ symbol: "011NSETEST", tradingSymbol: "NSETEST" }))).toBe(false);
     expect(isProductionInstrument(instrument({ symbol: "RELIANCE INDUSTRIES LTD", tradingSymbol: "RELIANCE" }))).toBe(true);
+  });
+
+  it("keeps cash shares while excluding debt securities from the stock directory", () => {
+    expect(isCashEquityListing(instrument({ series: "EQ" }))).toBe(true);
+    expect(isCashEquityListing(instrument({ symbol: "ABCL 0% 2031 SR C2", tradingSymbol: "0ABCL31" }))).toBe(false);
+    expect(isCashEquityListing(instrument({ symbol: "RELIANCE INDUSTRIES LTD", series: "N1" }))).toBe(false);
+    expect(isCashEquityListing(instrument({ symbol: "3M INDIA LTD", tradingSymbol: "3MINDIA" }))).toBe(true);
   });
 });

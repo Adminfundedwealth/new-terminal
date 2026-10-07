@@ -384,7 +384,7 @@ export async function fetchCashQuotes(exchangeSegment: string, securityIds: stri
     exchangeSegment,
     securityIds: uniqueIds.join(","),
   });
-  const quotes = response?.data?.data?.[exchangeSegment] || {};
+  const quotes = response?.data?.[exchangeSegment] || {};
   return Object.fromEntries(
     Object.entries(quotes).flatMap(([securityId, rawQuote]) => {
       const quote = rawQuote as {

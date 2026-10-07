@@ -265,6 +265,18 @@ const UNDERLYING_MAP = {
   MIDCPNIFTY: { underlyingScrip: 442, expirySegment: "NSE_FNO", ocSegment: "IDX_I" },
 };
 
+function resolveRequestedUnderlying(underlyingScrip, segment) {
+  if (!/^\d+$/.test(underlyingScrip || "")) return null;
+  const expirySegment = {
+    NSE_EQ: "NSE_FNO",
+    IDX_I: "NSE_FNO",
+    BSE_EQ: "BSE_FNO",
+    BSE_IDX: "BSE_FNO",
+  }[segment];
+  if (!expirySegment) return null;
+  return { underlyingScrip: Number(underlyingScrip), expirySegment, ocSegment: segment };
+}
+
 async function dhanFetch(path, body, method = "POST", customClientId, customAccessToken) {
   const clientId = customClientId || process.env.DHAN_CLIENT_ID;
   const accessToken = customAccessToken || process.env.DHAN_ACCESS_TOKEN;
@@ -319,8 +331,8 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
       const requestedUnderlying = params.get("underlyingScrip");
       const requestedSegment = params.get("underlyingSeg");
       const mappedUnderlying = UNDERLYING_MAP[symbol];
-      const underlying = requestedUnderlying && requestedSegment
-        ? { underlyingScrip: requestedUnderlying, expirySegment: requestedSegment, ocSegment: requestedSegment }
+      const underlying = requestedUnderlying || requestedSegment
+        ? resolveRequestedUnderlying(requestedUnderlying, requestedSegment)
         : mappedUnderlying;
       if (!underlying) throw new Error(`Unknown symbol: ${symbol}. Supported: ${Object.keys(UNDERLYING_MAP).join(", ")}`);
       const lastGoodKey = `lastgood:oc:${symbol}:${expiry || "nearest"}`;
@@ -405,8 +417,8 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
       const requestedUnderlying = params.get("underlyingScrip");
       const requestedSegment = params.get("underlyingSeg");
       const mappedUnderlying = UNDERLYING_MAP[symbol];
-      const underlying = requestedUnderlying && requestedSegment
-        ? { underlyingScrip: requestedUnderlying, expirySegment: requestedSegment }
+      const underlying = requestedUnderlying || requestedSegment
+        ? resolveRequestedUnderlying(requestedUnderlying, requestedSegment)
         : mappedUnderlying;
       if (!underlying) throw new Error(`Unknown symbol: ${symbol}`);
       const lastGoodKey = `lastgood:expiry:${symbol}`;
@@ -510,6 +522,7 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
         const expiryDate = cols[header.indexOf("SEM_EXPIRY_DATE")]?.trim();
         const strikePrice = parseFloat(cols[header.indexOf("SEM_STRIKE_PRICE")]?.trim()) || 0;
         const optionType = cols[header.indexOf("SEM_OPTION_TYPE")]?.trim();
+        const series = cols[header.indexOf("SEM_SERIES")]?.trim();
 
         // Map exchange + segment code → combined segment name
         const exchangeSegment = SEGMENT_MAP[`${exchId}:${segCode}`];
@@ -525,10 +538,15 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
           exchangeSegment,
           instrumentType: instrName,
           lotSize,
+          series: series || undefined,
           expiryDate: expiryDate && expiryDate !== "0001-01-01" ? expiryDate : undefined,
           strikePrice: strikePrice || undefined,
           optionType: optionType && optionType !== "XX" ? optionType : undefined,
         });
+      }
+
+      if (instruments.length === 0) {
+        throw new Error("Dhan instrument master contained no supported instruments; refusing to cache an empty list");
       }
 
       console.log(`  ✅ Parsed ${instruments.length} instruments from CSV`);
