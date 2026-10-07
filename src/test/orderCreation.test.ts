@@ -94,6 +94,9 @@ describe("Kite derivative order routing", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("sends NRML Kite derivatives only to the simulated RPC", async () => {
+    vi.stubGlobal("crypto", {
+      getRandomValues: globalThis.crypto.getRandomValues.bind(globalThis.crypto),
+    });
     const request = {
       account_id: "sim-account",
       symbol: "NIFTY26SEP23150CE",
@@ -143,6 +146,9 @@ describe("Kite derivative order routing", () => {
       time_in_force: "DAY",
       is_overnight: false,
     });
+    expect(command.client_order_id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
     expect(command).not.toHaveProperty("instrument");
   });
 });
