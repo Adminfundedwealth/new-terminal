@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { BrandSplash } from "@/components/BrandSplash";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import DashboardLayout from "@/components/DashboardLayout";
 import { DashboardSkeleton } from "@/components/LoadingSkeletons";
@@ -43,7 +44,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   
   if (loading) {
-    return <DashboardSkeleton />;
+    return <BrandSplash />;
   }
   
   if (!user) {
@@ -61,7 +62,7 @@ const App = () => (
       <AuthProvider>
         <BrowserRouter>
           <Routes>
-            <Route path="/login" element={<Suspense fallback={null}><Login /></Suspense>} />
+            <Route path="/login" element={<Suspense fallback={<BrandSplash />}><Login /></Suspense>} />
             <Route element={<ProtectedRoute><DashboardLayout /></ProtectedRoute>}>
               <Route path="/" element={<PageSuspense><Index /></PageSuspense>} />
               <Route path="/stocks" element={<PageSuspense><InstrumentDirectory category="stocks" /></PageSuspense>} />
