@@ -236,7 +236,16 @@ export function useExpiryList(symbol: string) {
     queryFn: async () => {
       if (shouldTryProxy()) {
         try {
-          const expiries = await fetchExpiryList(symbol);
+          const underlying = (await findInstrumentsBySymbol(symbol)).find((instrument) => {
+            const category = classifyInstrument(instrument);
+            return category === "indices" || category === "stocks";
+          });
+          const expiries = await fetchExpiryList(
+            symbol,
+            underlying
+              ? { securityId: underlying.securityId, exchangeSegment: underlying.exchangeSegment }
+              : undefined,
+          );
           if (expiries.length > 0) { markProxyOnline(); return { expiries, isLive: true }; }
         } catch (e) { markProxyOffline(); console.warn("Expiry list fetch failed:", e); }
       }

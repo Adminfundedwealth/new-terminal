@@ -287,11 +287,28 @@ export async function fetchDhanQuote(symbol: string): Promise<{
 
 // ── Exported fetch functions ──
 
+interface OptionUnderlying {
+  securityId: string;
+  exchangeSegment: string;
+}
+
+function getOptionUnderlyingParams(underlying?: OptionUnderlying): Record<string, string> {
+  if (!underlying) return {};
+  if (!/^\d+$/.test(underlying.securityId) || !underlying.exchangeSegment) {
+    throw new Error("Option-chain requests require a numeric security ID and exchange segment");
+  }
+  return {
+    underlyingScrip: underlying.securityId,
+    underlyingSeg: underlying.exchangeSegment,
+  };
+}
+
 // Dhan Option Chain (primary) with NSE fallback
-export async function fetchLiveOptionChain(symbol: string, expiry?: string) {
+export async function fetchLiveOptionChain(symbol: string, expiry?: string, underlying?: OptionUnderlying) {
   // Try Dhan first
   try {
-    const params: Record<string, string> = { symbol: symbol.toUpperCase() };
+    const underlyingParams = getOptionUnderlyingParams(underlying);
+    const params: Record<string, string> = { symbol: symbol.toUpperCase(), ...underlyingParams };
     if (expiry) params.expiry = expiry;
     const raw = await fetchDhanProxy("option-chain", params);
     if (raw?.status === "success" && raw?.data?.oc) {
@@ -299,7 +316,7 @@ export async function fetchLiveOptionChain(symbol: string, expiry?: string) {
       // Also fetch expiry list
       let expiries: ExpiryDate[] = [];
       try {
-        const expiryRaw = await fetchDhanProxy("expiry-list", { symbol: symbol.toUpperCase() });
+        const expiryRaw = await fetchDhanProxy("expiry-list", { symbol: symbol.toUpperCase(), ...underlyingParams });
         if (expiryRaw?.data) {
           expiries = expiryRaw.data.map((dateStr: string) => {
             const d = new Date(dateStr);
@@ -336,9 +353,12 @@ export async function fetchLiveOptionChain(symbol: string, expiry?: string) {
 }
 
 // Dhan expiry list
-export async function fetchExpiryList(symbol: string): Promise<ExpiryDate[]> {
+export async function fetchExpiryList(symbol: string, underlying?: OptionUnderlying): Promise<ExpiryDate[]> {
   try {
-    const raw = await fetchDhanProxy("expiry-list", { symbol: symbol.toUpperCase() });
+    const raw = await fetchDhanProxy("expiry-list", {
+      symbol: symbol.toUpperCase(),
+      ...getOptionUnderlyingParams(underlying),
+    });
     if (raw?.data) {
       return raw.data.map((dateStr: string) => {
         const d = new Date(dateStr);
