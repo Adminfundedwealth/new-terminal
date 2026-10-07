@@ -113,13 +113,21 @@ function missing(input: RiskRequest, state: RiskStateInput, rule: string): RiskE
   return reject(input, state, "RULE_CONFIGURATION_MISSING", `Required rule is not configured: ${rule}`, rule, null, null);
 }
 
-function localTimeMinutes(now: Date): number {
-  return now.getHours() * 60 + now.getMinutes();
+function localTimeMinutes(now: Date, timezone: string): number {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  const hour = Number(parts.find((part) => part.type === "hour")?.value);
+  const minute = Number(parts.find((part) => part.type === "minute")?.value);
+  return hour * 60 + minute;
 }
 
 function inTradingHours(now: Date, hours: NonNullable<RiskRules["trading_hours"]>): boolean {
-  const minute = localTimeMinutes(now);
-  return hours.some(({ start, end }) => {
+  return hours.some(({ start, end, timezone = "Asia/Kolkata" }) => {
+    const minute = localTimeMinutes(now, timezone);
     const [startHour, startMinute] = start.split(":").map(Number);
     const [endHour, endMinute] = end.split(":").map(Number);
     const from = startHour * 60 + startMinute;

@@ -67,6 +67,15 @@ describe("risk engine foundation", () => {
     expect(result).toMatchObject({ decision: "ALLOW", reason_code: null, account_id: "account-1" });
   });
 
+  it("evaluates market hours in the configured exchange timezone", () => {
+    const result = evaluateRisk(
+      request({ now: new Date("2026-09-22T03:45:00.000Z") }),
+      state(),
+      { ...rules, trading_hours: [{ start: "09:15", end: "15:30", timezone: "Asia/Kolkata" }] },
+    );
+    expect(result).toMatchObject({ decision: "ALLOW", reason_code: null });
+  });
+
   it.each([
     ["LOCKED", "ACCOUNT_LOCKED"],
     ["BREACHED", "ACCOUNT_BREACHED"],
