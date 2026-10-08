@@ -70,6 +70,7 @@ export function normalizeProviderInstrument(rawValue: unknown, provider: Instrum
   const expiryDate = dateValue(first(raw, ["expiryDate", "expiry_date", "expiry", "SEM_EXPIRY_DATE"]));
   const strikePrice = numberValue(first(raw, ["strikePrice", "strike_price", "strike", "SEM_STRIKE_PRICE"]));
   const optionType = upper(first(raw, ["optionType", "option_type", "SEM_OPTION_TYPE"])) || undefined;
+  const series = upper(first(raw, ["series", "securitySeries", "listingSeries", "SEM_SERIES"])) || undefined;
   const lotSize = numberValue(first(raw, ["lotSize", "lot_size", "SEM_LOT_SIZE", "SEM_LOT_UNITS"])) ?? (instrumentType === "INDEX" ? 1 : undefined);
   const tickSize = numberValue(first(raw, ["tickSize", "tick_size", "SEM_TICK_SIZE"]));
   const underlyingSecurityId = text(first(raw, ["underlyingSecurityId", "underlying_security_id", "underlying_token", "SEM_UNDERLYING_SECURITY_ID"])) || undefined;
@@ -79,7 +80,7 @@ export function normalizeProviderInstrument(rawValue: unknown, provider: Instrum
   if (["FUTSTK", "FUTIDX", "FUTCOM", "FUTCUR"].includes(instrumentType) && !expiryDate) return { issue: { index, code: "INVALID_VALUE", message: "Futures require a valid expiry." } };
   if (["OPTSTK", "OPTIDX", "OPTFUT", "OPTCUR"].includes(instrumentType) && (!expiryDate || strikePrice === undefined || strikePrice <= 0 || !["CE", "PE"].includes(optionType || ""))) return { issue: { index, code: "INVALID_VALUE", message: "Options require expiry, positive strike, and CE or PE option type." } };
   if (lotSize <= 0 || tickSize <= 0) return { issue: { index, code: "INVALID_VALUE", message: "Lot size and tick size must be positive." } };
-  return { instrument: { securityId, symbol, tradingSymbol, displayName: text(first(raw, ["displayName", "display_name", "name", "SEM_CUSTOM_SYMBOL"])) || symbol, exchange, exchangeSegment: segment, instrumentType, lotSize, tickSize, expiryDate, strikePrice, optionType: ["CE", "PE"].includes(optionType || "") ? optionType : undefined, underlyingSecurityId, provider, providerInstrumentId: securityId } };
+  return { instrument: { securityId, symbol, tradingSymbol, displayName: text(first(raw, ["displayName", "display_name", "name", "SEM_CUSTOM_SYMBOL"])) || symbol, exchange, exchangeSegment: segment, instrumentType, lotSize, tickSize, series, expiryDate, strikePrice, optionType: ["CE", "PE"].includes(optionType || "") ? optionType : undefined, underlyingSecurityId, provider, providerInstrumentId: securityId } };
 }
 
 export function normalizeInstrumentMaster(rawRows: unknown[], provider: InstrumentProvider): InstrumentNormalizationReport {

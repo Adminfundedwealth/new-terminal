@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { InstrumentMaster, normalizeInstrumentMaster, normalizeProviderInstrument } from "@/lib/instrumentMaster";
+import { isCashEquityListing } from "@/lib/instrumentClassification";
 
 describe("Task 35 instrument master", () => {
   const row = (overrides: Record<string, unknown> = {}) => ({
@@ -16,6 +17,26 @@ describe("Task 35 instrument master", () => {
   it("normalizes equity and index instruments", () => {
     expect(normalizeProviderInstrument(row(), "dhan").instrument).toMatchObject({ securityId: "1001", exchange: "NSE", exchangeSegment: "NSE_EQ", symbol: "Reliance Industries", displayName: "Reliance Industries", instrumentType: "EQUITY", lotSize: 1, tickSize: 0.05, provider: "dhan", providerInstrumentId: "1001" });
     expect(normalizeProviderInstrument(row({ SEM_SMST_SECURITY_ID: "13", SEM_EXM: "IDX_I", SEM_TRADING_SYMBOL: "NIFTY 50", SEM_CUSTOM_SYMBOL: "NIFTY 50", SEM_INSTRUMENT_NAME: "INDEX" }), "dhan").instrument).toMatchObject({ exchange: "NSE", exchangeSegment: "IDX_I", instrumentType: "INDEX", lotSize: 1 });
+  });
+
+  it("preserves NSE series metadata so debt-series listings do not enter cash equities", () => {
+    const linkedNote = normalizeProviderInstrument(row({
+      SEM_SMST_SECURITY_ID: "23669",
+      SEM_TRADING_SYMBOL: "AAFS27C",
+      SEM_CUSTOM_SYMBOL: "AAFS MARKET LINKED 2027",
+      SEM_SERIES: "N4",
+    }), "dhan").instrument!;
+    const ordinaryEquity = normalizeProviderInstrument(row({
+      SEM_SMST_SECURITY_ID: "2885",
+      SEM_TRADING_SYMBOL: "RELIANCE",
+      SEM_CUSTOM_SYMBOL: "RELIANCE INDUSTRIES LTD",
+      SEM_SERIES: "EQ",
+    }), "dhan").instrument!;
+
+    expect(linkedNote.series).toBe("N4");
+    expect(isCashEquityListing(linkedNote)).toBe(false);
+    expect(ordinaryEquity.series).toBe("EQ");
+    expect(isCashEquityListing(ordinaryEquity)).toBe(true);
   });
 
   it("normalizes futures and options with expiry, strike, and option type", () => {

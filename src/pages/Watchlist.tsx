@@ -12,7 +12,8 @@ import { Search, Star, TrendingUp, TrendingDown, ExternalLink, Radio, Loader2, P
 import { MiniChart } from "@/components/MiniChart";
 import { useAccountContext } from "@/hooks/useAccountContext";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
-import { canonicalIndexSymbol, classifyInstrument } from "@/lib/instrumentClassification";
+import { canonicalIndexSymbol, classifyInstrument, isCashEquityListing } from "@/lib/instrumentClassification";
+import type { Instrument } from "@/lib/localDatabase";
 import {
   requestTerminalMarketData,
   resolveTerminalMarketDataProvider,
@@ -25,6 +26,21 @@ import { useQuery } from "@tanstack/react-query";
 
 const STORAGE_KEY = "optionsdesk_watchlist";
 const DEFAULT_WATCHLIST = ["NIFTY", "BANKNIFTY", "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN", "TATAMOTORS", "BAJFINANCE", "ADANIENT", "LT", "KOTAKBANK", "ITC", "HINDUNILVR"];
+const INDEX_SYMBOLS = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX", "NIFTY_MIDCAP_50", "SENSEX"]);
+
+function findSupportedInstrument(instruments: Instrument[], symbol: string): Instrument | undefined {
+  const canonicalSymbol = canonicalIndexSymbol(symbol).toUpperCase();
+  const category = INDEX_SYMBOLS.has(canonicalSymbol) ? "indices" : "stocks";
+  const normalizedSymbol = canonicalSymbol.replace(/[^A-Z0-9]/g, "");
+  return instruments.find((instrument) => {
+    const actualCategory = classifyInstrument(instrument);
+    if (actualCategory !== category) return false;
+    if (category === "stocks" && !isCashEquityListing(instrument)) return false;
+    return [instrument.symbol, instrument.tradingSymbol].some((value) =>
+      (category === "indices" ? canonicalIndexSymbol(value) : value).toUpperCase().replace(/[^A-Z0-9]/g, "") === normalizedSymbol
+    );
+  });
+}
 
 function getSavedWatchlist(): string[] {
   try {
@@ -44,6 +60,7 @@ export default function Watchlist() {
   const [watchedSymbols, setWatchedSymbols] = useState<string[]>(() => getSavedWatchlist());
   const [search, setSearch] = useState("");
   const [addSymbol, setAddSymbol] = useState("");
+  const [addSymbolError, setAddSymbolError] = useState<string | null>(null);
   const { instruments, isLoaded: instrumentsLoaded, loadError: instrumentLoadError } = useInstrumentLookup();
   const { activeAccountId, accounts, hasNoAccount } = useAccountContext();
   const { data: marketStatusData } = useMarketStatus();
@@ -51,7 +68,7 @@ export default function Watchlist() {
 
   const supportedInstruments = useMemo(
     () => instruments.filter((instrument) =>
-      ["stocks", "indices"].includes(classifyInstrument(instrument) ?? "")
+      classifyInstrument(instrument) === "indices" || isCashEquityListing(instrument)
     ),
     [instruments],
   );
@@ -61,18 +78,7 @@ export default function Watchlist() {
     queryFn: async () => {
       if (!activeAccountId || !provider) throw new Error("Select an active Dhan account to load watchlist quotes.");
       const results = await Promise.allSettled(watchedSymbols.map(async (symbol) => {
-        const canonicalSymbol = canonicalIndexSymbol(symbol).toUpperCase();
-        const category = canonicalSymbol !== symbol.toUpperCase()
-          || ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX", "SENSEX"].includes(canonicalSymbol)
-          ? "indices"
-          : "stocks";
-        const normalized = canonicalSymbol.replace(/[^A-Z0-9]/g, "");
-        let instrument = supportedInstruments.find((candidate) =>
-          classifyInstrument(candidate) === category &&
-          [candidate.symbol, candidate.tradingSymbol].some((value) =>
-            (category === "indices" ? canonicalIndexSymbol(value) : value).toUpperCase().replace(/[^A-Z0-9]/g, "") === normalized
-          )
-        );
+        let instrument = findSupportedInstrument(supportedInstruments, symbol);
 
         if (!instrument) {
           const searchResults = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(
@@ -80,19 +86,14 @@ export default function Watchlist() {
             provider,
             { operation: "searchInstruments", query: symbol },
           );
-          instrument = searchResults
+          const localSearchResults = searchResults
             .filter((candidate) =>
               candidate.providerInstrumentId && candidate.symbol && candidate.tradingSymbol
             )
-            .map(toLocalMarketDataInstrument)
-            .find((candidate) =>
-            classifyInstrument(candidate) === category &&
-            [candidate.symbol, candidate.tradingSymbol].some((value) =>
-              (category === "indices" ? canonicalIndexSymbol(value) : value).toUpperCase().replace(/[^A-Z0-9]/g, "") === normalized
-            )
-          );
+            .map(toLocalMarketDataInstrument);
+          instrument = findSupportedInstrument(localSearchResults, symbol);
         }
-        if (!instrument) throw new Error(`Terminal OS could not resolve ${symbol} as a ${category} instrument.`);
+        if (!instrument) throw new Error(`Terminal OS could not resolve ${symbol} as a supported cash-equity or index instrument.`);
         const quote = await requestTerminalMarketData<TerminalMarketDataQuote>(
           activeAccountId,
           provider,
@@ -113,7 +114,7 @@ export default function Watchlist() {
     retry: false,
   });
 
-  const quotes = quoteQuery.data?.quotes ?? {};
+  const quotes = useMemo(() => quoteQuery.data?.quotes ?? {}, [quoteQuery.data?.quotes]);
   const hasQuotes = Object.keys(quotes).length > 0;
   const marketClosed = marketStatusData?.isOpen === false;
   const hasFreshQuote = Object.values(quotes).some((quote) => {
@@ -136,6 +137,7 @@ export default function Watchlist() {
   const watchlistRows = useMemo(() => {
     return watchedSymbols
       .map((sym) => {
+        if (!findSupportedInstrument(supportedInstruments, sym)) return null;
         const quote = quotes[sym];
         if (quote) {
           return {
@@ -169,15 +171,16 @@ export default function Watchlist() {
           isLive: false,
         };
       })
+      .filter((row): row is NonNullable<typeof row> => row !== null)
       .filter((row) => {
         if (!search) return true;
         return row.symbol.includes(search.toUpperCase());
       });
-  }, [watchedSymbols, quotes, search, hasFreshQuote]);
+  }, [watchedSymbols, quotes, search, supportedInstruments]);
 
   const availableSymbols = useMemo(() => {
     return supportedInstruments
-      .map((instrument) => instrument.symbol)
+      .map((instrument) => instrument.tradingSymbol)
       .filter((symbol, index, allSymbols) => allSymbols.indexOf(symbol) === index)
       .filter((sym) => !watchedSymbols.includes(sym))
       .sort();
@@ -185,22 +188,32 @@ export default function Watchlist() {
 
   const openInstrumentChart = (symbol: string) => {
     const normalized = symbol.toUpperCase();
-    const indexSymbols = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX", "NIFTY_MIDCAP_50", "SENSEX"]);
-    const isIndex = indexSymbols.has(normalized) || supportedInstruments.some((instrument) =>
+    const canonicalSymbol = canonicalIndexSymbol(normalized).toUpperCase();
+    const isIndex = INDEX_SYMBOLS.has(canonicalSymbol) || supportedInstruments.some((instrument) =>
       classifyInstrument(instrument) === "indices" &&
-      [instrument.symbol, instrument.tradingSymbol].some((value) => canonicalIndexSymbol(value).toUpperCase() === normalized)
+      [instrument.symbol, instrument.tradingSymbol].some((value) =>
+        canonicalIndexSymbol(value).toUpperCase() === canonicalSymbol
+      )
     );
     navigate(`${isIndex ? "/indices" : "/stocks"}?symbol=${encodeURIComponent(symbol)}`);
   };
 
   const addToWatchlist = () => {
     const sym = addSymbol.toUpperCase().trim();
-    if (sym && !watchedSymbols.includes(sym)) {
-      const updated = [...watchedSymbols, sym];
-      setWatchedSymbols(updated);
-      saveWatchlist(updated);
-      setAddSymbol("");
+    if (!sym || watchedSymbols.includes(sym)) return;
+    if (!instrumentsLoaded) {
+      setAddSymbolError("Wait for the cash-equity instrument list to load before adding a symbol.");
+      return;
     }
+    if (!findSupportedInstrument(supportedInstruments, sym)) {
+      setAddSymbolError("Only supported cash-equity stocks and indices can be added.");
+      return;
+    }
+    setAddSymbolError(null);
+    const updated = [...watchedSymbols, sym];
+    setWatchedSymbols(updated);
+    saveWatchlist(updated);
+    setAddSymbol("");
   };
 
   const removeFromWatchlist = (sym: string) => {
@@ -221,7 +234,7 @@ export default function Watchlist() {
             </Badge>
           </h1>
           <p className="text-sm text-muted-foreground">
-            {watchedSymbols.length} symbols · {statusText}
+            {watchlistRows.length} supported symbols · {statusText}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -247,6 +260,7 @@ export default function Watchlist() {
           </Button>
         </div>
       </div>
+      {addSymbolError && <p className="text-xs text-destructive" role="alert">{addSymbolError}</p>}
 
       <Card>
         <CardContent className="p-0 overflow-auto">

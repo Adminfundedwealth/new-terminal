@@ -7,7 +7,15 @@ vi.mock("@/hooks/useMarketData", () => ({
   useMarketStatus: () => ({ data: { isOpen: true } }),
 }));
 vi.mock("@/hooks/useLocalDatabase", () => ({
-  useInstrumentLookup: () => ({ instruments: [], isLoaded: true, loadError: null }),
+  useInstrumentLookup: () => ({
+    instruments: [
+      { securityId: "13", providerInstrumentId: "13", provider: "dhan", symbol: "NIFTY", tradingSymbol: "NIFTY", exchange: "NSE", exchangeSegment: "IDX_I", instrumentType: "INDEX", lotSize: 1, tickSize: 0.05 },
+      { securityId: "2885", providerInstrumentId: "2885", provider: "dhan", symbol: "RELIANCE INDUSTRIES LTD", tradingSymbol: "RELIANCE", exchange: "NSE", exchangeSegment: "NSE_EQ", instrumentType: "EQUITY", series: "EQ", lotSize: 1, tickSize: 0.05 },
+      { securityId: "23669", providerInstrumentId: "23669", provider: "dhan", symbol: "AAFS MARKET LINKED 2027", tradingSymbol: "AAFS27C", exchange: "NSE", exchangeSegment: "NSE_EQ", instrumentType: "EQUITY", series: "N4", lotSize: 1, tickSize: 0.05 },
+    ],
+    isLoaded: true,
+    loadError: null,
+  }),
 }));
 vi.mock("@/hooks/useAccountContext", () => ({
   useAccountContext: () => ({ activeAccountId: null, accounts: [] }),
@@ -53,5 +61,22 @@ describe("Watchlist instrument chart navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "View chart for RELIANCE" }));
 
     await waitFor(() => expect(screen.getByTestId("current-location")).toHaveTextContent("/stocks?symbol=RELIANCE"));
+  });
+
+  it("excludes legacy debt-series instruments from watchlist rows", () => {
+    localStorage.setItem("optionsdesk_watchlist", JSON.stringify(["NIFTY", "RELIANCE", "AAFS27C"]));
+    renderWatchlist();
+
+    expect(screen.getByRole("button", { name: "View chart for NIFTY" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View chart for RELIANCE" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "View chart for AAFS27C" })).not.toBeInTheDocument();
+    expect(screen.getByText(/2 supported symbols/)).toBeInTheDocument();
+  });
+
+  it("rejects adding a debt-series instrument", () => {
+    renderWatchlist();
+    fireEvent.change(screen.getByPlaceholderText("Add symbol..."), { target: { value: "AAFS27C" } });
+    fireEvent.click(screen.getByRole("button", { name: /add/i }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Only supported cash-equity stocks and indices can be added.");
   });
 });
