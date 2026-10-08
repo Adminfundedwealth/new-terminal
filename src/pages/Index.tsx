@@ -5,7 +5,7 @@ import { DashboardSkeleton } from "@/components/LoadingSkeletons";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ExpectedMoveWidget } from "@/components/ExpectedMoveWidget";
 import { IVRankCard, IVRankDashboard } from "@/components/IVRankWidget";
-import { useWebSocketVix } from "@/hooks/useWebSocket";
+import { useWebSocketStatus, useWebSocketVix } from "@/hooks/useWebSocket";
 import { Target, BarChart3, Zap, TrendingUp, Activity } from "lucide-react";
 
 import { MarketHeader } from "@/components/dashboard/MarketHeader";
@@ -51,9 +51,10 @@ export default function Index() {
   const { data: bnfExpiry } = useExpiryList("BANKNIFTY");
   const { data: allIndicesData } = useAllIndices();
   const { vix: wsVix } = useWebSocketVix();
+  const isRealtimeConnected = useWebSocketStatus();
 
   const indices = indicesResult?.data || [];
-  const isLive = indicesResult?.isLive || false;
+  const hasMarketData = Boolean(indicesResult?.isLive);
   const isOpen = marketStatusResult?.isOpen ?? false;
   const marketStatus = marketStatusResult?.status || "Closed";
   const giftNifty = marketStatusResult?.giftNifty;
@@ -91,7 +92,12 @@ export default function Index() {
     <ErrorBoundary fallbackMessage="Dashboard failed to load">
       <div className="space-y-3 animate-fade-in">
         {/* ═══ WELCOME + HEADER ═══ */}
-        <MarketHeader isLive={isLive} isOpen={isOpen} marketStatus={marketStatus} />
+        <MarketHeader
+          hasMarketData={hasMarketData}
+          isConnected={isRealtimeConnected}
+          isOpen={isOpen}
+          marketStatus={marketStatus}
+        />
         <WelcomeBanner />
 
         {/* ═══ TICKER TAPE ═══ */}

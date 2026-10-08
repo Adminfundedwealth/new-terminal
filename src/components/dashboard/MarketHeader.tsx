@@ -1,14 +1,21 @@
 import { Badge } from "@/components/ui/badge";
-import { Wifi, WifiOff, Clock } from "lucide-react";
+import { Wifi, WifiOff, Clock, Activity } from "lucide-react";
 
 interface Props {
-  isLive: boolean;
+  hasMarketData: boolean;
+  isConnected: boolean;
   isOpen: boolean;
   marketStatus: string;
 }
 
-export function MarketHeader({ isLive, isOpen, marketStatus }: Props) {
+export function MarketHeader({ hasMarketData, isConnected, isOpen, marketStatus }: Props) {
   const now = new Date();
+  const dataStatus = !isOpen
+    ? hasMarketData ? "CLOSED" : "OFFLINE"
+    : isConnected ? "CONNECTED" : hasMarketData ? "POLLING" : "OFFLINE";
+  const isRealtimeConnected = dataStatus === "CONNECTED";
+  const StatusIcon = isRealtimeConnected ? Wifi : dataStatus === "CLOSED" ? Clock : hasMarketData ? Activity : WifiOff;
+
   return (
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
       <div>
@@ -18,9 +25,12 @@ export function MarketHeader({ isLive, isOpen, marketStatus }: Props) {
         </p>
       </div>
       <div className="flex items-center gap-2">
-        <Badge variant="outline" className={`gap-1.5 text-2xs ${isLive ? "border-bullish/40 text-bullish" : "border-red-500/30 text-red-400"}`}>
-          {isLive ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
-          {isLive ? "LIVE" : "OFFLINE"}
+        <Badge
+          variant="outline"
+          className={`gap-1.5 text-2xs ${isRealtimeConnected ? "border-bullish/40 text-bullish" : dataStatus === "OFFLINE" ? "border-red-500/30 text-red-400" : "border-muted-foreground/30 text-muted-foreground"}`}
+        >
+          <StatusIcon className="h-3 w-3" />
+          {dataStatus}
         </Badge>
         <Badge variant={isOpen ? "default" : "secondary"} className={`gap-1.5 text-2xs ${isOpen ? "bg-bullish text-bullish-foreground" : ""}`}>
           <Clock className="h-3 w-3" />

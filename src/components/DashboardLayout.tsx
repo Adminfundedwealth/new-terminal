@@ -79,12 +79,14 @@ export default function DashboardLayout() {
   const { data: indicesResult } = useLiveIndices();
   const { data: marketResult } = useMarketStatus();
   const { data: allIndicesData } = useAllIndices();
-  const hasLiveTicks = useWebSocketStatus();
+  const isRealtimeConnected = useWebSocketStatus();
 
   const indices = indicesResult?.data || [];
   const isMarketOpen = marketResult?.isOpen || false;
-  const isLiveData = Boolean(hasLiveTicks && isMarketOpen);
-  const dataStatus = isLiveData ? "LIVE" : isMarketOpen ? "CONNECTED" : indicesResult?.isLive ? "CLOSED" : "OFFLINE";
+  const dataStatus = !isMarketOpen
+    ? indicesResult?.isLive ? "CLOSED" : "OFFLINE"
+    : isRealtimeConnected ? "CONNECTED" : indicesResult?.isLive ? "POLLING" : "OFFLINE";
+  const isRealtimeActive = dataStatus === "CONNECTED";
   const giftNifty = marketResult?.giftNifty || null;
   const liveVix = allIndicesData?.vix;
 
@@ -196,19 +198,19 @@ export default function DashboardLayout() {
               <Popover>
                 <PopoverTrigger asChild>
                   <button className={`flex items-center gap-1.5 h-7 px-2 rounded-md border text-xs font-semibold transition-all cursor-pointer hover:opacity-90 ${
-                    isLiveData
+                    isRealtimeActive
                       ? "border-bullish/50 text-bullish bg-bullish/5"
                       : "border-muted-foreground/30 text-muted-foreground bg-muted/30"
                   }`}>
-                    {isLiveData ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+                    {isRealtimeActive ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
                     <span className="hidden sm:inline">{dataStatus}</span>
                   </button>
                 </PopoverTrigger>
                 <PopoverContent className="w-64 p-3" align="end">
                   <div className="space-y-3">
                     <div className="flex items-center gap-2">
-                      <div className={`h-2.5 w-2.5 rounded-full ${isLiveData ? "bg-bullish animate-pulse" : "bg-muted-foreground/50"}`} />
-                      <p className="text-xs font-semibold">{dataStatus === "LIVE" ? "Live ticks receiving" : dataStatus === "CLOSED" ? "Broker connected · Market closed" : dataStatus === "CONNECTED" ? "Broker connected · Awaiting ticks" : "Data unavailable"}</p>
+                      <div className={`h-2.5 w-2.5 rounded-full ${isRealtimeActive ? "bg-bullish animate-pulse" : "bg-muted-foreground/50"}`} />
+                      <p className="text-xs font-semibold">{dataStatus === "CLOSED" ? "Market closed · Last available data" : dataStatus === "CONNECTED" ? "Realtime stream connected · Awaiting ticks" : dataStatus === "POLLING" ? "Market data polling · Realtime disconnected" : "Data unavailable"}</p>
                     </div>
 
                     <div className="space-y-1.5 text-xs">
