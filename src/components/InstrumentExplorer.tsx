@@ -357,6 +357,13 @@ export function InstrumentExplorer({
       : selectedQuoteIsAvailable
         ? "STALE"
         : "UNAVAILABLE";
+  const chartUnavailableMessage = isAccountLoading
+    ? "Checking linked Dhan account before requesting historical candles."
+    : !activeAccountId
+      ? "Link a Dhan trading account to request historical candles."
+      : !marketDataProvider
+        ? "Select an active Dhan account to request historical candles."
+        : undefined;
 
   const futuresContracts = useMemo(
     () => workspaceInstruments
@@ -637,23 +644,23 @@ export function InstrumentExplorer({
                 <Table>
                   <TableHeader className="sticky top-0 z-10 bg-card">
                     <TableRow className="text-xs">
-                      <TableHead className="w-8" />
-                      {asset === "futures" ? <TableHead>Contract</TableHead> : <TableHead>Symbol</TableHead>}
+                      {asset !== "stocks" && <TableHead className="w-8" />}
+                      {asset === "futures" ? <TableHead>Contract</TableHead> : <TableHead>{asset === "stocks" ? "SYMBOL" : "Symbol"}</TableHead>}
                       {asset === "futures" && <TableHead>Underlying</TableHead>}
                       {asset === "futures" && <TableHead>Expiry</TableHead>}
-                      <TableHead>Segment</TableHead>
-                      <TableHead>Security ID</TableHead>
+                      {asset !== "stocks" && <TableHead>Segment</TableHead>}
+                      {asset !== "stocks" && <TableHead>Security ID</TableHead>}
                       <TableHead className="text-right">LTP</TableHead>
-                      <TableHead className="text-right">Change</TableHead>
-                      <TableHead className="text-right">Chg%</TableHead>
-                      <TableHead className="text-right">Open</TableHead>
-                      <TableHead className="text-right">High</TableHead>
-                      <TableHead className="text-right">Low</TableHead>
-                      {asset !== "indices" && <TableHead className="text-right">Volume</TableHead>}
+                      <TableHead className="text-right">{asset === "stocks" ? "CHG" : "Change"}</TableHead>
+                      <TableHead className="text-right">{asset === "stocks" ? "CHG%" : "Chg%"}</TableHead>
+                      <TableHead className="text-right">{asset === "stocks" ? "OPEN" : "Open"}</TableHead>
+                      <TableHead className="text-right">{asset === "stocks" ? "HIGH" : "High"}</TableHead>
+                      <TableHead className="text-right">{asset === "stocks" ? "LOW" : "Low"}</TableHead>
+                      {asset !== "indices" && <TableHead className="text-right">{asset === "stocks" ? "VOLUME" : "Volume"}</TableHead>}
                       {asset === "futures" && <TableHead className="text-right">OI</TableHead>}
                       {asset === "futures" && <TableHead className="text-right">OI Chg</TableHead>}
-                      <TableHead className="text-center w-[90px]">Chart</TableHead>
-                      <TableHead className="text-center">Actions</TableHead>
+                      <TableHead className="text-center w-[90px]">{asset === "stocks" ? "CHART" : "Chart"}</TableHead>
+                      <TableHead className="text-center">{asset === "stocks" ? "ACTIONS" : "Actions"}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -665,11 +672,13 @@ export function InstrumentExplorer({
 
                       return (
                         <TableRow key={`${row.symbol}-${row.contract ?? ""}-${row.expiry ?? ""}`} className={`text-[11px] font-mono transition-all border-l-2 ${positive ? "hover:bg-bullish/[0.03] border-transparent hover:border-bullish/50" : "hover:bg-bearish/[0.03] border-transparent hover:border-bearish/50"}`}>
-                          <TableCell>
-                            <button type="button" onClick={() => onToggleWatchlist(row.symbol)} aria-label={isWatched ? `Remove ${row.symbol} from watchlist` : `Add ${row.symbol} to watchlist`} className="flex h-4 w-4 items-center justify-center">
-                              <Star className={`h-3.5 w-3.5 ${isWatched ? "fill-warning text-warning" : "text-muted-foreground hover:text-warning"}`} />
-                            </button>
-                          </TableCell>
+                          {asset !== "stocks" && (
+                            <TableCell>
+                              <button type="button" onClick={() => onToggleWatchlist(row.symbol)} aria-label={isWatched ? `Remove ${row.symbol} from watchlist` : `Add ${row.symbol} to watchlist`} className="flex h-4 w-4 items-center justify-center">
+                                <Star className={`h-3.5 w-3.5 ${isWatched ? "fill-warning text-warning" : "text-muted-foreground hover:text-warning"}`} />
+                              </button>
+                            </TableCell>
+                          )}
 
                           {asset === "futures" ? (
                             <TableCell className="font-sans font-medium">
@@ -682,7 +691,13 @@ export function InstrumentExplorer({
                             <TableCell className="font-sans font-medium">
                               <div className="flex items-center gap-2">
                                 {positive ? <TrendingUp className="h-3 w-3 text-bullish opacity-80" /> : <TrendingDown className="h-3 w-3 text-bearish opacity-80" />}
-                                <span>{row.label || row.symbol}</span>
+                                {asset === "stocks" ? (
+                                  <button type="button" className="hover:text-primary" onClick={() => openChart(row.chartSymbol ?? row.symbol)} aria-label={`Open ${row.symbol} stock chart`}>
+                                    {row.symbol}
+                                  </button>
+                                ) : (
+                                  <span>{row.label || row.symbol}</span>
+                                )}
                               </div>
                             </TableCell>
                           )}
@@ -695,8 +710,8 @@ export function InstrumentExplorer({
                             <TableCell className="text-muted-foreground">{row.expiry || "—"}</TableCell>
                           )}
 
-                          <TableCell className="text-muted-foreground">{row.instrument?.exchangeSegment ?? "—"}</TableCell>
-                          <TableCell className="font-mono text-muted-foreground">{row.instrument?.providerInstrumentId ?? row.instrument?.securityId ?? "—"}</TableCell>
+                          {asset !== "stocks" && <TableCell className="text-muted-foreground">{row.instrument?.exchangeSegment ?? "—"}</TableCell>}
+                          {asset !== "stocks" && <TableCell className="font-mono text-muted-foreground">{row.instrument?.providerInstrumentId ?? row.instrument?.securityId ?? "—"}</TableCell>}
 
                           <TableCell className="text-right font-semibold">{row.ltp != null && row.ltp > 0 ? `₹${row.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}</TableCell>
                           <TableCell className={`text-right ${row.change != null && row.change >= 0 ? "text-bullish" : "text-bearish"}`}>
@@ -978,7 +993,14 @@ export function InstrumentExplorer({
 
                 <div className="min-h-0 flex-1 p-3">
                   <div className="h-full min-h-0 rounded-xl border border-border bg-background/60 p-2">
-                    <StockChart symbol={chartSymbol} inline fill candleOnly={activeTab === "Markets"} instrumentToken={chartInstrumentToken} />
+                    <StockChart
+                      symbol={chartSymbol}
+                      inline
+                      fill
+                      candleOnly={activeTab === "Markets"}
+                      instrumentToken={chartInstrumentToken}
+                      unavailableMessage={workspaceContext === "stocks" ? chartUnavailableMessage : undefined}
+                    />
                   </div>
                 </div>
 

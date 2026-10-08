@@ -98,7 +98,7 @@ vi.mock("@/lib/terminalApi", () => ({
 }));
 
 vi.mock("@/components/StockChart", () => ({
-  StockChart: ({ symbol, instrumentToken }: { symbol: string; instrumentToken?: string }) => <div data-testid="stock-chart" data-instrument-token={instrumentToken}>{symbol} chart mock</div>,
+  StockChart: ({ symbol, instrumentToken, unavailableMessage }: { symbol: string; instrumentToken?: string; unavailableMessage?: string }) => <div data-testid="stock-chart" data-instrument-token={instrumentToken} data-unavailable-message={unavailableMessage}>{symbol} chart mock</div>,
 }));
 
 describe("InstrumentExplorer stock workspace", () => {
@@ -112,7 +112,19 @@ describe("InstrumentExplorer stock workspace", () => {
           subtitle="NSE-listed equity quotes."
           asset="stocks"
           rows={[
-            { symbol: "ABB", chartSymbol: "ABB", label: "ABB", ltp: 7051.5, change: -77.5, changePercent: -1.09, open: 7000, high: 7100, low: 6900, volume: 10000 },
+            {
+              symbol: "ABB",
+              chartSymbol: "ABB",
+              label: "ABB LIMITED",
+              ltp: 7051.5,
+              change: -77.5,
+              changePercent: -1.09,
+              open: 7000,
+              high: 7100,
+              low: 6900,
+              volume: 10000,
+              instrument: { securityId: "500490", symbol: "ABB", tradingSymbol: "ABB", displayName: "ABB Limited", exchange: "NSE", exchangeSegment: "NSE_EQ", instrumentType: "EQUITY", lotSize: 1, tickSize: 0.05, provider: "dhan", providerInstrumentId: "500490" },
+            },
           ]}
           isLoading={false}
           watchedSymbols={[]}
@@ -122,12 +134,19 @@ describe("InstrumentExplorer stock workspace", () => {
       </QueryClientProvider>
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "View chart for ABB" }));
+    expect(screen.getAllByRole("columnheader").map((header) => header.textContent?.trim())).toEqual([
+      "SYMBOL", "LTP", "CHG", "CHG%", "OPEN", "HIGH", "LOW", "VOLUME", "CHART", "ACTIONS",
+    ]);
+    expect(screen.queryByText("NSE_EQ")).not.toBeInTheDocument();
+    expect(screen.queryByText("500490")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open ABB stock chart" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open ABB stock chart" }));
 
     expect(screen.getByRole("button", { name: /back to stocks/i })).toBeInTheDocument();
     expect(screen.getAllByText("ABB").length).toBeGreaterThan(1);
     expect(screen.getAllByText("NSE").length).toBeGreaterThan(1);
     expect(screen.getByTestId("stock-chart")).toHaveTextContent("ABB chart mock");
+    expect(screen.getByTestId("stock-chart")).toHaveAttribute("data-unavailable-message", "Link a Dhan trading account to request historical candles.");
     expect(screen.getByRole("status")).toHaveTextContent("Link a Dhan account");
     expect(screen.getByText("UNAVAILABLE")).toBeInTheDocument();
     expect(screen.queryByText("LIVE")).not.toBeInTheDocument();

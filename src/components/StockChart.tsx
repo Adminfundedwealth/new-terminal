@@ -22,6 +22,8 @@ interface StockChartProps {
   fill?: boolean;
   /** Force the existing candlestick rendering for a workspace tab. */
   candleOnly?: boolean;
+  /** Explain why candles cannot be requested before reporting an empty history. */
+  unavailableMessage?: string;
   /** Kite token for a selected derivative contract. */
   instrumentToken?: string;
   /** If provided, renders as a Sheet (drawer) */
@@ -35,12 +37,14 @@ function ChartCore({
   height = 340,
   fill = false,
   candleOnly = false,
+  unavailableMessage,
   instrumentToken,
 }: {
   symbol: string;
   height?: number;
   fill?: boolean;
   candleOnly?: boolean;
+  unavailableMessage?: string;
   instrumentToken?: string;
 }) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -258,7 +262,7 @@ function ChartCore({
         <div ref={chartContainerRef} className={`w-full rounded-lg overflow-hidden ${fill ? "min-h-0 flex-1" : ""}`} />
         {candles && candles.length === 0 && !isLoading && (
           <div className="flex items-center justify-center h-[200px] text-sm text-muted-foreground">
-            No historical data available for {symbol}
+            {unavailableMessage ?? `No historical data available for ${symbol}`}
           </div>
         )}
       </div>
@@ -276,6 +280,7 @@ export function StockChart({
   height = 340,
   fill = false,
   candleOnly = false,
+  unavailableMessage,
   instrumentToken,
   asSheet = false,
   open = false,
@@ -292,7 +297,7 @@ export function StockChart({
             </SheetTitle>
           </SheetHeader>
           <div className="mt-3">
-            <ChartCore symbol={symbol} height={380} instrumentToken={instrumentToken} />
+            <ChartCore symbol={symbol} height={380} unavailableMessage={unavailableMessage} instrumentToken={instrumentToken} />
           </div>
         </SheetContent>
       </Sheet>
@@ -300,7 +305,7 @@ export function StockChart({
   }
 
   if (inline) {
-    return <ChartCore symbol={symbol} height={height} fill={fill} candleOnly={candleOnly} instrumentToken={instrumentToken} />;
+    return <ChartCore symbol={symbol} height={height} fill={fill} candleOnly={candleOnly} unavailableMessage={unavailableMessage} instrumentToken={instrumentToken} />;
   }
 
   return (
@@ -312,7 +317,7 @@ export function StockChart({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <ChartCore symbol={symbol} height={height} instrumentToken={instrumentToken} />
+        <ChartCore symbol={symbol} height={height} unavailableMessage={unavailableMessage} instrumentToken={instrumentToken} />
       </CardContent>
     </Card>
   );
