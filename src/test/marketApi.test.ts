@@ -1,5 +1,31 @@
 import { describe, it, expect } from "vitest";
-import { parseDhanOptionChain, parseNSEOptionChain, normalizeInstrumentMasterResponse } from "@/lib/marketApi";
+import { isNseMarketOpenAt, isWithinNseSessionAt, parseDhanOptionChain, parseNSEOptionChain, normalizeInstrumentMasterResponse } from "@/lib/marketApi";
+
+describe("isNseMarketOpenAt", () => {
+  it("rejects a stale NSE open status outside regular Indian market hours", () => {
+    expect(isNseMarketOpenAt("Open", "07-Oct-2026 15:30", new Date("2026-10-08T01:50:00.000Z"))).toBe(false);
+  });
+
+  it("requires the NSE trade date to match today, even during market hours", () => {
+    expect(isNseMarketOpenAt("Open", "07-Oct-2026 15:30", new Date("2026-10-08T04:00:00.000Z"))).toBe(false);
+  });
+
+  it("reports open only within weekday NSE trading hours in Asia/Kolkata", () => {
+    expect(isNseMarketOpenAt("Open", "08-Oct-2026", new Date("2026-10-08T03:45:00.000Z"))).toBe(true);
+    expect(isNseMarketOpenAt("Open", "08-Oct-2026", new Date("2026-10-08T10:00:00.000Z"))).toBe(true);
+    expect(isNseMarketOpenAt("Open", "08-Oct-2026", new Date("2026-10-08T03:44:00.000Z"))).toBe(false);
+    expect(isNseMarketOpenAt("Open", "08-Oct-2026", new Date("2026-10-08T10:01:00.000Z"))).toBe(false);
+    expect(isNseMarketOpenAt("Open", "10-Oct-2026", new Date("2026-10-10T05:00:00.000Z"))).toBe(false);
+  });
+});
+
+describe("isWithinNseSessionAt", () => {
+  it("uses Indian local time and regular weekday market hours when the live status provider is unavailable", () => {
+    expect(isWithinNseSessionAt(new Date("2026-10-08T03:45:00.000Z"))).toBe(true);
+    expect(isWithinNseSessionAt(new Date("2026-10-08T01:50:00.000Z"))).toBe(false);
+    expect(isWithinNseSessionAt(new Date("2026-10-10T05:00:00.000Z"))).toBe(false);
+  });
+});
 
 describe("parseDhanOptionChain", () => {
   it("returns empty chain for null/undefined input", () => {

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchLiveOptionChain, fetchLiveIndices, fetchMarketStatus, fetchExpiryList, fetchAllIndices, fetchLiveFnOStocks, fetchProxyHealth } from "@/lib/marketApi";
+import { fetchLiveOptionChain, fetchLiveIndices, fetchMarketStatus, fetchExpiryList, fetchAllIndices, fetchLiveFnOStocks, fetchProxyHealth, isNseMarketOpenAt, isWithinNseSessionAt } from "@/lib/marketApi";
 import type { FnOStockData } from "@/lib/marketApi";
 import { getMaxPain } from "@/lib/oiUtils";
 import type { OptionData, IndexData, ExpiryDate } from "@/lib/mockData";
@@ -160,13 +160,13 @@ export function useMarketStatus() {
               change: data.indicativenifty50.change || 0, changePercent: data.indicativenifty50.perChange || 0,
               status: data.indicativenifty50.status || "",
             } : null;
-            return { isOpen: nseStatus?.marketStatus === "Open", status: nseStatus?.marketStatus || "Closed", isLive: true, giftNifty, indicativeNifty };
+            const isOpen = isNseMarketOpenAt(nseStatus?.marketStatus, nseStatus?.tradeDate);
+            return { isOpen, status: isOpen ? "Open" : "Closed", isLive: true, giftNifty, indicativeNifty };
           }
         } catch (e) { markProxyOffline(); console.warn("Market status fetch failed:", e); }
       }
       const now = new Date();
-      const h = now.getHours(), m = now.getMinutes();
-      const isOpen = (h > 9 || (h === 9 && m >= 15)) && (h < 15 || (h === 15 && m <= 30));
+      const isOpen = isWithinNseSessionAt(now);
       return { isOpen, status: isOpen ? "Open" : "Closed", isLive: false, giftNifty: null, indicativeNifty: null };
     },
     refetchInterval: (query) => query.state.data?.isLive ? 15000 : 60000,

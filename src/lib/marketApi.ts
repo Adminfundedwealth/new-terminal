@@ -437,6 +437,54 @@ export async function fetchMarketStatus() {
   return fetchNSEProxy("market-status");
 }
 
+function getIndianMarketTime(now: Date): Record<string, string> {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  return Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+}
+
+function isNseTradeDateToday(tradeDate: string, now: Date): boolean {
+  const monthNumbers: Record<string, string> = {
+    Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
+    Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+  };
+  const legacyDate = /^(\d{1,2})-([A-Za-z]{3})-(\d{4})/.exec(tradeDate.trim());
+  const isoDate = /^(\d{4})-(\d{2})-(\d{2})/.exec(tradeDate.trim());
+  const apiDate = legacyDate && monthNumbers[legacyDate[2]]
+    ? `${legacyDate[3]}-${monthNumbers[legacyDate[2]]}-${legacyDate[1].padStart(2, "0")}`
+    : isoDate
+      ? `${isoDate[1]}-${isoDate[2]}-${isoDate[3]}`
+      : null;
+  const local = getIndianMarketTime(now);
+  return Boolean(apiDate && apiDate === `${local.year}-${local.month}-${local.day}`);
+}
+
+export function isWithinNseSessionAt(now = new Date()): boolean {
+  const local = getIndianMarketTime(now);
+  if (!["Mon", "Tue", "Wed", "Thu", "Fri"].includes(local.weekday)) return false;
+
+  const minutes = Number(local.hour) * 60 + Number(local.minute);
+  return minutes >= 9 * 60 + 15 && minutes <= 15 * 60 + 30;
+}
+
+export function isNseMarketOpenAt(
+  marketStatus: string | undefined,
+  tradeDate: string | undefined,
+  now = new Date(),
+): boolean {
+  return marketStatus === "Open" &&
+    Boolean(tradeDate && isNseTradeDateToday(tradeDate, now)) &&
+    isWithinNseSessionAt(now);
+}
+
 export async function fetchFnOStocks() {
   return fetchNSEProxy("equity-derivatives");
 }
