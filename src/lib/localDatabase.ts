@@ -21,6 +21,9 @@ export interface Instrument {
   exchangeSegment: string;
   instrumentType: string;
   lotSize: number;
+  provider?: "dhan" | "kite" | "zerodha";
+  providerInstrumentId?: string;
+  exchange?: string;
   series?: string;
   expiryDate?: string;
   strikePrice?: number;

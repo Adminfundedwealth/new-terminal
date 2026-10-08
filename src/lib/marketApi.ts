@@ -1,5 +1,6 @@
 import type { OptionData, ExpiryDate, IndexData } from "./mockData";
-import { getActiveBroker } from "./brokerConfig";
+import { classifyInstrument, isCashEquityListing, isCashEquitySymbol } from "./instrumentClassification";
+import { normalizeProviderInstrument } from "./instrumentMaster";
 
 // Local proxy base URL — override via VITE_PROXY_URL if deploying proxy elsewhere
 const PROXY_BASE = import.meta.env.VITE_PROXY_URL || "http://localhost:4002";
@@ -15,20 +16,12 @@ export interface IndianNewsArticle {
   category: string;
 }
 
-// Direct fetch to local proxy with optional user credentials
+// Broker credentials are server-side only; customer requests must never forward them.
 async function fetchDhanProxy(endpoint: string, params?: Record<string, string>): Promise<any> {
   const qp = new URLSearchParams({ endpoint, ...params });
   const url = `${PROXY_BASE}/api/dhan-proxy?${qp.toString()}`;
 
-  // Inject user's Dhan credentials if available
-  const headers: Record<string, string> = {};
-  const activeBroker = getActiveBroker();
-  if (activeBroker?.brokerId === "dhan" && activeBroker.values.clientId && activeBroker.values.accessToken) {
-    headers["x-dhan-client-id"] = activeBroker.values.clientId;
-    headers["x-dhan-access-token"] = activeBroker.values.accessToken;
-  }
-
-  const res = await fetch(url, { headers });
+  const res = await fetch(url);
   if (!res.ok) {
     const errText = await res.text();
     throw new Error(`Dhan proxy error ${res.status}: ${errText}`);
@@ -563,14 +556,51 @@ export interface FnOStockData {
   sector?: string;
 }
 
+function normalizeLookupKey(value: string | undefined): string {
+  return (value ?? "").replace(/[^A-Z0-9]/gi, "").toUpperCase();
+}
+
+function isLikelyCashEquitySymbol(symbol: string | undefined): boolean {
+  return Boolean(normalizeLookupKey(symbol)) && isCashEquitySymbol(symbol);
+}
+
+async function buildCashEquityLookup(): Promise<Set<string>> {
+  try {
+    const data = await fetchInstrumentMaster();
+    const rows = normalizeInstrumentMasterResponse(data);
+    const set = new Set<string>();
+
+    for (const row of rows) {
+      const normalized = normalizeProviderInstrument(row, "dhan");
+      const instrument = normalized.instrument;
+      if (!instrument || classifyInstrument(instrument) !== "stocks" || !isCashEquityListing(instrument)) continue;
+      set.add(normalizeLookupKey(instrument.symbol));
+      set.add(normalizeLookupKey(instrument.tradingSymbol));
+    }
+
+    return set;
+  } catch (error) {
+    console.warn("Cash equity instrument master lookup failed:", error);
+    return new Set();
+  }
+}
+
 export async function fetchLiveFnOStocks(): Promise<FnOStockData[]> {
   if (isWithinNseSessionAt()) {
     // Try NSE during regular hours for OI data; use the scanner for closed sessions.
     try {
       const raw = await fetchNSEProxy("equity-derivatives");
       if (raw?.data?.length > 0) {
-        return raw.data
+        const cashEquityLookup = await buildCashEquityLookup();
+        const rows = raw.data
           .filter((d: any) => d.symbol && d.symbol !== "NIFTY 50" && d.lastPrice)
+          .filter((d: any) => {
+            if (cashEquityLookup.size > 0) {
+              const keys = [normalizeLookupKey(d.symbol), normalizeLookupKey(d.tradingSymbol), normalizeLookupKey(d.instrumentName)];
+              return keys.some((key) => key && cashEquityLookup.has(key));
+            }
+            return isLikelyCashEquitySymbol(d.symbol);
+          })
           .map((d: any) => ({
             symbol: d.symbol,
             ltp: d.lastPrice || 0,
@@ -586,6 +616,8 @@ export async function fetchLiveFnOStocks(): Promise<FnOStockData[]> {
             oiChange: d.changeinOpenInterest || 0,
             sector: d.meta?.industry || "",
           }));
+
+        if (rows.length > 0) return rows;
       }
     } catch (e) {
       console.warn("NSE F&O stocks fetch failed, trying TradingView:", e);
@@ -595,7 +627,7 @@ export async function fetchLiveFnOStocks(): Promise<FnOStockData[]> {
   // Fallback to TradingView Scanner (no OI but great LTP/volume data)
   try {
     const tvData = await fetchTradingViewStocks();
-    if (tvData.length > 0) return tvData;
+    if (tvData.length > 0) return tvData.filter((stock) => isLikelyCashEquitySymbol(stock.symbol));
   } catch (e) {
     console.warn("TradingView stocks fetch also failed:", e);
   }
@@ -662,13 +694,7 @@ export async function fetchFIIDII(): Promise<FIIDIIData[]> {
 // ── Test Connection ──
 
 export async function testDhanConnection(): Promise<{ status: string; message: string }> {
-  const headers: Record<string, string> = {};
-  const activeBroker = getActiveBroker();
-  if (activeBroker?.brokerId === "dhan" && activeBroker.values.clientId && activeBroker.values.accessToken) {
-    headers["x-dhan-client-id"] = activeBroker.values.clientId;
-    headers["x-dhan-access-token"] = activeBroker.values.accessToken;
-  }
-  const res = await fetch(`${PROXY_BASE}/api/test-connection`, { headers });
+  const res = await fetch(`${PROXY_BASE}/api/test-connection`);
   return res.json();
 }
 

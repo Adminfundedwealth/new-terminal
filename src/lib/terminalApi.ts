@@ -387,6 +387,7 @@ export interface TerminalMarketDataInstrument {
   instrumentType: string;
   lotSize?: number;
   tickSize?: number;
+  series?: string;
   expiryDate?: string;
   strikePrice?: number;
   optionType?: string;
@@ -472,6 +473,25 @@ export function toTerminalMarketDataInstrument(
     instrumentType: instrument.instrumentType,
     lotSize: instrument.lotSize,
     tickSize: instrument.tickSize,
+    series: instrument.series,
+    expiryDate: instrument.expiryDate,
+    strikePrice: instrument.strikePrice,
+    optionType: instrument.optionType,
+  };
+}
+
+export function toLocalMarketDataInstrument(instrument: TerminalMarketDataInstrument): Instrument {
+  return {
+    securityId: instrument.providerInstrumentId,
+    providerInstrumentId: instrument.providerInstrumentId,
+    provider: instrument.provider,
+    symbol: instrument.symbol,
+    tradingSymbol: instrument.tradingSymbol,
+    exchange: instrument.exchange,
+    exchangeSegment: instrument.exchangeSegment,
+    instrumentType: instrument.instrumentType,
+    lotSize: instrument.lotSize ?? 1,
+    series: instrument.series,
     expiryDate: instrument.expiryDate,
     strikePrice: instrument.strikePrice,
     optionType: instrument.optionType,

@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { fetchLiveFnOStocks, isNseMarketOpenAt, isWithinNseSessionAt, parseDhanOptionChain, parseNSEOptionChain, normalizeInstrumentMasterResponse } from "@/lib/marketApi";
+import { fetchInstrumentMaster, fetchLiveFnOStocks, isNseMarketOpenAt, isWithinNseSessionAt, parseDhanOptionChain, parseNSEOptionChain, normalizeInstrumentMasterResponse } from "@/lib/marketApi";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -45,6 +45,52 @@ describe("fetchLiveFnOStocks", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toContain("/api/tv-scan?type=stocks");
     expect(stocks[0]?.symbol).toBe("RELIANCE");
+  });
+
+  it("filters treasury bills and non-equity debt instruments from the live NSE list", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-08T05:00:00.000Z"));
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/dhan-proxy?endpoint=instruments")) {
+        return Promise.resolve(new Response(JSON.stringify({
+          instruments: [
+            { securityId: "1", symbol: "RELIANCE INDUSTRIES LTD", tradingSymbol: "RELIANCE", exchangeSegment: "NSE_EQ", instrumentType: "EQUITY", lotSize: 1, tickSize: 0.05 },
+            { securityId: "2", symbol: "GOI T-BILL 182D-01/04/27", tradingSymbol: "GOITBILL182D", exchangeSegment: "NSE_EQ", instrumentType: "EQUITY", lotSize: 1, tickSize: 0.05 },
+          ],
+        }), { status: 200, headers: { "Content-Type": "application/json" } }));
+      }
+      if (url.includes("/api/nse-proxy?endpoint=equity-derivatives")) {
+        return Promise.resolve(new Response(JSON.stringify({
+          data: [
+            { symbol: "RELIANCE", lastPrice: 2800, change: 20, pChange: 0.72, open: 2780, dayHigh: 2810, dayLow: 2775, previousClose: 2785, totalTradedVolume: 200000, changeinOpenInterest: 0 },
+            { symbol: "GOI T-BILL 182D-01/04/27", lastPrice: 99.5, change: 0, pChange: 0.0, open: 99.5, dayHigh: 99.7, dayLow: 99.4, previousClose: 99.5, totalTradedVolume: 2000, changeinOpenInterest: 0 },
+          ],
+        }), { status: 200, headers: { "Content-Type": "application/json" } }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ stocks: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    });
+
+    const stocks = await fetchLiveFnOStocks();
+
+    expect(stocks.map((stock) => stock.symbol)).toEqual(["RELIANCE"]);
+    expect(fetchMock).toHaveBeenCalled();
+  });
+});
+
+describe("browser broker credential boundary", () => {
+  it("does not forward browser-held Dhan credentials to the legacy proxy", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      instruments: [],
+      count: 0,
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+
+    await fetchInstrumentMaster();
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [RequestInfo | URL, RequestInit | undefined];
+    const headers = new Headers(init?.headers);
+    expect(headers.has("x-dhan-client-id")).toBe(false);
+    expect(headers.has("x-dhan-access-token")).toBe(false);
   });
 });
 

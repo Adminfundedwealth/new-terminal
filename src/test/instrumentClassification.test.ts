@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyInstrument, isCashEquityListing, isProductionInstrument, isTradableContract, validateInstrumentForOrder } from "@/lib/instrumentClassification";
+import { canonicalIndexSymbol, classifyInstrument, isCashEquityListing, isProductionInstrument, isTradableContract, validateInstrumentForOrder } from "@/lib/instrumentClassification";
 import type { Instrument } from "@/lib/localDatabase";
 
 const instrument = (overrides: Partial<Instrument>): Instrument => ({
@@ -43,5 +43,13 @@ describe("instrument classification", () => {
     expect(isCashEquityListing(instrument({ symbol: "ABCL 0% 2031 SR C2", tradingSymbol: "0ABCL31" }))).toBe(false);
     expect(isCashEquityListing(instrument({ symbol: "RELIANCE INDUSTRIES LTD", series: "N1" }))).toBe(false);
     expect(isCashEquityListing(instrument({ symbol: "3M INDIA LTD", tradingSymbol: "3MINDIA" }))).toBe(true);
+    expect(isCashEquityListing(instrument({ symbol: "GOI T-BILL 182D-01/04/27", tradingSymbol: "GOITBILL182D" }))).toBe(false);
+    expect(isCashEquityListing(instrument({ symbol: "GOI T-BILL 182D-01/04/27", tradingSymbol: "GOITBILL182D", series: "EQ" }))).toBe(false);
+  });
+
+  it("resolves gateway index trading symbols to their chart symbols", () => {
+    expect(canonicalIndexSymbol("NIFTY 50")).toBe("NIFTY");
+    expect(canonicalIndexSymbol("NIFTY BANK")).toBe("BANKNIFTY");
+    expect(canonicalIndexSymbol("NIFTY MIDCAP 50")).toBe("NIFTY_MIDCAP_50");
   });
 });

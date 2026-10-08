@@ -11,7 +11,25 @@ export const StatusFooter = () => {
     retry: false,
     staleTime: 30_000,
   });
-  const databaseCheck = terminalHealth?.data.find((check) => check.name === "database");
+  const checks = terminalHealth?.data ?? [];
+  const hasUnhealthyCheck = checks.some((check) => ["DOWN", "UNHEALTHY", "FAILED"].includes(check.status.toUpperCase()));
+  const allChecksHealthy = checks.length > 0 && checks.every((check) => check.status.toUpperCase() === "HEALTHY");
+  const healthLabel = terminalHealthError
+    ? "UNAUTHORIZED / UNAVAILABLE"
+    : !terminalHealth
+      ? "CHECKING"
+      : hasUnhealthyCheck
+        ? "UNHEALTHY"
+        : allChecksHealthy
+          ? "HEALTHY"
+          : checks.length === 0
+            ? "UNKNOWN"
+            : "DEGRADED";
+  const healthClassName = healthLabel === "HEALTHY"
+    ? "text-emerald-500"
+    : healthLabel === "UNHEALTHY"
+      ? "text-destructive"
+      : "text-amber-500";
 
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 1000);
@@ -40,9 +58,7 @@ export const StatusFooter = () => {
 
         <div className="hidden items-center gap-1.5 border-l border-border pl-4 sm:flex">
           <span>Terminal OS</span>
-          <span className={databaseCheck ? "text-emerald-500" : "text-amber-500"}>
-            {databaseCheck ? databaseCheck.status : terminalHealthError ? "UNAUTHORIZED / UNAVAILABLE" : "CHECKING"}
-          </span>
+          <span className={healthClassName}>{healthLabel}</span>
         </div>
 
       </div>

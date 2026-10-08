@@ -5,13 +5,23 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { useFnOStocks, useLiveIndices, useMarketStatus } from "@/hooks/useMarketData";
+import { useMarketStatus } from "@/hooks/useMarketData";
 import { isMeaningfulMarketValue } from "@/lib/marketDataState";
-import { useWebSocketStatus } from "@/hooks/useWebSocket";
 import { useNavigate } from "react-router-dom";
 import { Search, Star, TrendingUp, TrendingDown, ExternalLink, Radio, Loader2, Plus, X, BarChart3 } from "lucide-react";
 import { MiniChart } from "@/components/MiniChart";
-import { StockChart } from "@/components/StockChart";
+import { useAccountContext } from "@/hooks/useAccountContext";
+import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
+import { canonicalIndexSymbol, classifyInstrument } from "@/lib/instrumentClassification";
+import {
+  requestTerminalMarketData,
+  resolveTerminalMarketDataProvider,
+  toLocalMarketDataInstrument,
+  toTerminalMarketDataInstrument,
+  type TerminalMarketDataInstrument,
+  type TerminalMarketDataQuote,
+} from "@/lib/terminalApi";
+import { useQuery } from "@tanstack/react-query";
 
 const STORAGE_KEY = "optionsdesk_watchlist";
 const DEFAULT_WATCHLIST = ["NIFTY", "BANKNIFTY", "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN", "TATAMOTORS", "BAJFINANCE", "ADANIENT", "LT", "KOTAKBANK", "ITC", "HINDUNILVR"];
@@ -34,60 +44,115 @@ export default function Watchlist() {
   const [watchedSymbols, setWatchedSymbols] = useState<string[]>(() => getSavedWatchlist());
   const [search, setSearch] = useState("");
   const [addSymbol, setAddSymbol] = useState("");
-  const { data: fnoData, isLoading } = useFnOStocks();
-  const { data: indicesResult } = useLiveIndices();
+  const { instruments, isLoaded: instrumentsLoaded, loadError: instrumentLoadError } = useInstrumentLookup();
+  const { activeAccountId, accounts } = useAccountContext();
   const { data: marketStatusData } = useMarketStatus();
-  const wsConnected = useWebSocketStatus();
-  const [chartSymbol, setChartSymbol] = useState<string | null>(null);
+  const provider = resolveTerminalMarketDataProvider(accounts.find((account) => account.id === activeAccountId)?.broker_provider);
 
-  const allStocks = useMemo(() => fnoData?.allStocks ?? [], [fnoData]);
-  const indices = useMemo(() => indicesResult?.data ?? [], [indicesResult]);
-  const isLive = fnoData?.isLive ?? false;
+  const supportedInstruments = useMemo(
+    () => instruments.filter((instrument) =>
+      ["stocks", "indices"].includes(classifyInstrument(instrument) ?? "")
+    ),
+    [instruments],
+  );
+  const quoteQuery = useQuery({
+    queryKey: ["terminal-watchlist-quotes", activeAccountId, provider, watchedSymbols, instrumentsLoaded],
+    enabled: Boolean(activeAccountId && provider && instrumentsLoaded && watchedSymbols.length > 0),
+    queryFn: async () => {
+      if (!activeAccountId || !provider) throw new Error("Select an active Dhan or Kite account to load watchlist quotes.");
+      const results = await Promise.allSettled(watchedSymbols.map(async (symbol) => {
+        const canonicalSymbol = canonicalIndexSymbol(symbol).toUpperCase();
+        const category = canonicalSymbol !== symbol.toUpperCase()
+          || ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX", "SENSEX"].includes(canonicalSymbol)
+          ? "indices"
+          : "stocks";
+        const normalized = canonicalSymbol.replace(/[^A-Z0-9]/g, "");
+        let instrument = supportedInstruments.find((candidate) =>
+          classifyInstrument(candidate) === category &&
+          [candidate.symbol, candidate.tradingSymbol].some((value) =>
+            (category === "indices" ? canonicalIndexSymbol(value) : value).toUpperCase().replace(/[^A-Z0-9]/g, "") === normalized
+          )
+        );
+
+        if (!instrument) {
+          const searchResults = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(
+            activeAccountId,
+            provider,
+            { operation: "searchInstruments", query: symbol },
+          );
+          instrument = searchResults
+            .filter((candidate) =>
+              candidate.providerInstrumentId && candidate.symbol && candidate.tradingSymbol
+            )
+            .map(toLocalMarketDataInstrument)
+            .find((candidate) =>
+            classifyInstrument(candidate) === category &&
+            [candidate.symbol, candidate.tradingSymbol].some((value) =>
+              (category === "indices" ? canonicalIndexSymbol(value) : value).toUpperCase().replace(/[^A-Z0-9]/g, "") === normalized
+            )
+          );
+        }
+        if (!instrument) throw new Error(`Terminal OS could not resolve ${symbol} as a ${category} instrument.`);
+        const quote = await requestTerminalMarketData<TerminalMarketDataQuote>(
+          activeAccountId,
+          provider,
+          { operation: "getQuote", instrument: toTerminalMarketDataInstrument(instrument, provider) },
+        );
+        return [symbol, quote] as const;
+      }));
+      const quotes: Record<string, TerminalMarketDataQuote> = {};
+      const errors: string[] = [];
+      for (const result of results) {
+        if (result.status === "fulfilled") quotes[result.value[0]] = result.value[1];
+        else errors.push(result.reason instanceof Error ? result.reason.message : "A watchlist quote request failed.");
+      }
+      return { quotes, errors: [...new Set(errors)] };
+    },
+    staleTime: 5_000,
+    refetchInterval: 15_000,
+    retry: false,
+  });
+
+  const quotes = quoteQuery.data?.quotes ?? {};
+  const hasQuotes = Object.keys(quotes).length > 0;
   const marketClosed = marketStatusData?.isOpen === false;
-  const statusLabel = isLive ? (marketClosed ? "HISTORICAL" : "LIVE") : "UNAVAILABLE";
-  const statusText = isLive
-    ? marketClosed ? "Showing latest available market snapshot" : "Real-time NSE data"
-    : "Showing last available or unavailable values while market data refreshes";
+  const hasFreshQuote = Object.values(quotes).some((quote) => {
+    const age = Date.now() - Date.parse(quote.timestamp);
+    return Number.isFinite(age) && age <= 60_000;
+  });
+  const statusLabel = hasFreshQuote && !marketClosed ? "LIVE" : hasQuotes ? "HISTORICAL" : "UNAVAILABLE";
+  const baseStatusText = statusLabel === "LIVE"
+    ? "Account-scoped Terminal OS quotes"
+    : statusLabel === "HISTORICAL"
+      ? "Latest available account quote"
+      : instrumentLoadError ?? quoteQuery.error?.message ?? "No account quotes are available";
+  const statusText = quoteQuery.data?.errors.length
+    ? `${baseStatusText}. ${quoteQuery.data.errors[0]}`
+    : baseStatusText;
+  const isLoading = !instrumentsLoaded || quoteQuery.isLoading;
 
-  // Build watchlist rows from live F&O data + indices
   const watchlistRows = useMemo(() => {
     return watchedSymbols
       .map((sym) => {
-        // Check F&O stocks first
-        const stock = allStocks.find((s) => s.symbol === sym);
-        if (stock) {
+        const quote = quotes[sym];
+        if (quote) {
           return {
-            symbol: stock.symbol,
-            ltp: stock.ltp,
-            change: stock.change,
-            changePercent: stock.changePercent,
-            open: stock.open,
-            high: stock.high,
-            low: stock.low,
-            volume: stock.volume || 0,
-            oi: stock.openInterest || 0,
-            oiChange: stock.oiChange || 0,
-            isLive: true,
+            symbol: sym,
+            ltp: quote.ltp,
+            change: quote.change,
+            changePercent: quote.changePercent,
+            open: quote.open,
+            high: quote.high,
+            low: quote.low,
+            volume: quote.volume,
+            oi: quote.openInterest,
+            oiChange: null,
+            isLive: (() => {
+              const age = Date.now() - Date.parse(quote.timestamp);
+              return Number.isFinite(age) && age <= 60_000;
+            })(),
           };
         }
-        // Check indices (NIFTY, BANKNIFTY, etc.)
-        const idx = indices.find((i: any) => i.symbol === sym);
-        if (idx) {
-          return {
-            symbol: idx.symbol,
-            ltp: idx.ltp,
-            change: idx.change,
-            changePercent: idx.changePercent,
-            open: idx.open || idx.ltp,
-            high: idx.high || idx.ltp,
-            low: idx.low || idx.ltp,
-            volume: 0,
-            oi: 0,
-            oiChange: 0,
-            isLive: true,
-          };
-        }
-        // Symbol not found — show placeholder
         return {
           symbol: sym,
           ltp: null,
@@ -106,15 +171,25 @@ export default function Watchlist() {
         if (!search) return true;
         return row.symbol.includes(search.toUpperCase());
       });
-  }, [watchedSymbols, allStocks, indices, search]);
+  }, [watchedSymbols, quotes, search, hasFreshQuote]);
 
-  // All available F&O symbols for autocomplete
   const availableSymbols = useMemo(() => {
-    return allStocks
-      .map((s) => s.symbol)
+    return supportedInstruments
+      .map((instrument) => instrument.symbol)
+      .filter((symbol, index, allSymbols) => allSymbols.indexOf(symbol) === index)
       .filter((sym) => !watchedSymbols.includes(sym))
       .sort();
-  }, [allStocks, watchedSymbols]);
+  }, [supportedInstruments, watchedSymbols]);
+
+  const openInstrumentChart = (symbol: string) => {
+    const normalized = symbol.toUpperCase();
+    const indexSymbols = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX", "NIFTY_MIDCAP_50", "SENSEX"]);
+    const isIndex = indexSymbols.has(normalized) || supportedInstruments.some((instrument) =>
+      classifyInstrument(instrument) === "indices" &&
+      [instrument.symbol, instrument.tradingSymbol].some((value) => canonicalIndexSymbol(value).toUpperCase() === normalized)
+    );
+    navigate(`${isIndex ? "/indices" : "/stocks"}?symbol=${encodeURIComponent(symbol)}`);
+  };
 
   const addToWatchlist = () => {
     const sym = addSymbol.toUpperCase().trim();
@@ -213,10 +288,10 @@ export default function Watchlist() {
                       />
                     </TableCell>
                     <TableCell className="font-sans font-medium">
-                      <div className="flex items-center gap-1">
+                      <button type="button" className="flex items-center gap-1 text-left hover:text-primary" onClick={() => openInstrumentChart(w.symbol)} aria-label={`Open ${w.symbol} chart`}>
                         {(w.changePercent ?? 0) >= 0 ? <TrendingUp className="h-3 w-3 text-bullish opacity-0 group-hover:opacity-100 transition-opacity" /> : <TrendingDown className="h-3 w-3 text-bearish opacity-0 group-hover:opacity-100 transition-opacity" />}
                         {w.symbol}
-                      </div>
+                      </button>
                     </TableCell>
                     <TableCell className="text-right font-semibold">
                       {hasPrice ? `₹${w.ltp!.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
@@ -262,7 +337,7 @@ export default function Watchlist() {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center justify-center gap-1">
-                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setChartSymbol(w.symbol)} title="View Chart">
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openInstrumentChart(w.symbol)} title="View instrument chart" aria-label={`View chart for ${w.symbol}`}>
                           <BarChart3 className="h-3 w-3" />
                         </Button>
                         <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => navigate(`/option-chain?symbol=${w.symbol}`)}>
@@ -309,15 +384,6 @@ export default function Watchlist() {
         </CardContent>
       </Card>
 
-      {/* Stock Chart Drawer */}
-      {chartSymbol && (
-        <StockChart
-          symbol={chartSymbol}
-          asSheet
-          open={!!chartSymbol}
-          onOpenChange={(open) => { if (!open) setChartSymbol(null); }}
-        />
-      )}
     </div>
   );
 }

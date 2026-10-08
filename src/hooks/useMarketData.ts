@@ -1,10 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchLiveOptionChain, fetchLiveIndices, fetchMarketStatus, fetchExpiryList, fetchAllIndices, fetchLiveFnOStocks, fetchProxyHealth, isNseMarketOpenAt, isWithinNseSessionAt } from "@/lib/marketApi";
+import { fetchLiveIndices, fetchMarketStatus, fetchAllIndices, fetchLiveFnOStocks, fetchProxyHealth, isNseMarketOpenAt, isWithinNseSessionAt } from "@/lib/marketApi";
 import type { FnOStockData } from "@/lib/marketApi";
 import { getMaxPain } from "@/lib/oiUtils";
 import type { OptionData, IndexData, ExpiryDate } from "@/lib/mockData";
-import { findInstrumentsBySymbol } from "@/lib/localDatabase";
-import { classifyInstrument } from "@/lib/instrumentClassification";
+import { useAccountContext } from "@/hooks/useAccountContext";
+import {
+  requestTerminalMarketData,
+  resolveTerminalMarketDataProvider,
+  type TerminalMarketDataInstrument,
+  type TerminalMarketDataOptionChain,
+} from "@/lib/terminalApi";
 import { useWebSocketIndices, useWebSocketVix, useWebSocketStatus } from "@/hooks/useWebSocket";
 import { useMemo, useEffect, useState, useRef } from "react";
 import {
@@ -178,44 +183,57 @@ export function useMarketStatus() {
 // ── Hook: Live Option Chain ──
 // Returns live data during market hours, or cached "last close" data after hours
 export function useLiveOptionChain(symbol: string, expiry?: string, enabled = true) {
+  const { activeAccountId, accounts } = useAccountContext();
+  const provider = resolveTerminalMarketDataProvider(accounts.find((account) => account.id === activeAccountId)?.broker_provider);
+
   return useQuery({
-    queryKey: ["live-option-chain", symbol, expiry],
-    enabled,
+    queryKey: ["live-option-chain", activeAccountId, provider, symbol, expiry],
+    enabled: enabled && Boolean(activeAccountId && provider),
     queryFn: async () => {
-      if (shouldTryProxy()) {
-        try {
-          const underlying = (await findInstrumentsBySymbol(symbol)).find((instrument) => {
-            const category = classifyInstrument(instrument);
-            return category === "indices" || category === "stocks";
-          });
-          if (!underlying) throw new Error(`Underlying instrument not found in instrument master: ${symbol}`);
-          const result = await fetchLiveOptionChain(symbol, expiry, {
-            securityId: underlying.securityId,
-            exchangeSegment: underlying.exchangeSegment,
-          });
-          if (result) {
-            markProxyOnline();
-            const stepSize = result.chain.length > 1 ? Math.abs(result.chain[1].strikePrice - result.chain[0].strikePrice) : 50;
-            const isAfterHours = !!(result as any).afterHours;
-            const hasChainData = result.chain.length > 0;
-            
-            // Return data even if chain is empty during after-hours
-            // so the UI can show "Market Closed" instead of a blank page
-            if (hasChainData || isAfterHours) {
-              return {
-                chain: result.chain, spotPrice: result.spotPrice, expiries: result.expiries,
-                lotSize: (await findInstrumentsBySymbol(symbol)).find((instrument) => classifyInstrument(instrument) === "options" && (!expiry || instrument.expiryDate === expiry))?.lotSize || 0,
-                stepSize, maxPain: hasChainData ? getMaxPain(result.chain) : 0,
-                totalCEOI: result.totalCEOI, totalPEOI: result.totalPEOI,
-                isLive: hasChainData && !isAfterHours, afterHours: isAfterHours,
-                source: result.source || "live",
-                cachedAt: (result as any).cachedAt || null,
-              };
-            }
-          }
-        } catch (e) { markProxyOffline(); console.warn("Option chain fetch failed:", e); }
-      }
-      return null;
+      if (!activeAccountId || !provider) throw new Error("Select an active Dhan or Kite account to load the option chain.");
+
+      const result = await requestTerminalMarketData<TerminalMarketDataOptionChain>(activeAccountId, provider, {
+        operation: "getOptionChain",
+        underlying: symbol.toUpperCase(),
+        ...(expiry ? { expiry } : {}),
+      });
+      const expiries: ExpiryDate[] = result.expiries.map((value) => {
+        const date = new Date(value);
+        return {
+          label: date.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }),
+          value,
+          daysToExpiry: Math.max(0, Math.ceil((date.getTime() - Date.now()) / (1000 * 60 * 60 * 24))),
+        };
+      });
+      const instruments = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(activeAccountId, provider, {
+        operation: "searchInstruments",
+        query: symbol.toUpperCase(),
+      });
+      const optionInstrument = instruments.find((instrument) =>
+        ["OPTIDX", "OPTSTK"].includes(instrument.instrumentType.toUpperCase()) &&
+        (!expiry || instrument.expiryDate === expiry)
+      );
+      const hasChainData = result.chain.length > 0;
+      const isAfterHours = result.afterHours ?? false;
+      const stepSize = result.chain.length > 1
+        ? Math.abs(result.chain[1].strikePrice - result.chain[0].strikePrice)
+        : 50;
+
+      if (!hasChainData && !isAfterHours) return null;
+      return {
+        chain: result.chain,
+        spotPrice: result.spotPrice,
+        expiries,
+        lotSize: optionInstrument?.lotSize ?? 0,
+        stepSize,
+        maxPain: hasChainData ? getMaxPain(result.chain) : 0,
+        totalCEOI: result.totalCEOI,
+        totalPEOI: result.totalPEOI,
+        isLive: hasChainData && !isAfterHours,
+        afterHours: isAfterHours,
+        source: result.provider,
+        cachedAt: result.cachedAt ?? null,
+      };
     },
     refetchInterval: (query) => {
       const data = query.state.data;
@@ -231,25 +249,27 @@ export function useLiveOptionChain(symbol: string, expiry?: string, enabled = tr
 // ── Hook: Expiry List ──
 // NO MOCK FALLBACK — returns empty array
 export function useExpiryList(symbol: string) {
+  const { activeAccountId, accounts } = useAccountContext();
+  const provider = resolveTerminalMarketDataProvider(accounts.find((account) => account.id === activeAccountId)?.broker_provider);
+
   return useQuery({
-    queryKey: ["expiry-list", symbol],
+    queryKey: ["expiry-list", activeAccountId, provider, symbol],
+    enabled: Boolean(activeAccountId && provider),
     queryFn: async () => {
-      if (shouldTryProxy()) {
-        try {
-          const underlying = (await findInstrumentsBySymbol(symbol)).find((instrument) => {
-            const category = classifyInstrument(instrument);
-            return category === "indices" || category === "stocks";
-          });
-          const expiries = await fetchExpiryList(
-            symbol,
-            underlying
-              ? { securityId: underlying.securityId, exchangeSegment: underlying.exchangeSegment }
-              : undefined,
-          );
-          if (expiries.length > 0) { markProxyOnline(); return { expiries, isLive: true }; }
-        } catch (e) { markProxyOffline(); console.warn("Expiry list fetch failed:", e); }
-      }
-      return { expiries: [] as ExpiryDate[], isLive: false };
+      if (!activeAccountId || !provider) throw new Error("Select an active Dhan or Kite account to load option expiries.");
+      const chain = await requestTerminalMarketData<TerminalMarketDataOptionChain>(activeAccountId, provider, {
+        operation: "getOptionChain",
+        underlying: symbol.toUpperCase(),
+      });
+      const expiries: ExpiryDate[] = chain.expiries.map((value) => {
+        const date = new Date(value);
+        return {
+          label: date.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }),
+          value,
+          daysToExpiry: Math.max(0, Math.ceil((date.getTime() - Date.now()) / (1000 * 60 * 60 * 24))),
+        };
+      });
+      return { expiries, isLive: true };
     },
     staleTime: 60000,
     refetchInterval: 120000,

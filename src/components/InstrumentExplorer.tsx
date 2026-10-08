@@ -12,13 +12,22 @@ import { isWatchlisted } from "@/lib/watchlist";
 import { useLiveOptionChain } from "@/hooks/useMarketData";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { classifyInstrument, isProductionInstrument } from "@/lib/instrumentClassification";
-import { fetchInstrumentMaster } from "@/lib/marketApi";
 import { getPreferredMarketAdapter } from "@/lib/brokerRouter";
-import { createClientOrderId, createTerminalOrder, fetchTerminalPositions, modifyTerminalPositionProtection } from "@/lib/terminalApi";
+import {
+  createClientOrderId,
+  createTerminalOrder,
+  fetchTerminalPositions,
+  modifyTerminalPositionProtection,
+  requestTerminalMarketData,
+  resolveTerminalMarketDataProvider,
+  toTerminalMarketDataInstrument,
+  type TerminalMarketDataQuote,
+} from "@/lib/terminalApi";
 import type { Instrument } from "@/lib/localDatabase";
 
 export type ExplorerAsset = "stocks" | "indices" | "futures";
 const ORDER_TICK_SIZE = 0.05;
+const EXPLORER_PAGE_SIZE = 50;
 
 export interface ExplorerRow {
   symbol: string;
@@ -48,10 +57,12 @@ interface ExplorerProps {
   asset: ExplorerAsset;
   footerLabel?: string;
   isLoading?: boolean;
+  loadError?: string | null;
   watchedSymbols: string[];
   onToggleWatchlist: (symbol: string) => void;
   onTradeOpen?: (symbol: string) => void;
   activeAccountId?: string | null;
+  activeAccountProvider?: string | null;
   searchPlaceholder?: string;
   initialWorkspaceContext?: "stocks" | "options" | "futures";
   initialChartSymbol?: string;
@@ -83,6 +94,8 @@ export function InstrumentExplorer({
   onToggleWatchlist,
   onTradeOpen,
   activeAccountId,
+  activeAccountProvider,
+  loadError,
   searchPlaceholder,
   initialWorkspaceContext,
   initialChartSymbol,
@@ -91,6 +104,7 @@ export function InstrumentExplorer({
   initialInstrumentToken,
 }: ExplorerProps) {
   const [search, setSearch] = useState("");
+  const [currentPage, setCurrentPage] = useState(0);
   const [chartSymbol, setChartSymbol] = useState<string | null>(initialChartSymbol ?? null);
   const [activeTab, setActiveTab] = useState("Charts");
   const [workspaceContext, setWorkspaceContext] = useState<"stocks" | "options" | "futures">(initialWorkspaceContext ?? (asset === "futures" ? "futures" : "stocks"));
@@ -110,18 +124,9 @@ export function InstrumentExplorer({
   const [contextUnderlying, setContextUnderlying] = useState(initialUnderlying ?? "NIFTY");
   const [contextExpiry, setContextExpiry] = useState<string | undefined>(initialExpiry);
   const { instruments } = useInstrumentLookup();
-  const [providerInstruments, setProviderInstruments] = useState<Instrument[]>([]);
-
-  useEffect(() => {
-    if (instruments.length > 0 || providerInstruments.length > 0) return;
-    fetchInstrumentMaster()
-      .then((result) => setProviderInstruments(result.instruments as Instrument[]))
-      .catch(() => setProviderInstruments([]));
-  }, [instruments.length, providerInstruments.length]);
-
-  const availableInstruments = instruments.length > 0 ? instruments : providerInstruments;
   const rowInstruments = rows.flatMap((row) => row.instrument ? [row.instrument] : []);
-  const workspaceInstruments = rowInstruments.length > 0 ? rowInstruments : availableInstruments;
+  const workspaceInstruments = rowInstruments.length > 0 ? rowInstruments : instruments;
+  const marketDataProvider = resolveTerminalMarketDataProvider(activeAccountProvider);
   const chartInstrument = workspaceInstruments.find((instrument) => instrument.tradingSymbol.toUpperCase() === (chartSymbol ?? "").toUpperCase());
   const chartInstrumentToken = chartInstrument?.provider === "zerodha"
     ? chartInstrument.providerInstrumentId || chartInstrument.securityId
@@ -135,6 +140,73 @@ export function InstrumentExplorer({
       return haystack.includes(q);
     });
   }, [rows, search]);
+  const pageCount = Math.max(1, Math.ceil(filteredRows.length / EXPLORER_PAGE_SIZE));
+  const safePage = Math.min(currentPage, pageCount - 1);
+  const visibleRows = useMemo(
+    () => filteredRows.slice(safePage * EXPLORER_PAGE_SIZE, (safePage + 1) * EXPLORER_PAGE_SIZE),
+    [filteredRows, safePage],
+  );
+
+  useEffect(() => setCurrentPage(0), [search]);
+
+  const visibleQuotesQuery = useQuery({
+    queryKey: [
+      "terminal-explorer-quotes",
+      asset,
+      activeAccountId,
+      marketDataProvider,
+      visibleRows.map((row) => row.instrument?.providerInstrumentId ?? row.instrument?.securityId ?? row.chartSymbol ?? row.symbol),
+    ],
+    enabled: Boolean(activeAccountId && marketDataProvider && visibleRows.length > 0),
+    queryFn: async () => {
+      if (!activeAccountId || !marketDataProvider) throw new Error("Select an active Dhan or Kite account to load quotes.");
+      const quotes: Record<string, TerminalMarketDataQuote> = {};
+      const errors: string[] = [];
+      for (let offset = 0; offset < visibleRows.length; offset += 10) {
+        const batch = visibleRows.slice(offset, offset + 10);
+        const results = await Promise.allSettled(batch.map(async (row) => {
+          const chartSymbol = row.chartSymbol ?? row.symbol;
+          const instrument = row.instrument ?? workspaceInstruments.find((candidate) =>
+            candidate.tradingSymbol.toUpperCase() === chartSymbol.toUpperCase() ||
+            candidate.symbol.toUpperCase() === chartSymbol.toUpperCase()
+          );
+          if (!instrument) throw new Error(`Terminal OS could not resolve ${chartSymbol}.`);
+          const quote = await requestTerminalMarketData<TerminalMarketDataQuote>(
+            activeAccountId,
+            marketDataProvider,
+            { operation: "getQuote", instrument: toTerminalMarketDataInstrument(instrument, marketDataProvider) },
+          );
+          return [chartSymbol, quote] as const;
+        }));
+        for (const result of results) {
+          if (result.status === "fulfilled") quotes[result.value[0]] = result.value[1];
+          else errors.push(result.reason instanceof Error ? result.reason.message : "A market quote request failed.");
+        }
+      }
+      return { quotes, errors: [...new Set(errors)] };
+    },
+    staleTime: 5_000,
+    refetchInterval: 30_000,
+    retry: false,
+  });
+
+  const displayedRows = useMemo(() => visibleRows.map((row) => {
+    const quote = visibleQuotesQuery.data?.quotes[row.chartSymbol ?? row.symbol];
+    if (!quote || !Number.isFinite(quote.ltp) || quote.ltp <= 0) return row;
+    const quoteAge = Date.now() - Date.parse(quote.timestamp);
+    return {
+      ...row,
+      ltp: quote.ltp,
+      change: quote.change,
+      changePercent: quote.changePercent,
+      open: quote.open,
+      high: quote.high,
+      low: quote.low,
+      volume: quote.volume,
+      oi: quote.openInterest,
+      isLive: Number.isFinite(quoteAge) && quoteAge <= 60_000,
+    };
+  }), [visibleRows, visibleQuotesQuery.data]);
 
   const ticketInstrument = useMemo(() => {
     const matches = workspaceInstruments.filter((instrument) => {
@@ -152,6 +224,35 @@ export function InstrumentExplorer({
     if (matches.length === 0) return undefined;
     return matches.find((instrument) => instrument.exchange === "NSE" || instrument.exchangeSegment === "NSE_EQ") ?? matches[0];
   }, [workspaceInstruments, chartSymbol, workspaceContext]);
+
+  const { data: selectedTerminalQuote } = useQuery({
+    queryKey: ["terminal-selected-quote", activeAccountId, marketDataProvider, chartSymbol],
+    queryFn: async () => {
+      if (!activeAccountId || !marketDataProvider || !chartSymbol) return null;
+      const instrument = rows.find((row) => (row.chartSymbol ?? row.symbol) === chartSymbol)?.instrument
+        ?? workspaceInstruments.find((candidate) =>
+        candidate.tradingSymbol.toUpperCase() === chartSymbol.toUpperCase() ||
+        candidate.symbol.toUpperCase() === chartSymbol.toUpperCase()
+      ) ?? (await requestTerminalMarketData<Instrument[]>(
+        activeAccountId,
+        marketDataProvider,
+        { operation: "searchInstruments", query: chartSymbol },
+      )).find((candidate) =>
+        candidate.tradingSymbol.toUpperCase() === chartSymbol.toUpperCase() ||
+        candidate.symbol.toUpperCase() === chartSymbol.toUpperCase()
+      );
+      if (!instrument) throw new Error(`Terminal OS could not resolve ${chartSymbol}.`);
+      return requestTerminalMarketData<TerminalMarketDataQuote>(
+        activeAccountId,
+        marketDataProvider,
+        { operation: "getQuote", instrument: toTerminalMarketDataInstrument(instrument, marketDataProvider) },
+      );
+    },
+    enabled: Boolean(activeAccountId && marketDataProvider && chartSymbol && workspaceContext !== "options"),
+    staleTime: 5_000,
+    refetchInterval: 15_000,
+    retry: false,
+  });
 
   const { data: optionChainData, isLoading: isOptionChainLoading } = useLiveOptionChain(
     contextUnderlying,
@@ -176,6 +277,21 @@ export function InstrumentExplorer({
   const selectedQuote = useMemo(() => {
     const rowQuote = rows.find((row) => (row.chartSymbol ?? row.symbol) === chartSymbol)
       ?? filteredRows.find((row) => (row.chartSymbol ?? row.symbol) === chartSymbol);
+    if (selectedTerminalQuote && Number.isFinite(selectedTerminalQuote.ltp) && selectedTerminalQuote.ltp > 0) {
+      return {
+        symbol: selectedTerminalQuote.symbol,
+        chartSymbol: selectedTerminalQuote.tradingSymbol,
+        label: selectedTerminalQuote.tradingSymbol,
+        ltp: selectedTerminalQuote.ltp,
+        change: selectedTerminalQuote.change,
+        changePercent: selectedTerminalQuote.changePercent,
+        open: selectedTerminalQuote.open,
+        high: selectedTerminalQuote.high,
+        low: selectedTerminalQuote.low,
+        volume: selectedTerminalQuote.volume,
+        instrument: ticketInstrument,
+      };
+    }
     if (rowQuote || workspaceContext !== "options" || !ticketInstrument?.strikePrice || !ticketInstrument.optionType) {
       return rowQuote ?? null;
     }
@@ -211,7 +327,7 @@ export function InstrumentExplorer({
       volume: leg.volume,
       instrument: ticketInstrument,
     };
-  }, [chartSymbol, derivativeQuote, filteredRows, optionChainData, rows, ticketInstrument, workspaceContext]);
+  }, [chartSymbol, derivativeQuote, filteredRows, optionChainData, rows, selectedTerminalQuote, ticketInstrument, workspaceContext]);
 
   const futuresContracts = useMemo(
     () => workspaceInstruments
@@ -484,7 +600,9 @@ export function InstrumentExplorer({
                   Loading live market data...
                 </div>
               ) : filteredRows.length === 0 ? (
-                <div className="py-12 text-center text-sm text-muted-foreground">No real {asset} instruments available.</div>
+                <div className="py-12 text-center text-sm text-muted-foreground">
+                  {loadError ?? `No real ${asset} instruments available.`}
+                </div>
               ) : (
                 <Table>
                   <TableHeader className="sticky top-0 z-10 bg-card">
@@ -493,6 +611,8 @@ export function InstrumentExplorer({
                       {asset === "futures" ? <TableHead>Contract</TableHead> : <TableHead>Symbol</TableHead>}
                       {asset === "futures" && <TableHead>Underlying</TableHead>}
                       {asset === "futures" && <TableHead>Expiry</TableHead>}
+                      <TableHead>Segment</TableHead>
+                      <TableHead>Security ID</TableHead>
                       <TableHead className="text-right">LTP</TableHead>
                       <TableHead className="text-right">Change</TableHead>
                       <TableHead className="text-right">Chg%</TableHead>
@@ -507,7 +627,7 @@ export function InstrumentExplorer({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredRows.map((row) => {
+                    {displayedRows.map((row) => {
                       const positive = (row.changePercent ?? 0) >= 0;
                       const isWatched = isWatchlisted(row.symbol, watchedSymbols);
                       const dayRange = (row.high ?? row.ltp ?? 0) - (row.low ?? row.ltp ?? 0);
@@ -544,6 +664,9 @@ export function InstrumentExplorer({
                           {asset === "futures" && (
                             <TableCell className="text-muted-foreground">{row.expiry || "—"}</TableCell>
                           )}
+
+                          <TableCell className="text-muted-foreground">{row.instrument?.exchangeSegment ?? "—"}</TableCell>
+                          <TableCell className="font-mono text-muted-foreground">{row.instrument?.providerInstrumentId ?? row.instrument?.securityId ?? "—"}</TableCell>
 
                           <TableCell className="text-right font-semibold">{row.ltp != null && row.ltp > 0 ? `₹${row.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}</TableCell>
                           <TableCell className={`text-right ${row.change != null && row.change >= 0 ? "text-bullish" : "text-bearish"}`}>
@@ -604,6 +727,23 @@ export function InstrumentExplorer({
               )}
             </CardContent>
           </Card>
+          {visibleQuotesQuery.data?.errors.length ? (
+            <p className="mt-2 text-xs text-amber-500" role="status">
+              Some Terminal OS quotes are unavailable: {visibleQuotesQuery.data.errors[0]}
+            </p>
+          ) : null}
+          <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
+            <span>
+              {filteredRows.length === 0 ? "0" : `${safePage * EXPLORER_PAGE_SIZE + 1}-${Math.min((safePage + 1) * EXPLORER_PAGE_SIZE, filteredRows.length)}`}
+              {" of "}{filteredRows.length}
+            </span>
+            <Button variant="outline" size="sm" disabled={safePage === 0} onClick={() => setCurrentPage(safePage - 1)}>
+              Previous
+            </Button>
+            <Button variant="outline" size="sm" disabled={safePage >= pageCount - 1} onClick={() => setCurrentPage(safePage + 1)}>
+              Next
+            </Button>
+          </div>
         </>
       ) : (
         <div className="chart-workspace flex h-full min-h-0 flex-col">
@@ -659,9 +799,11 @@ export function InstrumentExplorer({
                           </div>
 
                           <div className="ml-3 text-right">
-                            <div className="text-xs font-semibold text-foreground">₹{(row.ltp ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                            <div className="text-xs font-semibold text-foreground">
+                              {row.ltp != null && row.ltp > 0 ? `₹${row.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
+                            </div>
                             <div className={`text-[10px] font-medium ${positive ? "text-bullish" : "text-bearish"}`}>
-                              {positive ? "+" : ""}{(row.changePercent ?? 0).toFixed(2)}%
+                              {row.changePercent == null ? "—" : `${positive ? "+" : ""}${row.changePercent.toFixed(2)}%`}
                             </div>
                           </div>
                         </button>
@@ -707,12 +849,16 @@ export function InstrumentExplorer({
                       <span className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{asset === "indices" ? "NSE · IDX_I" : workspaceContext === "stocks" ? "NSE" : "NFO"}</span>
                     </div>
                     <div className="mt-1 flex items-center gap-3 text-sm">
-                      <span className="font-mono font-semibold text-foreground">₹{(selectedQuote?.ltp ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      <span className="font-mono font-semibold text-foreground">
+                        {selectedQuote?.ltp != null && selectedQuote.ltp > 0
+                          ? `₹${selectedQuote.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                          : "—"}
+                      </span>
                       <span className={`font-mono ${((selectedQuote?.change ?? 0) >= 0) ? "text-bullish" : "text-bearish"}`}>
-                        {((selectedQuote?.change ?? 0) >= 0 ? "+" : "")}{(selectedQuote?.change ?? 0).toFixed(2)}
+                        {selectedQuote?.change == null ? "—" : `${selectedQuote.change >= 0 ? "+" : ""}${selectedQuote.change.toFixed(2)}`}
                       </span>
                       <span className={`font-mono ${((selectedQuote?.changePercent ?? 0) >= 0) ? "text-bullish" : "text-bearish"}`}>
-                        {((selectedQuote?.changePercent ?? 0) >= 0 ? "+" : "")}{(selectedQuote?.changePercent ?? 0).toFixed(2)}%
+                        {selectedQuote?.changePercent == null ? "—" : `${selectedQuote.changePercent >= 0 ? "+" : ""}${selectedQuote.changePercent.toFixed(2)}%`}
                       </span>
                     </div>
                   </div>

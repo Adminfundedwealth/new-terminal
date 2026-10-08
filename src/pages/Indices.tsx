@@ -1,31 +1,43 @@
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { useLiveIndices } from "@/hooks/useMarketData";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAccountContext } from "@/hooks/useAccountContext";
+import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { InstrumentExplorer } from "@/components/InstrumentExplorer";
 import { getSavedWatchlist, saveWatchlist } from "@/lib/watchlist";
+import { canonicalIndexSymbol, classifyInstrument, isProductionInstrument } from "@/lib/instrumentClassification";
 
 export default function Indices() {
   const navigate = useNavigate();
-  const { activeAccountId } = useAccountContext();
+  const [searchParams] = useSearchParams();
+  const { activeAccountId, accounts } = useAccountContext();
+  const activeAccountProvider = accounts.find((account) => account.id === activeAccountId)?.broker_provider;
   const [watchedSymbols, setWatchedSymbols] = useState<string[]>(() => getSavedWatchlist());
-  const { data, isLoading } = useLiveIndices();
+  const { instruments, isLoaded, loadError } = useInstrumentLookup();
+  const initialChartSymbol = searchParams.get("symbol") ?? undefined;
 
   const rows = useMemo(() => {
-    return (data?.data || []).map((index) => ({
-      symbol: index.symbol,
-      chartSymbol: index.name === "NIFTY MIDCAP 50" ? "NIFTY_MIDCAP_50" : undefined,
-      label: index.name || index.symbol,
-      ltp: index.ltp,
-      change: index.change,
-      changePercent: index.changePercent,
-      open: index.open,
-      high: index.high,
-      low: index.low,
-      volume: null,
-      searchText: `${index.symbol} ${index.name || ""}`,
-    }));
-  }, [data]);
+    const seen = new Set<string>();
+    return instruments.flatMap((instrument) => {
+      if (!isProductionInstrument(instrument) || classifyInstrument(instrument) !== "indices") return [];
+      const chartSymbol = canonicalIndexSymbol(instrument.symbol);
+      if (seen.has(chartSymbol)) return [];
+      seen.add(chartSymbol);
+      return [{
+        symbol: chartSymbol,
+        chartSymbol,
+        label: instrument.tradingSymbol,
+        ltp: null,
+        change: null,
+        changePercent: null,
+        open: null,
+        high: null,
+        low: null,
+        volume: null,
+        instrument,
+        searchText: `${chartSymbol} ${instrument.symbol} ${instrument.tradingSymbol}`,
+      }];
+    }).sort((a, b) => a.symbol.localeCompare(b.symbol));
+  }, [instruments]);
 
   const handleWatchlistToggle = (symbol: string) => {
     const next = watchedSymbols.includes(symbol) ? watchedSymbols.filter((entry) => entry !== symbol) : [...watchedSymbols, symbol];
@@ -37,13 +49,16 @@ export default function Indices() {
     <main className="mx-auto flex h-full min-h-0 w-full max-w-[1500px] flex-col p-3 sm:p-5">
       <InstrumentExplorer
         title="Indices"
-        subtitle="NIFTY, BANKNIFTY, FINNIFTY and other cash index quotes."
+        subtitle="Cash indices with account-scoped Terminal OS quotes and historical charts."
         asset="indices"
         rows={rows}
-        isLoading={isLoading}
+        isLoading={!isLoaded}
         watchedSymbols={watchedSymbols}
         onToggleWatchlist={handleWatchlistToggle}
         activeAccountId={activeAccountId}
+        activeAccountProvider={activeAccountProvider}
+        loadError={loadError}
+        initialChartSymbol={initialChartSymbol}
         onTradeOpen={(symbol) => navigate(`/option-chain?symbol=${symbol}`)}
         footerLabel="indices"
         searchPlaceholder="Search indices..."

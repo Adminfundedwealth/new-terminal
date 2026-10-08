@@ -5,6 +5,19 @@ export type InstrumentCategory = "stocks" | "indices" | "futures" | "options";
 const EQUITY_SEGMENTS = new Set(["NSE_EQ", "BSE_EQ"]);
 const INDEX_SEGMENTS = new Set(["IDX_I", "BSE_IDX"]);
 const NSE_EQUITY_SERIES = new Set(["EQ", "BE", "BZ", "SM", "ST", "X", "XT"]);
+const INDEX_SYMBOL_ALIASES: Record<string, string> = {
+  NIFTY: "NIFTY",
+  NIFTY50: "NIFTY",
+  BANKNIFTY: "BANKNIFTY",
+  NIFTYBANK: "BANKNIFTY",
+  FINNIFTY: "FINNIFTY",
+  NIFTYFINANCIALSERVICES: "FINNIFTY",
+  MIDCPNIFTY: "MIDCPNIFTY",
+  MIDCAPNIFTY: "MIDCPNIFTY",
+  NIFTYMIDCAP50: "NIFTY_MIDCAP_50",
+  SENSEX: "SENSEX",
+  INDIAVIX: "INDIAVIX",
+};
 
 function normalized(value: string | undefined): string {
   return (value || "").trim().toUpperCase();
@@ -22,6 +35,11 @@ export function classifyInstrument(instrument: Instrument): InstrumentCategory |
   if (INDEX_SEGMENTS.has(segment) && (type === "INDEX" || type === "INDEXFUT" || type === "INDEXOPT")) return "indices";
   if (EQUITY_SEGMENTS.has(segment) && type === "EQUITY") return "stocks";
   return null;
+}
+
+export function canonicalIndexSymbol(symbol: string): string {
+  const key = normalized(symbol).replace(/[^A-Z0-9]/g, "");
+  return INDEX_SYMBOL_ALIASES[key] ?? symbol;
 }
 
 export function isProductionInstrument(instrument: Instrument | Partial<Instrument>): boolean {
@@ -42,9 +60,16 @@ export function isProductionInstrument(instrument: Instrument | Partial<Instrume
 
 export function isCashEquityListing(instrument: Instrument): boolean {
   if (classifyInstrument(instrument) !== "stocks") return false;
+  const symbol = instrument.symbol || instrument.tradingSymbol || "";
+  if (!isCashEquitySymbol(symbol)) return false;
   const series = normalized(instrument.series);
   if (series) return NSE_EQUITY_SERIES.has(series);
-  return !/(?:%|\bNCD\b|\bDEB(?:ENTURE)?\b|\bSTRPP\b|\bSR\.?\s+[A-Z0-9])/i.test(instrument.symbol);
+  return true;
+}
+
+export function isCashEquitySymbol(symbol: string | undefined): boolean {
+  if (!symbol) return false;
+  return !/(?:\b(?:GOI|GOVT(?:\.?\s+OF\s+INDIA)?|GOVERNMENT\s+OF\s+INDIA|TBILL|T[- ]?BILL|TREASURY\s+(?:BILL|NOTE)|GILT|GSEC|SOVEREIGN|BOND|NCD|DEB(?:ENTURE)?|STRPP|SR\.?\s*[A-Z0-9]+|ZERO\s+COUPON)\b|\d+(?:\.\d+)?%)/i.test(symbol);
 }
 
 export function isTradableContract(instrument: Instrument, category?: InstrumentCategory): boolean {

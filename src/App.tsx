@@ -65,8 +65,8 @@ const App = () => (
             <Route path="/login" element={<Suspense fallback={<BrandSplash />}><Login /></Suspense>} />
             <Route element={<ProtectedRoute><DashboardLayout /></ProtectedRoute>}>
               <Route path="/" element={<PageSuspense><Index /></PageSuspense>} />
-              <Route path="/stocks" element={<PageSuspense><InstrumentDirectory category="stocks" /></PageSuspense>} />
-              <Route path="/indices" element={<PageSuspense><InstrumentDirectory category="indices" /></PageSuspense>} />
+              <Route path="/stocks" element={<PageSuspense><Stocks /></PageSuspense>} />
+              <Route path="/indices" element={<PageSuspense><Indices /></PageSuspense>} />
               <Route path="/option-chain" element={<PageSuspense><OptionChain /></PageSuspense>} />
               <Route path="/options" element={<PageSuspense><OptionChain /></PageSuspense>} />
               <Route path="/index-stocks" element={<PageSuspense><InstrumentDirectory category="indices" /></PageSuspense>} />

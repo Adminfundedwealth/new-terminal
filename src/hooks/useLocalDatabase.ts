@@ -12,6 +12,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   getAllPriceSnapshots,
   getCandleHistory,
@@ -27,8 +28,14 @@ import {
   type DatabaseStats,
   type Instrument,
 } from "@/lib/localDatabase";
-import { fetchInstrumentMaster } from "@/lib/marketApi";
 import { classifyInstrument, type InstrumentCategory } from "@/lib/instrumentClassification";
+import { useAccountContext } from "@/hooks/useAccountContext";
+import {
+  requestTerminalMarketData,
+  resolveTerminalMarketDataProvider,
+  type TerminalMarketDataInstrument,
+  toLocalMarketDataInstrument,
+} from "@/lib/terminalApi";
 
 // ── Hook: Database readiness check ──
 
@@ -165,37 +172,57 @@ export function useLocalFnOStocks() {
 // ── Hook: Instrument search/lookup ──
 
 export function useInstrumentLookup() {
-  const [allInstruments, setAllInstruments] = useState<Instrument[]>([]);
-  const [isLoaded, setIsLoaded] = useState(false);
+  const [localInstruments, setLocalInstruments] = useState<Instrument[]>([]);
+  const [localLoaded, setLocalLoaded] = useState(false);
+  const { activeAccountId, accounts } = useAccountContext();
+  const provider = resolveTerminalMarketDataProvider(
+    accounts.find((account) => account.id === activeAccountId)?.broker_provider,
+  );
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        let data = await getAllInstruments();
-        const hasUnderlyingMaster = data.some((instrument) => {
-          const hasRequiredFields = instrument.securityId && instrument.symbol && instrument.tradingSymbol;
-          const category = classifyInstrument(instrument);
-          return hasRequiredFields && (category === "stocks" || category === "indices");
-        });
-        if (!hasUnderlyingMaster) {
-          const result = await fetchInstrumentMaster();
-          data = result.instruments || [];
-          if (data.length > 0) {
-            const BATCH_SIZE = 2000;
-            for (let i = 0; i < data.length; i += BATCH_SIZE) {
-              await saveInstruments(data.slice(i, i + BATCH_SIZE));
-            }
-          }
-        }
-        setAllInstruments(data);
-      } catch {
-        setAllInstruments([]);
-      } finally {
-        setIsLoaded(true);
+    let cancelled = false;
+    getAllInstruments().then((local) => {
+      if (!cancelled) {
+        setLocalInstruments(local);
+        setLocalLoaded(true);
       }
-    };
-    load();
+    }).catch((error) => {
+      console.error("Local instrument cache could not be read:", error);
+      if (!cancelled) setLocalLoaded(true);
+    });
+    return () => { cancelled = true; };
   }, []);
+
+  const gatewayQuery = useQuery({
+    queryKey: ["terminal-instrument-master", activeAccountId, provider],
+    enabled: Boolean(activeAccountId && provider),
+    queryFn: async () => {
+      if (!activeAccountId || !provider) throw new Error("Select an active Dhan or Kite account to load instruments from Terminal OS.");
+      const remote = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(
+        activeAccountId,
+        provider,
+        { operation: "searchInstruments", query: "" },
+      );
+      const instruments = remote
+        .filter((instrument) => instrument.providerInstrumentId && instrument.symbol && instrument.tradingSymbol)
+        .map(toLocalMarketDataInstrument);
+      if (instruments.length === 0) throw new Error("Terminal OS returned an empty instrument master.");
+      const BATCH_SIZE = 2000;
+      for (let i = 0; i < instruments.length; i += BATCH_SIZE) {
+        await saveInstruments(instruments.slice(i, i + BATCH_SIZE));
+      }
+      return instruments;
+    },
+    retry: false,
+    staleTime: 6 * 60 * 60 * 1000,
+  });
+  const allInstruments = gatewayQuery.data ?? localInstruments;
+  const isLoaded = localLoaded && (!activeAccountId || !provider || gatewayQuery.isFetched);
+  const loadError = gatewayQuery.error instanceof Error
+    ? gatewayQuery.error.message
+    : localLoaded && !activeAccountId && localInstruments.length === 0
+      ? "Select an active Dhan or Kite account to load instruments from Terminal OS."
+      : null;
 
   const search = useCallback((query: string, category?: InstrumentCategory, limit = 20) => {
     if (!query || query.length < 1) return [];
@@ -216,7 +243,7 @@ export function useInstrumentLookup() {
     return allInstruments.filter((instrument) => classifyInstrument(instrument) === category && !seen.has(instrument.symbol) && seen.add(instrument.symbol));
   }, [allInstruments]);
 
-  return { search, findBySymbol, symbols, instruments: allInstruments, isLoaded, count: allInstruments.length };
+  return { search, findBySymbol, symbols, instruments: allInstruments, isLoaded, count: allInstruments.length, loadError };
 }
 
 // ── Symbol → SecurityId mapping from local DB ──

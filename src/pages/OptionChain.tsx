@@ -18,9 +18,13 @@ import { useLiveOptionChain } from "@/hooks/useMarketData";
 import { StockChart } from "@/components/StockChart";
 import { toast } from "sonner";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
+import { useAccountContext } from "@/hooks/useAccountContext";
 import { classifyInstrument } from "@/lib/instrumentClassification";
-
-const PROXY_BASE = import.meta.env.VITE_PROXY_URL || "http://localhost:4002";
+import {
+  requestTerminalMarketData,
+  resolveTerminalMarketDataProvider,
+  type TerminalMarketDataOptionChain,
+} from "@/lib/terminalApi";
 
 // ── Symbol categories for organized browsing ──
 const SYMBOL_CATEGORIES: { label: string; symbols: { label: string; value: string }[] }[] = [
@@ -310,7 +314,11 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     navigate(`/strategy-builder?${new URLSearchParams({ symbol, strike: String(strike), type, action })}`);
   }, [symbol, navigate]);
 
-  const { data, isLoading, refetch } = useLiveOptionChain(symbol, selectedExpiry, isMasterLoaded);
+  const { data, isLoading, refetch, error } = useLiveOptionChain(symbol, selectedExpiry);
+  const { activeAccountId, accounts } = useAccountContext();
+  const marketDataProvider = resolveTerminalMarketDataProvider(
+    accounts.find((account) => account.id === activeAccountId)?.broker_provider,
+  );
 
   const chain = useMemo(() => data?.chain ?? [], [data]);
   const expiries = useMemo(() => data?.expiries ?? [], [data]);
@@ -482,74 +490,38 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     toast.success(`Exported ${enrichedChain.length} strikes to CSV`);
   }, [enrichedChain, symbol, expiries, selectedExpiry]);
 
-  // ── Download Past Option Chain from Dhan API ──
+  // ── Download a past expiry option chain through Terminal OS ──
   const downloadPastOC = useCallback(async (pastExpiry: string) => {
     setIsDownloadingPast(true);
     try {
-      const res = await fetch(`${PROXY_BASE}/api/dhan-proxy?endpoint=option-chain&symbol=${symbol}&expiry=${pastExpiry}`, {
-        signal: AbortSignal.timeout(15000),
-      });
-      if (!res.ok) throw new Error(`API error: ${res.status}`);
-      const json = await res.json();
-      const chainData = json?.data || json;
-
-      // Parse Dhan option chain response into CSV
-      if (chainData && typeof chainData === "object") {
-        const headers = ["Strike","CE_LTP","CE_IV","CE_OI","CE_Volume","CE_Delta","CE_Bid","CE_Ask","PE_LTP","PE_IV","PE_OI","PE_Volume","PE_Delta","PE_Bid","PE_Ask"];
-        const rows: string[] = [];
-        
-        // Dhan returns data keyed by strike price
-        const oc = chainData.oc || chainData;
-        if (Array.isArray(oc)) {
-          oc.forEach((row: any) => {
-            rows.push([
-              row.strikePrice || row.strike_price || "",
-              row.ce_ltp || row.call_ltp || "",
-              row.ce_iv || row.call_iv || "",
-              row.ce_oi || row.call_oi || "",
-              row.ce_volume || row.call_volume || "",
-              row.ce_delta || "",
-              row.ce_bid || "",
-              row.ce_ask || "",
-              row.pe_ltp || row.put_ltp || "",
-              row.pe_iv || row.put_iv || "",
-              row.pe_oi || row.put_oi || "",
-              row.pe_volume || row.put_volume || "",
-              row.pe_delta || "",
-              row.pe_bid || "",
-              row.pe_ask || "",
-            ].join(","));
-          });
-        }
-
-        if (rows.length === 0) {
-          // Fallback: dump raw JSON as CSV
-          const blob = new Blob([JSON.stringify(chainData, null, 2)], { type: "application/json" });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = `${symbol}_${pastExpiry}_option_chain_raw.json`;
-          a.click();
-          URL.revokeObjectURL(url);
-          toast.success(`Downloaded raw option chain data for ${pastExpiry}`);
-        } else {
-          const csv = [headers.join(","), ...rows].join("\n");
-          const blob = new Blob([csv], { type: "text/csv" });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = `${symbol}_${pastExpiry}_option_chain.csv`;
-          a.click();
-          URL.revokeObjectURL(url);
-          toast.success(`Exported ${rows.length} strikes for ${pastExpiry}`);
-        }
+      if (!activeAccountId || !marketDataProvider) {
+        throw new Error("Select an active Dhan or Kite account to download option-chain data.");
       }
-    } catch (err: any) {
-      toast.error(`Failed to download: ${err.message}`);
+      const chainData = await requestTerminalMarketData<TerminalMarketDataOptionChain>(
+        activeAccountId,
+        marketDataProvider,
+        { operation: "getOptionChain", underlying: symbol.toUpperCase(), expiry: pastExpiry },
+      );
+      if (chainData.chain.length === 0) throw new Error(`No option-chain data is available for ${pastExpiry}.`);
+      const headers = ["Strike","CE_LTP","CE_IV","CE_OI","CE_Volume","CE_Delta","CE_Bid","CE_Ask","PE_LTP","PE_IV","PE_OI","PE_Volume","PE_Delta","PE_Bid","PE_Ask"];
+      const rows = chainData.chain.map((row) => [
+        row.strikePrice, row.ce.ltp, row.ce.iv, row.ce.oi, row.ce.volume, row.ce.delta, row.ce.bidPrice, row.ce.askPrice,
+        row.pe.ltp, row.pe.iv, row.pe.oi, row.pe.volume, row.pe.delta, row.pe.bidPrice, row.pe.askPrice,
+      ].join(","));
+      const blob = new Blob([[headers.join(","), ...rows].join("\n")], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${symbol}_${pastExpiry}_option_chain.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${rows.length} strikes for ${pastExpiry}`);
+    } catch (error) {
+      toast.error(`Failed to download: ${error instanceof Error ? error.message : "Option-chain request failed."}`);
     } finally {
       setIsDownloadingPast(false);
     }
-  }, [symbol]);
+  }, [activeAccountId, marketDataProvider, symbol]);
 
   // Active columns count for colSpan
   const callCols = [columnConfig.iv, columnConfig.intrinsic, columnConfig.timeValue, columnConfig.rho, columnConfig.vega, columnConfig.theta, columnConfig.gamma, columnConfig.delta, columnConfig.price, columnConfig.ask, columnConfig.bid, columnConfig.volume].filter(Boolean).length;
@@ -727,12 +699,14 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
       )}
 
       {/* Empty State: No data and not loading */}
-      {!hasData && !afterHours && data !== undefined && (
+      {!hasData && !afterHours && !isLoading && (
         <div className="flex flex-col items-center justify-center py-16 text-muted-foreground border border-dashed border-border/50 rounded-lg bg-card/30">
           <WifiOff className="h-10 w-10 mb-3 opacity-40 animate-pulse" />
           <p className="text-[15px] font-semibold text-foreground">Unable to load Option Chain</p>
           <p className="text-xs mt-1.5 max-w-sm text-center leading-relaxed">
-            Check that the proxy server is running on port <code className="font-mono text-primary/70 bg-primary/10 px-1 rounded">4002</code> and Dhan credentials are configured in <code className="font-mono text-primary/70 bg-primary/10 px-1 rounded">.env</code>
+            {error instanceof Error
+              ? error.message
+              : "Select an active account with a connected market-data provider, then retry."}
           </p>
           <Button variant="outline" size="sm" className="mt-5 gap-1.5 hover:text-primary hover:border-primary/50 transition-colors" onClick={() => refetch()}>
             <RefreshCw className="h-3.5 w-3.5" />

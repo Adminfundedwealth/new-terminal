@@ -12,6 +12,7 @@ import {
   requestTerminalMarketData,
   requestTerminalRealtimeTicket,
   subscribeToTerminalMarketDataStream,
+  toLocalMarketDataInstrument,
   TerminalMarketDataError,
 } from "@/lib/terminalApi";
 import { REALTIME_MOCK_TEST_ACCOUNT_ID } from "@/lib/realtimeMockTestScope";
@@ -32,6 +33,31 @@ afterEach(() => {
 });
 
 describe("Main Terminal market-data contract", () => {
+  it("preserves provider instrument identity and cash-equity classification fields in the local master", () => {
+    expect(toLocalMarketDataInstrument({
+      provider: "dhan",
+      providerInstrumentId: "1333",
+      symbol: "SBIN",
+      tradingSymbol: "SBIN",
+      exchange: "NSE",
+      exchangeSegment: "NSE_EQ",
+      instrumentType: "EQUITY",
+      lotSize: 1,
+      series: "EQ",
+    })).toMatchObject({
+      securityId: "1333",
+      providerInstrumentId: "1333",
+      provider: "dhan",
+      symbol: "SBIN",
+      tradingSymbol: "SBIN",
+      exchange: "NSE",
+      exchangeSegment: "NSE_EQ",
+      instrumentType: "EQUITY",
+      lotSize: 1,
+      series: "EQ",
+    });
+  });
+
   it("authenticates Terminal OS health checks with the current customer session", async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: [], checked_at: "2026-10-07T00:00:00Z" }), { status: 200 }));
 
