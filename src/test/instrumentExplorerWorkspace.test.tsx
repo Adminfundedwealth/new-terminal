@@ -26,6 +26,9 @@ vi.mock("@/lib/marketApi", () => ({
 
 vi.mock("@/lib/terminalApi", () => ({
   createClientOrderId: vi.fn(() => "mock-client-order-id"),
+  resolveTerminalMarketDataProvider: vi.fn((provider?: string) =>
+    provider === "dhan" ? "dhan" : provider === "kite" || provider === "zerodha" ? "kite" : null
+  ),
   createTerminalOrder: vi.fn().mockResolvedValue({ ok: true, order: { id: "mock-order" } }),
   modifyTerminalPositionProtection: vi.fn().mockResolvedValue({}),
   fetchTerminalPositions: vi.fn().mockResolvedValue({
@@ -114,6 +117,7 @@ describe("InstrumentExplorer stock workspace", () => {
           isLoading={false}
           watchedSymbols={[]}
           onToggleWatchlist={() => {}}
+          hasNoAccount
         />
       </QueryClientProvider>
     );
@@ -124,6 +128,9 @@ describe("InstrumentExplorer stock workspace", () => {
     expect(screen.getAllByText("ABB").length).toBeGreaterThan(1);
     expect(screen.getAllByText("NSE").length).toBeGreaterThan(1);
     expect(screen.getByTestId("stock-chart")).toHaveTextContent("ABB chart mock");
+    expect(screen.getByRole("status")).toHaveTextContent("Link a Dhan account");
+    expect(screen.getByText("UNAVAILABLE")).toBeInTheDocument();
+    expect(screen.queryByText("LIVE")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Option Chain" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Futures" })).not.toBeInTheDocument();
   });

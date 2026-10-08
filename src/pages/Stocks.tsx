@@ -10,7 +10,7 @@ export default function Stocks() {
   const [searchParams] = useSearchParams();
   const [watchedSymbols, setWatchedSymbols] = useState<string[]>(() => getSavedWatchlist());
   const { instruments, isLoaded, loadError } = useInstrumentLookup();
-  const { activeAccountId, accounts } = useAccountContext();
+  const { activeAccountId, accounts, hasNoAccount, isLoading: isAccountLoading } = useAccountContext();
   const activeAccountProvider = accounts.find((account) => account.id === activeAccountId)?.broker_provider;
   const initialWorkspaceContext = searchParams.get("workspace") === "options" ? "options" : undefined;
   const initialChartSymbol = searchParams.get("symbol") ?? searchParams.get("contract") ?? undefined;
@@ -60,6 +60,8 @@ export default function Stocks() {
         onToggleWatchlist={handleWatchlistToggle}
         activeAccountId={activeAccountId}
         activeAccountProvider={activeAccountProvider}
+        hasNoAccount={hasNoAccount}
+        isAccountLoading={isAccountLoading}
         loadError={loadError}
         initialWorkspaceContext={initialWorkspaceContext}
         initialChartSymbol={initialChartSymbol}

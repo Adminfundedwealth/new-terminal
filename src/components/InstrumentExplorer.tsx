@@ -63,6 +63,8 @@ interface ExplorerProps {
   onTradeOpen?: (symbol: string) => void;
   activeAccountId?: string | null;
   activeAccountProvider?: string | null;
+  hasNoAccount?: boolean;
+  isAccountLoading?: boolean;
   searchPlaceholder?: string;
   initialWorkspaceContext?: "stocks" | "options" | "futures";
   initialChartSymbol?: string;
@@ -95,6 +97,8 @@ export function InstrumentExplorer({
   onTradeOpen,
   activeAccountId,
   activeAccountProvider,
+  hasNoAccount,
+  isAccountLoading,
   loadError,
   searchPlaceholder,
   initialWorkspaceContext,
@@ -159,7 +163,7 @@ export function InstrumentExplorer({
     ],
     enabled: Boolean(activeAccountId && marketDataProvider && visibleRows.length > 0),
     queryFn: async () => {
-      if (!activeAccountId || !marketDataProvider) throw new Error("Select an active Dhan or Kite account to load quotes.");
+      if (!activeAccountId || !marketDataProvider) throw new Error("Select an active Dhan account to load quotes.");
       const quotes: Record<string, TerminalMarketDataQuote> = {};
       const errors: string[] = [];
       for (let offset = 0; offset < visibleRows.length; offset += 10) {
@@ -189,6 +193,15 @@ export function InstrumentExplorer({
     refetchInterval: 30_000,
     retry: false,
   });
+  const marketDataNotice = hasNoAccount
+    ? "No trading account is linked to this user. Link a Dhan account in Broker API Keys to load Terminal OS quotes and historical candles."
+    : !activeAccountId && isAccountLoading
+      ? "Checking linked trading accounts..."
+      : !activeAccountId
+        ? "No active trading account is available. Sign in or link a Dhan account to load quotes and historical candles."
+        : !marketDataProvider
+          ? "The selected trading account is not configured for Dhan market data."
+          : visibleQuotesQuery.data?.errors[0] ?? (visibleQuotesQuery.error instanceof Error ? visibleQuotesQuery.error.message : null);
 
   const displayedRows = useMemo(() => visibleRows.map((row) => {
     const quote = visibleQuotesQuery.data?.quotes[row.chartSymbol ?? row.symbol];
@@ -204,7 +217,7 @@ export function InstrumentExplorer({
       low: quote.low,
       volume: quote.volume,
       oi: quote.openInterest,
-      isLive: Number.isFinite(quoteAge) && quoteAge <= 60_000,
+      isLive: Number.isFinite(quoteAge) && quoteAge >= 0 && quoteAge <= 60_000,
     };
   }), [visibleRows, visibleQuotesQuery.data]);
 
@@ -328,6 +341,22 @@ export function InstrumentExplorer({
       instrument: ticketInstrument,
     };
   }, [chartSymbol, derivativeQuote, filteredRows, optionChainData, rows, selectedTerminalQuote, ticketInstrument, workspaceContext]);
+  const selectedQuoteIsAvailable = Boolean(
+    selectedTerminalQuote && Number.isFinite(selectedTerminalQuote.ltp) && selectedTerminalQuote.ltp > 0
+  );
+  const selectedQuoteIsLive = Boolean(
+    selectedQuoteIsAvailable &&
+    Number.isFinite(Date.parse(selectedTerminalQuote?.timestamp ?? "")) &&
+    Date.now() - Date.parse(selectedTerminalQuote?.timestamp ?? "") >= 0 &&
+    Date.now() - Date.parse(selectedTerminalQuote?.timestamp ?? "") <= 60_000
+  );
+  const chartQuoteStatus = workspaceContext === "options" && selectedQuote?.ltp
+    ? "AVAILABLE"
+    : selectedQuoteIsLive
+      ? "LIVE"
+      : selectedQuoteIsAvailable
+        ? "STALE"
+        : "UNAVAILABLE";
 
   const futuresContracts = useMemo(
     () => workspaceInstruments
@@ -415,7 +444,7 @@ export function InstrumentExplorer({
       return;
     }
 
-    const stockMatches = availableInstruments.filter((instrument) =>
+    const stockMatches = workspaceInstruments.filter((instrument) =>
       isProductionInstrument(instrument) &&
       instrument.symbol.toUpperCase() === chartSymbol.toUpperCase() &&
       classifyInstrument(instrument) === "stocks"
@@ -575,6 +604,7 @@ export function InstrumentExplorer({
 
   return (
     <div className={chartSymbol && hasChartWorkspace ? "flex h-full min-h-0 flex-col" : "space-y-4"}>
+      {marketDataNotice && <p className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-600" role="status">{marketDataNotice}</p>}
       {!chartSymbol || !hasChartWorkspace ? (
         <>
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -757,7 +787,7 @@ export function InstrumentExplorer({
               Back to {asset === "indices" ? "Indices" : asset === "futures" ? "Futures" : "Stocks"}
             </button>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className="rounded-md border border-bullish/30 bg-bullish/5 px-2 py-1 font-medium text-bullish">LIVE</span>
+              <span className={`rounded-md border px-2 py-1 font-medium ${selectedQuoteIsLive ? "border-bullish/30 bg-bullish/5 text-bullish" : "border-amber-500/30 bg-amber-500/5 text-amber-600"}`}>{chartQuoteStatus}</span>
               <span>{chartSymbol}</span>
             </div>
           </div>

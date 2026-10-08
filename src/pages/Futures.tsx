@@ -6,15 +6,13 @@ import { useAccountContext } from "@/hooks/useAccountContext";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { classifyInstrument, isProductionInstrument, isTradableContract } from "@/lib/instrumentClassification";
 import { getSavedWatchlist, saveWatchlist } from "@/lib/watchlist";
-import { resolveTerminalMarketDataProvider } from "@/lib/terminalApi";
 import type { Instrument } from "@/lib/localDatabase";
 
 export default function Futures() {
   const navigate = useNavigate();
   const { instruments, isLoaded, loadError } = useInstrumentLookup();
-  const { activeAccountId, accounts } = useAccountContext();
+  const { activeAccountId, accounts, hasNoAccount, isLoading: isAccountLoading } = useAccountContext();
   const activeAccountProvider = accounts.find((account) => account.id === activeAccountId)?.broker_provider;
-  const provider = resolveTerminalMarketDataProvider(activeAccountProvider);
   const [watchedSymbols, setWatchedSymbols] = useState<string[]>(() => getSavedWatchlist());
 
   const futures = useMemo(() => instruments
@@ -56,9 +54,9 @@ export default function Futures() {
     saveWatchlist(next);
   };
 
-  const quoteStatus = !activeAccountId || !provider
-    ? "Select an active Dhan or Kite account to load futures market data."
-    : loadError ?? (isLoaded && futures.length === 0 ? "No valid, unexpired futures contracts are available." : null);
+  const quoteStatus = isLoaded && futures.length === 0
+    ? loadError ?? "No valid, unexpired futures contracts are available."
+    : null;
 
   return (
     <main className="mx-auto w-full max-w-[1500px] p-3 sm:p-5">
@@ -77,6 +75,8 @@ export default function Futures() {
         onToggleWatchlist={handleWatchlistToggle}
         activeAccountId={activeAccountId}
         activeAccountProvider={activeAccountProvider}
+        hasNoAccount={hasNoAccount}
+        isAccountLoading={isAccountLoading}
         loadError={loadError}
         onTradeOpen={(symbol) => navigate(`/option-chain?symbol=${encodeURIComponent(symbol)}`)}
         footerLabel="contracts"

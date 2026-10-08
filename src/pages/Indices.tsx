@@ -9,7 +9,7 @@ import { canonicalIndexSymbol, classifyInstrument, isProductionInstrument } from
 export default function Indices() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { activeAccountId, accounts } = useAccountContext();
+  const { activeAccountId, accounts, hasNoAccount, isLoading: isAccountLoading } = useAccountContext();
   const activeAccountProvider = accounts.find((account) => account.id === activeAccountId)?.broker_provider;
   const [watchedSymbols, setWatchedSymbols] = useState<string[]>(() => getSavedWatchlist());
   const { instruments, isLoaded, loadError } = useInstrumentLookup();
@@ -57,6 +57,8 @@ export default function Indices() {
         onToggleWatchlist={handleWatchlistToggle}
         activeAccountId={activeAccountId}
         activeAccountProvider={activeAccountProvider}
+        hasNoAccount={hasNoAccount}
+        isAccountLoading={isAccountLoading}
         loadError={loadError}
         initialChartSymbol={initialChartSymbol}
         onTradeOpen={(symbol) => navigate(`/option-chain?symbol=${symbol}`)}

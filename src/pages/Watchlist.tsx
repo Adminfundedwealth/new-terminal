@@ -45,7 +45,7 @@ export default function Watchlist() {
   const [search, setSearch] = useState("");
   const [addSymbol, setAddSymbol] = useState("");
   const { instruments, isLoaded: instrumentsLoaded, loadError: instrumentLoadError } = useInstrumentLookup();
-  const { activeAccountId, accounts } = useAccountContext();
+  const { activeAccountId, accounts, hasNoAccount } = useAccountContext();
   const { data: marketStatusData } = useMarketStatus();
   const provider = resolveTerminalMarketDataProvider(accounts.find((account) => account.id === activeAccountId)?.broker_provider);
 
@@ -59,7 +59,7 @@ export default function Watchlist() {
     queryKey: ["terminal-watchlist-quotes", activeAccountId, provider, watchedSymbols, instrumentsLoaded],
     enabled: Boolean(activeAccountId && provider && instrumentsLoaded && watchedSymbols.length > 0),
     queryFn: async () => {
-      if (!activeAccountId || !provider) throw new Error("Select an active Dhan or Kite account to load watchlist quotes.");
+      if (!activeAccountId || !provider) throw new Error("Select an active Dhan account to load watchlist quotes.");
       const results = await Promise.allSettled(watchedSymbols.map(async (symbol) => {
         const canonicalSymbol = canonicalIndexSymbol(symbol).toUpperCase();
         const category = canonicalSymbol !== symbol.toUpperCase()
@@ -118,14 +118,16 @@ export default function Watchlist() {
   const marketClosed = marketStatusData?.isOpen === false;
   const hasFreshQuote = Object.values(quotes).some((quote) => {
     const age = Date.now() - Date.parse(quote.timestamp);
-    return Number.isFinite(age) && age <= 60_000;
+    return Number.isFinite(age) && age >= 0 && age <= 60_000;
   });
   const statusLabel = hasFreshQuote && !marketClosed ? "LIVE" : hasQuotes ? "HISTORICAL" : "UNAVAILABLE";
-  const baseStatusText = statusLabel === "LIVE"
-    ? "Account-scoped Terminal OS quotes"
-    : statusLabel === "HISTORICAL"
-      ? "Latest available account quote"
-      : instrumentLoadError ?? quoteQuery.error?.message ?? "No account quotes are available";
+  const baseStatusText = hasNoAccount
+    ? "No trading account is linked. Link a Dhan account in Broker API Keys to load account-scoped quotes."
+    : statusLabel === "LIVE"
+      ? "Account-scoped Terminal OS quotes"
+      : statusLabel === "HISTORICAL"
+        ? "Latest available account quote"
+        : instrumentLoadError ?? quoteQuery.error?.message ?? "No account quotes are available";
   const statusText = quoteQuery.data?.errors.length
     ? `${baseStatusText}. ${quoteQuery.data.errors[0]}`
     : baseStatusText;
@@ -149,7 +151,7 @@ export default function Watchlist() {
             oiChange: null,
             isLive: (() => {
               const age = Date.now() - Date.parse(quote.timestamp);
-              return Number.isFinite(age) && age <= 60_000;
+              return Number.isFinite(age) && age >= 0 && age <= 60_000;
             })(),
           };
         }

@@ -14,10 +14,11 @@ describe("Dhan cash-equity quote requests", () => {
     await expect(fetchCashQuotes("NSE_EQ", ["2885"])).resolves.toEqual({
       "2885": { ltp: 1425.5, open: 1410, high: 1430, low: 1405, previousClose: 1400, volume: 7890 },
     });
-    expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining("endpoint=cash-quotes"),
-      expect.objectContaining({ headers: expect.any(Object) }),
-    );
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("endpoint=cash-quotes"));
+    const [, init] = fetchMock.mock.calls[0] as [RequestInfo | URL, RequestInit | undefined];
+    const headers = new Headers(init?.headers);
+    expect(headers.has("x-dhan-client-id")).toBe(false);
+    expect(headers.has("x-dhan-access-token")).toBe(false);
   });
 
   it("rejects unsupported or oversized quote requests before fetching", async () => {
