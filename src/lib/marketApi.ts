@@ -564,30 +564,32 @@ export interface FnOStockData {
 }
 
 export async function fetchLiveFnOStocks(): Promise<FnOStockData[]> {
-  // Try NSE first (has OI data)
-  try {
-    const raw = await fetchNSEProxy("equity-derivatives");
-    if (raw?.data?.length > 0) {
-      return raw.data
-        .filter((d: any) => d.symbol && d.symbol !== "NIFTY 50" && d.lastPrice)
-        .map((d: any) => ({
-          symbol: d.symbol,
-          ltp: d.lastPrice || 0,
-          change: d.change || 0,
-          changePercent: d.pChange || 0,
-          open: d.open || d.lastPrice,
-          high: d.dayHigh || d.lastPrice,
-          low: d.dayLow || d.lastPrice,
-          previousClose: d.previousClose || d.lastPrice,
-          volume: d.totalTradedVolume || 0,
-          totalTradedVolume: d.totalTradedVolume || 0,
-          openInterest: d.openInterest || 0,
-          oiChange: d.changeinOpenInterest || 0,
-          sector: d.meta?.industry || "",
-        }));
+  if (isWithinNseSessionAt()) {
+    // Try NSE during regular hours for OI data; use the scanner for closed sessions.
+    try {
+      const raw = await fetchNSEProxy("equity-derivatives");
+      if (raw?.data?.length > 0) {
+        return raw.data
+          .filter((d: any) => d.symbol && d.symbol !== "NIFTY 50" && d.lastPrice)
+          .map((d: any) => ({
+            symbol: d.symbol,
+            ltp: d.lastPrice || 0,
+            change: d.change || 0,
+            changePercent: d.pChange || 0,
+            open: d.open || d.lastPrice,
+            high: d.dayHigh || d.lastPrice,
+            low: d.dayLow || d.lastPrice,
+            previousClose: d.previousClose || d.lastPrice,
+            volume: d.totalTradedVolume || 0,
+            totalTradedVolume: d.totalTradedVolume || 0,
+            openInterest: d.openInterest || 0,
+            oiChange: d.changeinOpenInterest || 0,
+            sector: d.meta?.industry || "",
+          }));
+      }
+    } catch (e) {
+      console.warn("NSE F&O stocks fetch failed, trying TradingView:", e);
     }
-  } catch (e) {
-    console.warn("NSE F&O stocks fetch failed, trying TradingView:", e);
   }
 
   // Fallback to TradingView Scanner (no OI but great LTP/volume data)

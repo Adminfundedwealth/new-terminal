@@ -1,5 +1,10 @@
-import { describe, it, expect } from "vitest";
-import { isNseMarketOpenAt, isWithinNseSessionAt, parseDhanOptionChain, parseNSEOptionChain, normalizeInstrumentMasterResponse } from "@/lib/marketApi";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { fetchLiveFnOStocks, isNseMarketOpenAt, isWithinNseSessionAt, parseDhanOptionChain, parseNSEOptionChain, normalizeInstrumentMasterResponse } from "@/lib/marketApi";
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe("isNseMarketOpenAt", () => {
   it("rejects a stale NSE open status outside regular Indian market hours", () => {
@@ -24,6 +29,22 @@ describe("isWithinNseSessionAt", () => {
     expect(isWithinNseSessionAt(new Date("2026-10-08T03:45:00.000Z"))).toBe(true);
     expect(isWithinNseSessionAt(new Date("2026-10-08T01:50:00.000Z"))).toBe(false);
     expect(isWithinNseSessionAt(new Date("2026-10-10T05:00:00.000Z"))).toBe(false);
+  });
+});
+
+describe("fetchLiveFnOStocks", () => {
+  it("uses the TradingView scanner instead of requesting NSE outside regular hours", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-08T01:50:00.000Z"));
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      stocks: [{ symbol: "RELIANCE", ltp: 100, changeAbs: 1, changePercent: 1, open: 99, high: 101, low: 99, volume: 200 }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+
+    const stocks = await fetchLiveFnOStocks();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/api/tv-scan?type=stocks");
+    expect(stocks[0]?.symbol).toBe("RELIANCE");
   });
 });
 
