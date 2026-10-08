@@ -11,7 +11,11 @@ export function TopMovers() {
   const { data, isLoading } = useFnOStocks();
   const gainers = data?.gainers || [];
   const losers = data?.losers || [];
-  const isLive = data?.isLive || false;
+  const sourceLabel = data?.source === "nse"
+    ? "NSE SNAPSHOT"
+    : data?.source === "tradingview"
+      ? "TRADINGVIEW SNAPSHOT"
+      : data?.source === "database" ? "CACHED" : null;
 
   return (
     <div className="grid lg:grid-cols-2 gap-3">
@@ -20,7 +24,7 @@ export function TopMovers() {
           <CardTitle className="text-base flex items-center gap-2">
             <ArrowUpRight className="h-5 w-5 text-bullish drop-shadow-[0_0_8px_rgba(0,255,100,0.5)]" /> Top Gainers
             <span className="text-xs text-muted-foreground font-normal">({gainers.length})</span>
-            {isLive && <Badge variant="outline" className="text-xs h-5 px-2 border-bullish/30 text-bullish ml-auto">LIVE</Badge>}
+            {sourceLabel && <Badge variant="outline" className="text-xs h-5 px-2 border-muted-foreground/30 text-muted-foreground ml-auto">{sourceLabel}</Badge>}
             {isLoading && <Loader2 className="h-4 w-4 animate-spin ml-auto text-muted-foreground" />}
           </CardTitle>
         </CardHeader>
@@ -71,7 +75,7 @@ export function TopMovers() {
           <CardTitle className="text-base flex items-center gap-2">
             <ArrowDownRight className="h-5 w-5 text-bearish drop-shadow-[0_0_8px_rgba(255,50,50,0.5)]" /> Top Losers
             <span className="text-xs text-muted-foreground font-normal">({losers.length})</span>
-            {isLive && <Badge variant="outline" className="text-xs h-5 px-2 border-bearish/30 text-bearish ml-auto">LIVE</Badge>}
+            {sourceLabel && <Badge variant="outline" className="text-xs h-5 px-2 border-muted-foreground/30 text-muted-foreground ml-auto">{sourceLabel}</Badge>}
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0 pb-1">

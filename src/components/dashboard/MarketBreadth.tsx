@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { useAllIndices, useFnOStocks } from "@/hooks/useMarketData";
+import { useAllIndices, useFnOStocks, useMarketStatus } from "@/hooks/useMarketData";
 import { useWebSocketVix } from "@/hooks/useWebSocket";
 import {
   TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight,
@@ -11,6 +11,7 @@ import {
 
 export function MarketBreadth() {
   const { data: indexData } = useAllIndices();
+  const { data: marketStatus } = useMarketStatus();
   const { vix: wsVix } = useWebSocketVix();
   const { data: fnoData } = useFnOStocks();
 
@@ -19,6 +20,9 @@ export function MarketBreadth() {
   const unchanged = indexData?.unchanged ?? 0;
   const total = advances + declines + unchanged;
   const isLive = indexData?.isLive || false;
+  const dataStatus = isLive
+    ? marketStatus?.isOpen === true ? "POLLING" : marketStatus?.isOpen === false ? "CLOSED" : null
+    : null;
   
   const vix = wsVix?.value ?? indexData?.vix?.value ?? null;
   const vixChange = wsVix?.changePercent ?? indexData?.vix?.changePercent ?? null;
@@ -70,7 +74,7 @@ export function MarketBreadth() {
         <CardHeader className="pb-3 pt-4 px-5 bg-gradient-to-r from-primary/5 to-transparent">
           <CardTitle className="text-base flex items-center gap-2">
             <Gauge className="h-5 w-5 text-primary drop-shadow-[0_0_8px_hsl(var(--primary)/0.5)]" /> Market Sentiment
-            {isLive && <Badge variant="outline" className="text-xs h-5 px-2 border-bullish/30 text-bullish ml-auto">LIVE</Badge>}
+            {dataStatus && <Badge variant="outline" className="text-xs h-5 px-2 border-muted-foreground/30 text-muted-foreground ml-auto">{dataStatus}</Badge>}
           </CardTitle>
         </CardHeader>
         <CardContent className="px-5 pb-4 space-y-4">

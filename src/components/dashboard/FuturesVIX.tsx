@@ -2,9 +2,9 @@ import { useMemo, useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { useAllIndices, useLiveIndices, useLiveOptionChain, useStoredCandles } from "@/hooks/useMarketData";
+import { useAllIndices, useLiveIndices, useLiveOptionChain, useMarketStatus, useStoredCandles } from "@/hooks/useMarketData";
 import { useWebSocketVix, useWebSocketIndices, useWebSocketStatus } from "@/hooks/useWebSocket";
-import { Globe, Activity, Radio, Database } from "lucide-react";
+import { Globe, Activity, Database } from "lucide-react";
 import { useChartData } from "@/hooks/useChartData";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip,
@@ -20,6 +20,7 @@ const tooltipStyle = {
 
 export function FuturesVIX() {
   const { data: indicesData } = useAllIndices();
+  const { data: marketStatus } = useMarketStatus();
   const { data: liveIndices } = useLiveIndices();
   const { vix: wsVix } = useWebSocketVix();
   const { indices: wsIndices } = useWebSocketIndices();
@@ -32,7 +33,9 @@ export function FuturesVIX() {
   const { data: storedNiftyCandles } = useStoredCandles("NIFTY");
 
   const vix = wsVix || indicesData?.vix;
-  const isLive = wsConnected || indicesData?.isLive || false;
+  const dataStatus = marketStatus?.isOpen === true
+    ? wsConnected ? "CONNECTED" : indicesData?.isLive ? "POLLING" : null
+    : marketStatus?.isOpen === false && indicesData?.isLive ? "CLOSED" : null;
   
   // Fallback: fetch VIX history from Dhan API when IndexedDB is empty
   const hasStoredVixData = !!storedVixCandles?.candles?.length;
@@ -94,7 +97,7 @@ export function FuturesVIX() {
           <CardHeader className="pb-3 pt-4 px-5 bg-gradient-to-r from-primary/5 to-transparent">
             <CardTitle className="text-base flex items-center gap-2">
               <Globe className="h-5 w-5 text-primary drop-shadow-[0_0_8px_hsl(var(--primary)/0.5)]" /> Index Performance
-              {isLive && <Badge variant="outline" className="text-xs h-5 px-2 border-bullish/30 text-bullish ml-auto gap-1"><Radio className="h-3 w-3 animate-pulse" />LIVE</Badge>}
+              {dataStatus && <Badge variant="outline" className={`text-xs h-5 px-2 ml-auto ${dataStatus === "CONNECTED" ? "border-bullish/30 text-bullish" : "border-muted-foreground/30 text-muted-foreground"}`}>{dataStatus}</Badge>}
             </CardTitle>
           </CardHeader>
           <CardContent className="px-5 pb-4">
