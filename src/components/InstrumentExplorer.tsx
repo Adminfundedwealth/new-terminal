@@ -289,7 +289,10 @@ export function InstrumentExplorer({
       hasNoAccount &&
       chartSymbol &&
       workspaceContext !== "options" &&
-      !visibleRows.some((row) => (row.chartSymbol ?? row.symbol).toUpperCase() === chartSymbol.toUpperCase())
+      (
+        !visibleRows.some((row) => (row.chartSymbol ?? row.symbol).toUpperCase() === chartSymbol.toUpperCase()) ||
+        (visibleQuotesQuery.isFetched && !visibleQuotesQuery.data?.quotes[chartSymbol])
+      )
     ),
     staleTime: 5_000,
     refetchInterval: 15_000,

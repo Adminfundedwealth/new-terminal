@@ -5,6 +5,7 @@ import { InstrumentExplorer } from "@/components/InstrumentExplorer";
 import { useLiveOptionChain } from "@/hooks/useMarketData";
 import { createTerminalOrder, fetchTerminalExecutions, fetchTerminalOrders, fetchTerminalPositions, modifyTerminalPositionProtection } from "@/lib/terminalApi";
 import { fetchCashQuotes } from "@/lib/marketApi";
+import type { Instrument } from "@/lib/localDatabase";
 
 vi.mock("@/hooks/useLocalDatabase", () => ({
   useInstrumentLookup: () => ({
@@ -281,6 +282,67 @@ describe("InstrumentExplorer stock workspace", () => {
     expect(screen.getByText("+2.53%")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /back to stocks/i })).toBeInTheDocument();
     expect(screen.queryByText(/link .*account/i)).not.toBeInTheDocument();
+  });
+
+  it("falls back to a single-symbol central quote when the visible quote batch has no result", async () => {
+    let quoteRequests = 0;
+    vi.mocked(fetchCashQuotes).mockImplementation(async (_segment, securityIds) => {
+      if (!securityIds.includes("3456")) return {};
+      quoteRequests += 1;
+      if (quoteRequests === 1) return {};
+      return {
+        "3456": {
+          ltp: 279.9, open: 275.8, high: 280.95, low: 274.6, previousClose: 273,
+          change: 6.9, changePercent: 2.53, volume: 6360894, openInterest: null,
+          timestamp: "2026-10-09T15:59:51.000Z",
+        },
+      };
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tmpvInstrument: Instrument = {
+      securityId: "3456",
+      symbol: "TATA MOTORS PASS VEH LTD",
+      tradingSymbol: "TMPV",
+      exchange: "NSE",
+      exchangeSegment: "NSE_EQ",
+      instrumentType: "EQUITY",
+      lotSize: 1,
+      provider: "dhan",
+      providerInstrumentId: "3456",
+    };
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InstrumentExplorer
+          title="Stocks"
+          subtitle="NSE-listed equity quotes."
+          asset="stocks"
+          rows={[{
+            symbol: "TMPV",
+            chartSymbol: "TMPV",
+            label: "Tata Motors Passenger Vehicles",
+            ltp: null,
+            change: null,
+            changePercent: null,
+            open: null,
+            high: null,
+            low: null,
+            volume: null,
+            instrument: tmpvInstrument,
+          }]}
+          isLoading={false}
+          watchedSymbols={[]}
+          onToggleWatchlist={() => {}}
+          hasNoAccount
+          initialChartSymbol="TMPV"
+        />
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => expect(screen.getByText("₹279.90")).toBeInTheDocument());
+    expect(fetchCashQuotes).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("+2.53%")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /back to stocks/i })).toBeInTheDocument();
   });
 
   it("routes one-lot Kite futures BUY and SELL through the simulated existing ticket", async () => {
