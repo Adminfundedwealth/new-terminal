@@ -290,6 +290,7 @@ export function InstrumentExplorer({
       centralChartInstrument?.provider === "dhan" &&
       chartSymbol &&
       workspaceContext !== "options" &&
+      (visibleRows.length === 0 ? !isLoading : visibleQuotesQuery.isFetched) &&
       (
         !visibleRows.some((row) => (row.chartSymbol ?? row.symbol).toUpperCase() === chartSymbol.toUpperCase()) ||
         (visibleQuotesQuery.isFetched && !visibleQuotesQuery.data?.quotes[chartSymbol])

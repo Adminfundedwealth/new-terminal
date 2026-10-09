@@ -283,6 +283,62 @@ describe("InstrumentExplorer stock workspace", () => {
     expect(screen.queryByText(/link .*account/i)).not.toBeInTheDocument();
   });
 
+  it("waits for visible batch quotes before requesting a missing deep-linked symbol", async () => {
+    let releaseVisibleBatch: (() => void) | undefined;
+    const visibleBatch = new Promise<void>((resolve) => { releaseVisibleBatch = resolve; });
+    vi.mocked(fetchCashQuotes).mockImplementation(async (_segment, securityIds) => {
+      if (securityIds.includes("500490")) {
+        await visibleBatch;
+        return {};
+      }
+      if (securityIds.includes("3456")) {
+        return {
+          "3456": {
+            ltp: 279.9, open: 275.8, high: 280.95, low: 274.6, previousClose: 273,
+            change: 6.9, changePercent: 2.53, volume: 6360894, openInterest: null,
+            timestamp: "2026-10-09T15:59:51.000Z",
+          },
+        };
+      }
+      return {};
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InstrumentExplorer
+          title="Stocks"
+          subtitle="NSE-listed equity quotes."
+          asset="stocks"
+          rows={[{
+            symbol: "ABB",
+            chartSymbol: "ABB",
+            label: "ABB",
+            ltp: null,
+            change: null,
+            changePercent: null,
+            open: null,
+            high: null,
+            low: null,
+            volume: null,
+            instrument: { securityId: "500490", symbol: "ABB", tradingSymbol: "ABB", exchange: "NSE", exchangeSegment: "NSE_EQ", instrumentType: "EQUITY", lotSize: 1, provider: "dhan" },
+          }]}
+          isLoading={false}
+          watchedSymbols={[]}
+          onToggleWatchlist={() => {}}
+          initialChartSymbol="TATAMOTORS"
+        />
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => expect(fetchCashQuotes).toHaveBeenCalledTimes(1));
+    expect(fetchCashQuotes).toHaveBeenCalledWith("NSE_EQ", ["500490"]);
+    releaseVisibleBatch?.();
+    await waitFor(() => expect(fetchCashQuotes).toHaveBeenCalledWith("NSE_EQ", ["3456"]));
+    await waitFor(() => expect(screen.getByText("₹279.90")).toBeInTheDocument());
+    expect(fetchCashQuotes).toHaveBeenCalledTimes(2);
+  });
+
   it("falls back to a single-symbol central quote when the visible quote batch has no result", async () => {
     let quoteRequests = 0;
     vi.mocked(fetchCashQuotes).mockImplementation(async (_segment, securityIds) => {
