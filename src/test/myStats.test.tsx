@@ -106,7 +106,12 @@ describe("My Stats analytics dashboard", () => {
   });
 
   it("loads every analytics source for only the currently selected account and derives daily metrics", async () => {
-    setAccountState({ activeAccountId: "account-2", accounts: [{ ...account, id: "account-2", account_code: "FW-002" }] });
+    const selectedAccount = { ...account, id: "account-2", account_code: "FW-002" };
+    setAccountState({
+      activeAccountId: selectedAccount.id,
+      accounts: [selectedAccount],
+      accountContext: { ...accountContext, account: { ...accountContext.account, id: selectedAccount.id } },
+    });
     vi.mocked(fetchTerminalPerformance).mockResolvedValue({
       data: [
         { id: "day-1", trading_account_id: "account-2", date: "2026-10-08", opening_balance: 100_000, closing_balance: 100_250, daily_pnl: 250, total_trades: 2, winning_trades: 1, losing_trades: 1 },
@@ -130,6 +135,20 @@ describe("My Stats analytics dashboard", () => {
     expect(fetchTerminalExecutions).toHaveBeenCalledWith("account-2");
     expect(fetchTerminalOrders).toHaveBeenCalledWith("account-2");
     expect(fetchTerminalPositions).toHaveBeenCalledWith("account-2");
+  });
+
+  it("does not show the prior account context while the newly selected context is loading", () => {
+    setAccountState({
+      activeAccountId: "account-2",
+      accounts: [{ ...account, id: "account-2", account_code: "FW-002" }],
+    });
+
+    renderPage();
+
+    expect(screen.getByText("FW-002")).toBeInTheDocument();
+    expect(screen.getAllByText("Limit unavailable")).toHaveLength(2);
+    expect(screen.queryByText("Evaluation / Phase 1")).not.toBeInTheDocument();
+    expect(screen.getByText("Selected account · selected period")).toBeInTheDocument();
   });
 
   it("shows unavailable rather than fabricated trade-level win/loss statistics", () => {

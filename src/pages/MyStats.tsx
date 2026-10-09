@@ -276,15 +276,16 @@ export default function MyStats() {
     return [...weeks.values()].reverse();
   }, [filteredRows]);
 
-  const account = accountContext?.account;
-  const riskState = accountContext?.risk_state;
-  const rules = accountContext?.rules;
+  const selectedContext = accountContext?.account.id === activeAccountId ? accountContext : undefined;
+  const account = selectedContext?.account;
+  const riskState = selectedContext?.risk_state;
+  const rules = selectedContext?.rules;
   const selectedAccount = accounts.find((item) => item.id === activeAccountId) ?? null;
   const status = String(riskState?.status ?? account?.status ?? (hasNoAccount ? "NO ACCOUNT" : "UNAVAILABLE")).toUpperCase();
-  const challengeName = recordText(accountContext?.product, "name", "code")
+  const challengeName = recordText(selectedContext?.product, "name", "code")
     ?? recordText(account, "challenge_type", "account_type")
     ?? "FundedWealth account";
-  const phaseName = recordText(accountContext?.phase, "name", "code") ?? "Phase unavailable";
+  const phaseName = recordText(selectedContext?.phase, "name", "code") ?? "Phase unavailable";
   const maxDrawdown = numeric(riskState?.drawdown_amount);
   const dailyDrawdown = numeric(riskState?.daily_loss);
   const equityValue = accountNumber(account, "equity");
