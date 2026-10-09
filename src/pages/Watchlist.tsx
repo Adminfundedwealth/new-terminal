@@ -14,6 +14,7 @@ import { useAccountContext } from "@/hooks/useAccountContext";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { canonicalIndexSymbol, classifyInstrument, isCashEquityListing } from "@/lib/instrumentClassification";
 import type { Instrument } from "@/lib/localDatabase";
+import { fetchCentralMarketQuotes } from "@/lib/centralMarketQuotes";
 import {
   requestTerminalMarketData,
   resolveTerminalMarketDataProvider,
@@ -73,9 +74,15 @@ export default function Watchlist() {
     [instruments],
   );
   const quoteQuery = useQuery({
-    queryKey: ["terminal-watchlist-quotes", activeAccountId, provider, watchedSymbols, instrumentsLoaded],
-    enabled: Boolean(activeAccountId && provider && instrumentsLoaded && watchedSymbols.length > 0),
+    queryKey: ["terminal-watchlist-quotes", activeAccountId ?? "central-dhan", provider, watchedSymbols, instrumentsLoaded],
+    enabled: Boolean(instrumentsLoaded && watchedSymbols.length > 0 && (activeAccountId ? provider : hasNoAccount)),
     queryFn: async () => {
+      if (!activeAccountId && hasNoAccount) {
+        return fetchCentralMarketQuotes(watchedSymbols.map((symbol) => ({
+          key: symbol,
+          instrument: findSupportedInstrument(supportedInstruments, symbol),
+        })));
+      }
       if (!activeAccountId || !provider) throw new Error("An active account and market-data provider are required for account-scoped watchlist quotes.");
       const results = await Promise.allSettled(watchedSymbols.map(async (symbol) => {
         let instrument = findSupportedInstrument(supportedInstruments, symbol);
@@ -123,7 +130,11 @@ export default function Watchlist() {
   });
   const statusLabel = hasFreshQuote && !marketClosed ? "LIVE" : hasQuotes ? "HISTORICAL" : "UNAVAILABLE";
   const baseStatusText = hasNoAccount
-    ? "No current watchlist quotes are available. Market data is independent of trading account status."
+    ? statusLabel === "LIVE"
+      ? "Central Dhan quotes · market data is independent of trading account status."
+      : statusLabel === "HISTORICAL"
+        ? "Latest available central Dhan quotes · market data is independent of trading account status."
+        : "No current central Dhan watchlist quotes are available."
     : statusLabel === "LIVE"
       ? "Account-scoped Terminal OS quotes"
       : statusLabel === "HISTORICAL"

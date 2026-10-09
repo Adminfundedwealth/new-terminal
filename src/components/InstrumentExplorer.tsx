@@ -12,7 +12,7 @@ import { isWatchlisted } from "@/lib/watchlist";
 import { useLiveOptionChain } from "@/hooks/useMarketData";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { classifyInstrument, isProductionInstrument } from "@/lib/instrumentClassification";
-import { fetchCashQuotes } from "@/lib/marketApi";
+import { fetchCentralMarketQuotes } from "@/lib/centralMarketQuotes";
 import { getPreferredMarketAdapter } from "@/lib/brokerRouter";
 import {
   createClientOrderId,
@@ -168,55 +168,14 @@ export function InstrumentExplorer({
     )),
     queryFn: async () => {
       const quotes: Record<string, TerminalMarketDataQuote> = {};
-      const errors: string[] = [];
       if (!activeAccountId) {
-        const instrumentsBySegment = new Map<string, Map<string, Instrument>>();
-        for (const row of visibleRows) {
-          const instrument = row.instrument;
-          if (!instrument || instrument.provider !== "dhan") {
-            errors.push(`Central Dhan instrument data is unavailable for ${row.chartSymbol ?? row.symbol}.`);
-            continue;
-          }
-          const ids = instrumentsBySegment.get(instrument.exchangeSegment) ?? new Map<string, Instrument>();
-          ids.set(instrument.securityId, instrument);
-          instrumentsBySegment.set(instrument.exchangeSegment, ids);
-        }
-
-        const quoteGroups = await Promise.all(
-          [...instrumentsBySegment].map(async ([segment, segmentInstruments]) => [
-            segment,
-            await fetchCashQuotes(segment, [...segmentInstruments.keys()]),
-          ] as const),
-        );
-        const quotesBySegment = new Map(quoteGroups);
-        for (const row of visibleRows) {
-          const instrument = row.instrument;
-          if (!instrument || instrument.provider !== "dhan") continue;
-          const quote = quotesBySegment.get(instrument.exchangeSegment)?.[instrument.securityId];
-          if (!quote) {
-            errors.push(`Central Dhan returned no quote for ${instrument.tradingSymbol}.`);
-            continue;
-          }
-          quotes[row.chartSymbol ?? row.symbol] = {
-            provider: "dhan",
-            symbol: instrument.symbol,
-            tradingSymbol: instrument.tradingSymbol,
-            exchange: instrument.exchange ?? "NSE",
-            ltp: quote.ltp,
-            open: quote.open,
-            high: quote.high,
-            low: quote.low,
-            previousClose: quote.previousClose,
-            change: quote.change,
-            changePercent: quote.changePercent,
-            volume: quote.volume,
-            openInterest: quote.openInterest,
-            timestamp: quote.timestamp ?? "",
-          };
-        }
-        return { quotes, errors: [...new Set(errors)] };
+        return fetchCentralMarketQuotes(visibleRows.map((row) => ({
+          key: row.chartSymbol ?? row.symbol,
+          instrument: row.instrument,
+        })));
       }
 
+      const errors: string[] = [];
       if (!marketDataProvider) throw new Error("The selected account has no supported market-data provider.");
       for (let offset = 0; offset < visibleRows.length; offset += 10) {
         const batch = visibleRows.slice(offset, offset + 10);
