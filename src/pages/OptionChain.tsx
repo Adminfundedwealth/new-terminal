@@ -132,6 +132,8 @@ const SYMBOL_CATEGORIES: { label: string; symbols: { label: string; value: strin
 
 // Flat list for search
 const ALL_SYMBOLS = SYMBOL_CATEGORIES.flatMap(cat => cat.symbols);
+const INDEX_SYMBOLS = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]);
+const STOCK_SYMBOLS = new Set(ALL_SYMBOLS.filter(s => !INDEX_SYMBOLS.has(s.value)).map(s => s.value));
 
 // ── Searchable Symbol Selector Component ──
 function SymbolSearch({ value, onSelect, categories }: { value: string; onSelect: (v: string) => void; categories: { label: string; symbols: { label: string; value: string }[] }[] }) {
@@ -263,9 +265,7 @@ function OIBar({ value, max, side }: { value: number; max: number; side: "call" 
 export default function OptionChain({ defaultMarketView = "stocks" }: { defaultMarketView?: "stocks" | "indices" }) {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { instruments: masterInstruments, isLoaded: isMasterLoaded } = useInstrumentLookup();
-  const indexSymbols = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]);
-  const stockSymbols = new Set(ALL_SYMBOLS.filter(s => !indexSymbols.has(s.value)).map(s => s.value));
+  const { instruments: masterInstruments, isLoaded: isMasterLoaded, loadError: masterLoadError } = useInstrumentLookup();
   const [marketView, setMarketView] = useState<"stocks" | "indices">(defaultMarketView);
   const [symbol, setSymbol] = useState(searchParams.get("symbol") || (defaultMarketView === "indices" ? "NIFTY" : "RELIANCE"));
   const [selectedExpiry, setSelectedExpiry] = useState<string | undefined>(undefined);
@@ -285,9 +285,9 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
   useEffect(() => {
     setMarketView(defaultMarketView);
     if (defaultMarketView === "indices") {
-      setSymbol(current => indexSymbols.has(current) ? current : "NIFTY");
+      setSymbol(current => INDEX_SYMBOLS.has(current) ? current : "NIFTY");
     } else {
-      setSymbol(current => stockSymbols.has(current) ? current : "RELIANCE");
+      setSymbol(current => STOCK_SYMBOLS.has(current) ? current : "RELIANCE");
     }
   }, [defaultMarketView]);
 
@@ -314,11 +314,23 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     navigate(`/strategy-builder?${new URLSearchParams({ symbol, strike: String(strike), type, action })}`);
   }, [symbol, navigate]);
 
-  const { data, isLoading, refetch, error } = useLiveOptionChain(symbol, selectedExpiry);
   const { activeAccountId, accounts } = useAccountContext();
   const marketDataProvider = resolveTerminalMarketDataProvider(
     accounts.find((account) => account.id === activeAccountId)?.broker_provider,
   );
+  const centralUnderlyingInstrument = useMemo(() => {
+    const normalizedSymbol = symbol.trim().toUpperCase();
+    const candidates = masterInstruments.filter((instrument) =>
+      (instrument.symbol.toUpperCase() === normalizedSymbol || instrument.tradingSymbol.toUpperCase() === normalizedSymbol) &&
+      ["NSE_EQ", "IDX_I"].includes(instrument.exchangeSegment) &&
+      instrument.provider === "dhan"
+    );
+    const preferredSegment = INDEX_SYMBOLS.has(normalizedSymbol) ? "IDX_I" : "NSE_EQ";
+    const match = candidates.find((instrument) => instrument.exchangeSegment === preferredSegment) ?? candidates[0];
+    return match ? { securityId: match.securityId, exchangeSegment: match.exchangeSegment } : undefined;
+  }, [masterInstruments, symbol]);
+  const { data, isLoading, refetch, error } = useLiveOptionChain(symbol, selectedExpiry, true, centralUnderlyingInstrument);
+  const isChainLoading = isLoading || (!activeAccountId && !isMasterLoaded);
 
   const chain = useMemo(() => data?.chain ?? [], [data]);
   const expiries = useMemo(() => data?.expiries ?? [], [data]);
@@ -699,14 +711,16 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
       )}
 
       {/* Empty State: No data and not loading */}
-      {!hasData && !afterHours && !isLoading && (
+      {!hasData && !afterHours && !isChainLoading && (
         <div className="flex flex-col items-center justify-center py-16 text-muted-foreground border border-dashed border-border/50 rounded-lg bg-card/30">
           <WifiOff className="h-10 w-10 mb-3 opacity-40 animate-pulse" />
           <p className="text-[15px] font-semibold text-foreground">Unable to load Option Chain</p>
           <p className="text-xs mt-1.5 max-w-sm text-center leading-relaxed">
             {error instanceof Error
               ? error.message
-              : "Select an active account with a connected market-data provider, then retry."}
+              : !activeAccountId
+                ? masterLoadError ?? `Central market data could not resolve ${symbol}.`
+                : "Select an active account with a connected market-data provider, then retry."}
           </p>
           <Button variant="outline" size="sm" className="mt-5 gap-1.5 hover:text-primary hover:border-primary/50 transition-colors" onClick={() => refetch()}>
             <RefreshCw className="h-3.5 w-3.5" />
@@ -819,7 +833,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
       {viewMode === "expiration" && (
         <Card>
           <CardContent className="p-0 overflow-auto max-h-[65vh]">
-            {isLoading ? (
+            {isChainLoading ? (
               <div className="p-4 space-y-2">
                 {Array.from({ length: 12 }).map((_, i) => (
                   <div key={i} className="flex gap-2 items-center">

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchLiveIndices, fetchMarketStatus, fetchAllIndices, fetchLiveFnOStocks, fetchProxyHealth, isNseMarketOpenAt, isWithinNseSessionAt } from "@/lib/marketApi";
-import type { FnOStockData } from "@/lib/marketApi";
+import { fetchLiveIndices, fetchMarketStatus, fetchAllIndices, fetchLiveFnOStocks, fetchProxyHealth, fetchLiveOptionChain as fetchCentralOptionChain, fetchExpiryList as fetchCentralExpiryList, isNseMarketOpenAt, isWithinNseSessionAt } from "@/lib/marketApi";
+import type { FnOStockData, OptionUnderlying } from "@/lib/marketApi";
 import { getMaxPain } from "@/lib/oiUtils";
 import type { OptionData, IndexData, ExpiryDate } from "@/lib/mockData";
 import { useAccountContext } from "@/hooks/useAccountContext";
@@ -22,6 +22,17 @@ import {
 // ── Shared state: tracks whether proxy is reachable ──
 let proxyStatus: "unknown" | "online" | "offline" = "unknown";
 let proxyCheckTime = 0;
+
+const CENTRAL_INDEX_OPTION_UNDERLYINGS: Record<string, OptionUnderlying> = {
+  NIFTY: { securityId: "13", exchangeSegment: "IDX_I" },
+  BANKNIFTY: { securityId: "25", exchangeSegment: "IDX_I" },
+  FINNIFTY: { securityId: "27", exchangeSegment: "IDX_I" },
+  MIDCPNIFTY: { securityId: "442", exchangeSegment: "IDX_I" },
+};
+
+function resolveCentralOptionUnderlying(symbol: string, underlying?: OptionUnderlying): OptionUnderlying | null {
+  return underlying ?? CENTRAL_INDEX_OPTION_UNDERLYINGS[symbol.trim().toUpperCase()] ?? null;
+}
 
 function markProxyOnline() { proxyStatus = "online"; proxyCheckTime = Date.now(); }
 function markProxyOffline() { proxyStatus = "offline"; proxyCheckTime = Date.now(); }
@@ -182,22 +193,36 @@ export function useMarketStatus() {
 
 // ── Hook: Live Option Chain ──
 // Returns live data during market hours, or cached "last close" data after hours
-export function useLiveOptionChain(symbol: string, expiry?: string, enabled = true) {
+export function useLiveOptionChain(symbol: string, expiry?: string, enabled = true, underlying?: OptionUnderlying) {
   const { activeAccountId, accounts } = useAccountContext();
   const provider = resolveTerminalMarketDataProvider(accounts.find((account) => account.id === activeAccountId)?.broker_provider);
+  const centralUnderlying = resolveCentralOptionUnderlying(symbol, underlying);
+  const centralEnabled = !activeAccountId && Boolean(centralUnderlying);
 
   return useQuery({
-    queryKey: ["live-option-chain", activeAccountId, provider, symbol, expiry],
-    enabled: enabled && Boolean(activeAccountId && provider),
+    queryKey: ["live-option-chain", activeAccountId ?? "central-dhan", provider, symbol, expiry, centralUnderlying?.securityId, centralUnderlying?.exchangeSegment],
+    enabled: enabled && (activeAccountId ? Boolean(provider) : centralEnabled),
     queryFn: async () => {
-      if (!activeAccountId || !provider) throw new Error("Select an active Dhan or Kite account to load the option chain.");
+      let result: TerminalMarketDataOptionChain | Awaited<ReturnType<typeof fetchCentralOptionChain>>;
+      let optionInstruments: TerminalMarketDataInstrument[] = [];
+      if (activeAccountId && provider) {
+        result = await requestTerminalMarketData<TerminalMarketDataOptionChain>(activeAccountId, provider, {
+          operation: "getOptionChain",
+          underlying: symbol.toUpperCase(),
+          ...(expiry ? { expiry } : {}),
+        });
+        optionInstruments = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(activeAccountId, provider, {
+          operation: "searchInstruments",
+          query: symbol.toUpperCase(),
+        });
+      } else if (!activeAccountId && centralUnderlying) {
+        result = await fetchCentralOptionChain(symbol, expiry, centralUnderlying);
+      } else {
+        throw new Error("A central market-data instrument could not be resolved for this option chain.");
+      }
 
-      const result = await requestTerminalMarketData<TerminalMarketDataOptionChain>(activeAccountId, provider, {
-        operation: "getOptionChain",
-        underlying: symbol.toUpperCase(),
-        ...(expiry ? { expiry } : {}),
-      });
       const expiries: ExpiryDate[] = result.expiries.map((value) => {
+        if (typeof value !== "string") return value;
         const date = new Date(value);
         return {
           label: date.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }),
@@ -205,11 +230,7 @@ export function useLiveOptionChain(symbol: string, expiry?: string, enabled = tr
           daysToExpiry: Math.max(0, Math.ceil((date.getTime() - Date.now()) / (1000 * 60 * 60 * 24))),
         };
       });
-      const instruments = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(activeAccountId, provider, {
-        operation: "searchInstruments",
-        query: symbol.toUpperCase(),
-      });
-      const optionInstrument = instruments.find((instrument) =>
+      const optionInstrument = optionInstruments.find((instrument) =>
         ["OPTIDX", "OPTSTK"].includes(instrument.instrumentType.toUpperCase()) &&
         (!expiry || instrument.expiryDate === expiry)
       );
@@ -231,7 +252,7 @@ export function useLiveOptionChain(symbol: string, expiry?: string, enabled = tr
         totalPEOI: result.totalPEOI,
         isLive: hasChainData && !isAfterHours,
         afterHours: isAfterHours,
-        source: result.provider,
+        source: "source" in result ? result.source : result.provider,
         cachedAt: result.cachedAt ?? null,
       };
     },
@@ -248,14 +269,19 @@ export function useLiveOptionChain(symbol: string, expiry?: string, enabled = tr
 
 // ── Hook: Expiry List ──
 // NO MOCK FALLBACK — returns empty array
-export function useExpiryList(symbol: string) {
+export function useExpiryList(symbol: string, underlying?: OptionUnderlying) {
   const { activeAccountId, accounts } = useAccountContext();
   const provider = resolveTerminalMarketDataProvider(accounts.find((account) => account.id === activeAccountId)?.broker_provider);
+  const centralUnderlying = resolveCentralOptionUnderlying(symbol, underlying);
 
   return useQuery({
-    queryKey: ["expiry-list", activeAccountId, provider, symbol],
-    enabled: Boolean(activeAccountId && provider),
+    queryKey: ["expiry-list", activeAccountId ?? "central-dhan", provider, symbol, centralUnderlying?.securityId, centralUnderlying?.exchangeSegment],
+    enabled: activeAccountId ? Boolean(provider) : Boolean(centralUnderlying),
     queryFn: async () => {
+      if (!activeAccountId && centralUnderlying) {
+        const expiries = await fetchCentralExpiryList(symbol, centralUnderlying);
+        return { expiries, isLive: expiries.length > 0 };
+      }
       if (!activeAccountId || !provider) throw new Error("Select an active Dhan or Kite account to load option expiries.");
       const chain = await requestTerminalMarketData<TerminalMarketDataOptionChain>(activeAccountId, provider, {
         operation: "getOptionChain",

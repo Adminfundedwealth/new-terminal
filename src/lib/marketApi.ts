@@ -280,7 +280,7 @@ export async function fetchDhanQuote(symbol: string): Promise<{
 
 // ── Exported fetch functions ──
 
-interface OptionUnderlying {
+export interface OptionUnderlying {
   securityId: string;
   exchangeSegment: string;
 }

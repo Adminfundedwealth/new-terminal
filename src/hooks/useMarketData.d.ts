@@ -1,4 +1,4 @@
-import type { FnOStockData } from "@/lib/marketApi";
+import type { FnOStockData, OptionUnderlying } from "@/lib/marketApi";
 import type { OptionData, IndexData, ExpiryDate } from "@/lib/mockData";
 export declare function useLiveIndices(): {
     data: {
@@ -41,8 +41,8 @@ interface LiveOptionChainState {
     errorMessage?: string | null;
     unsupported?: boolean;
 }
-export declare function useLiveOptionChain(symbol: string, expiry?: string, enabled?: boolean): import("@tanstack/react-query").UseQueryResult<NoInfer<LiveOptionChainState>, Error>;
-export declare function useExpiryList(symbol: string): import("@tanstack/react-query").UseQueryResult<NoInfer<{
+export declare function useLiveOptionChain(symbol: string, expiry?: string, enabled?: boolean, underlying?: OptionUnderlying): import("@tanstack/react-query").UseQueryResult<NoInfer<LiveOptionChainState>, Error>;
+export declare function useExpiryList(symbol: string, underlying?: OptionUnderlying): import("@tanstack/react-query").UseQueryResult<NoInfer<{
     expiries: ExpiryDate[];
     isLive: boolean;
 }>, Error>;
