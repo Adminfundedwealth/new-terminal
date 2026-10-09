@@ -64,7 +64,7 @@ describe("broker router", () => {
   it("normalizes exchange-qualified Kite futures quotes by canonical provider token", async () => {
     const adapter = new ZerodhaAdapter({ brokerId: "zerodha", values: { apiKey: "key", accessToken: "token" }, addedAt: "", isActive: true });
     vi.spyOn(adapter, "getInstruments").mockResolvedValue({
-      provider: "zerodha",
+      provider: "zerodha" as const,
       capability: "instruments",
       state: "not_verified",
       data: [{ securityId: "12345", providerInstrumentId: "12345", symbol: "ABB", tradingSymbol: "ABB26SEP26FUT", displayName: "ABB26SEP26FUT", exchange: "NSE", exchangeSegment: "NFO", instrumentType: "FUTSTK", lotSize: 125, tickSize: 0.05, provider: "zerodha" }],
@@ -134,7 +134,7 @@ describe("broker router", () => {
           expiryDate: item.expiry,
           strikePrice: Number(item.strike),
           optionType: item.instrument_type,
-          provider: "zerodha",
+          provider: "zerodha" as const,
           providerInstrumentId: item.instrument_token,
         })) };
       }

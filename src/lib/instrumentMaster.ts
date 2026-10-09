@@ -1,6 +1,6 @@
 import type { Instrument } from "./localDatabase";
 
-export type InstrumentProvider = "dhan" | "zerodha" | "angel_one" | string;
+export type InstrumentProvider = NonNullable<Instrument["provider"]>;
 
 export interface InstrumentNormalizationIssue {
   index: number;

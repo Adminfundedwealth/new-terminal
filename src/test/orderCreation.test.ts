@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createTerminalOrder } from "@/lib/terminalApi";
+import { createTerminalOrder, type CreateOrderRequest } from "@/lib/terminalApi";
 
 vi.hoisted(() => {
   process.env.VITE_TERMINAL_OS_URL = "https://terminal.example.test";
@@ -97,7 +97,7 @@ describe("Kite derivative order routing", () => {
     vi.stubGlobal("crypto", {
       getRandomValues: globalThis.crypto.getRandomValues.bind(globalThis.crypto),
     });
-    const request = {
+    const request: CreateOrderRequest = {
       account_id: "sim-account",
       symbol: "NIFTY26SEP23150CE",
       exchange: "NSE",

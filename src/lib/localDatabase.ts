@@ -18,14 +18,16 @@ export interface Instrument {
   securityId: string;
   symbol: string;
   tradingSymbol: string;
+  displayName?: string;
   exchangeSegment: string;
   instrumentType: string;
   lotSize: number;
   tickSize?: number;
-  provider?: "dhan" | "kite" | "zerodha";
+  provider?: "dhan" | "kite" | "zerodha" | "angel_one" | "upstox" | "fivepaisa" | "fyers" | "aliceblue";
   providerInstrumentId?: string;
   exchange?: string;
   series?: string;
+  underlyingSecurityId?: string;
   expiryDate?: string;
   strikePrice?: number;
   optionType?: string;

@@ -50,6 +50,7 @@ function mockAccountContext(overrides: Record<string, unknown> = {}) {
     activeAccountId: account.id,
     isLoading: false,
     isError: false,
+    error: null,
     hasNoAccount: false,
     selectAccount: vi.fn().mockResolvedValue(undefined),
     ...overrides,
@@ -78,7 +79,7 @@ describe("TradingAccountBar", () => {
       accountContext: undefined,
       activeAccountId: null,
       hasNoAccount: true,
-    }, 30_000);
+    });
 
     render(<TradingAccountBar />);
 

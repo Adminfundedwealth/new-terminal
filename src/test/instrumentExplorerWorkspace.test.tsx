@@ -346,7 +346,7 @@ describe("InstrumentExplorer stock workspace", () => {
   it("routes one-lot Kite futures BUY and SELL through the simulated existing ticket", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     vi.mocked(createTerminalOrder).mockClear();
-    const futuresInstrument = { securityId: "12345", symbol: "NIFTY", tradingSymbol: "NIFTY26DEC26FUT", displayName: "NIFTY26DEC26FUT", exchange: "NSE", exchangeSegment: "NFO", instrumentType: "FUTIDX", lotSize: 65, tickSize: 0.05, expiryDate: "2026-12-31", provider: "zerodha", providerInstrumentId: "12345" };
+    const futuresInstrument: Instrument = { securityId: "12345", symbol: "NIFTY", tradingSymbol: "NIFTY26DEC26FUT", displayName: "NIFTY26DEC26FUT", exchange: "NSE", exchangeSegment: "NFO", instrumentType: "FUTIDX", lotSize: 65, tickSize: 0.05, expiryDate: "2026-12-31", provider: "zerodha", providerInstrumentId: "12345" };
 
     render(
       <QueryClientProvider client={queryClient}>

@@ -254,6 +254,15 @@ export function useLiveOptionChain(symbol: string, expiry?: string, enabled = tr
         afterHours: isAfterHours,
         source: "source" in result ? result.source : result.provider,
         cachedAt: result.cachedAt ?? null,
+        oiChangeAvailable: "oiChangeAvailable" in result && typeof result.oiChangeAvailable === "boolean"
+          ? result.oiChangeAvailable
+          : undefined,
+        errorMessage: "errorMessage" in result && typeof result.errorMessage === "string"
+          ? result.errorMessage
+          : undefined,
+        unsupported: "unsupported" in result && typeof result.unsupported === "boolean"
+          ? result.unsupported
+          : undefined,
       };
     },
     refetchInterval: (query) => {

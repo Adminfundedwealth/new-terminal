@@ -389,6 +389,7 @@ export interface TerminalMarketDataInstrument {
   lotSize?: number;
   tickSize?: number;
   series?: string;
+  underlyingSecurityId?: string;
   expiryDate?: string;
   strikePrice?: number;
   optionType?: string;
@@ -447,21 +448,17 @@ export function resolveTerminalMarketDataProvider(value: string | null | undefin
   return null;
 }
 
+function resolveInstrumentExchange(instrument: Instrument): string {
+  if (instrument.exchange) return instrument.exchange;
+  const segment = instrument.exchangeSegment.toUpperCase();
+  if (segment === "IDX_I" || segment.startsWith("NSE") || segment === "NFO" || segment === "CDS") return "NSE";
+  if (segment === "BSE_IDX" || segment.startsWith("BSE") || segment === "BFO") return "BSE";
+  if (segment.startsWith("MCX")) return "MCX";
+  throw new Error(`Cannot determine the exchange for instrument segment ${instrument.exchangeSegment}.`);
+}
+
 export function toTerminalMarketDataInstrument(
-  instrument: {
-    providerInstrumentId?: string;
-    securityId: string;
-    symbol: string;
-    tradingSymbol: string;
-    exchange: string;
-    exchangeSegment: string;
-    instrumentType: string;
-    lotSize?: number;
-    tickSize?: number;
-    expiryDate?: string;
-    strikePrice?: number;
-    optionType?: string;
-  },
+  instrument: Instrument,
   provider: TerminalMarketDataProvider,
 ): TerminalMarketDataInstrument {
   return {
@@ -469,12 +466,13 @@ export function toTerminalMarketDataInstrument(
     providerInstrumentId: instrument.providerInstrumentId || instrument.securityId,
     symbol: instrument.symbol,
     tradingSymbol: instrument.tradingSymbol,
-    exchange: instrument.exchange,
+    exchange: resolveInstrumentExchange(instrument),
     exchangeSegment: instrument.exchangeSegment,
     instrumentType: instrument.instrumentType,
     lotSize: instrument.lotSize,
     tickSize: instrument.tickSize,
     series: instrument.series,
+    underlyingSecurityId: instrument.underlyingSecurityId,
     expiryDate: instrument.expiryDate,
     strikePrice: instrument.strikePrice,
     optionType: instrument.optionType,
@@ -493,6 +491,7 @@ export function toLocalMarketDataInstrument(instrument: TerminalMarketDataInstru
     instrumentType: instrument.instrumentType,
     lotSize: instrument.lotSize ?? 1,
     series: instrument.series,
+    underlyingSecurityId: instrument.underlyingSecurityId,
     expiryDate: instrument.expiryDate,
     strikePrice: instrument.strikePrice,
     optionType: instrument.optionType,

@@ -4,7 +4,7 @@ vi.hoisted(() => {
   process.env.VITE_TERMINAL_OS_URL = "https://terminal.example.test";
 });
 
-import { createTerminalOrder, submitTerminalOrderCommand } from "@/lib/terminalApi";
+import { createTerminalOrder, submitTerminalOrderCommand, type CreateOrderRequest } from "@/lib/terminalApi";
 
 const { getSession } = vi.hoisted(() => ({ getSession: vi.fn() }));
 vi.mock("@/integrations/supabase/client", () => ({
@@ -34,7 +34,7 @@ describe("Main Terminal order command client", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { replayed: true, order: { id: "order-1", status: "requested" } } }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ data: { replayed: false, order: { id: "order-2", status: "requested" } } }), { status: 202 }));
     vi.stubGlobal("fetch", fetchMock);
-    const request = {
+    const request: CreateOrderRequest = {
       account_id: "11111111-1111-4111-8111-111111111111",
       symbol: "nifty",
       exchange: "nse",
