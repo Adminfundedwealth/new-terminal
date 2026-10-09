@@ -36,6 +36,7 @@ const tradingItems = [
 
 const settingItems = [
   { title: "Broker API Keys", url: "/broker-settings", icon: Settings },
+  { title: "My Stats", url: "/my-stats", icon: BarChart3 },
 ];
 
 export function AppSidebar() {

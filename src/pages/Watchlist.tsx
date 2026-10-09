@@ -76,7 +76,7 @@ export default function Watchlist() {
     queryKey: ["terminal-watchlist-quotes", activeAccountId, provider, watchedSymbols, instrumentsLoaded],
     enabled: Boolean(activeAccountId && provider && instrumentsLoaded && watchedSymbols.length > 0),
     queryFn: async () => {
-      if (!activeAccountId || !provider) throw new Error("Select an active Dhan account to load watchlist quotes.");
+      if (!activeAccountId || !provider) throw new Error("An active account and market-data provider are required for account-scoped watchlist quotes.");
       const results = await Promise.allSettled(watchedSymbols.map(async (symbol) => {
         let instrument = findSupportedInstrument(supportedInstruments, symbol);
 
@@ -123,7 +123,7 @@ export default function Watchlist() {
   });
   const statusLabel = hasFreshQuote && !marketClosed ? "LIVE" : hasQuotes ? "HISTORICAL" : "UNAVAILABLE";
   const baseStatusText = hasNoAccount
-    ? "No trading account is linked. Link a Dhan account in Broker API Keys to load account-scoped quotes."
+    ? "No current watchlist quotes are available. Market data is independent of trading account status."
     : statusLabel === "LIVE"
       ? "Account-scoped Terminal OS quotes"
       : statusLabel === "HISTORICAL"

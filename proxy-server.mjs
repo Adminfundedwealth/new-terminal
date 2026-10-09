@@ -786,7 +786,7 @@ async function handleNSEProxy(params) {
     }
   }
   
-  // Both attempts failed — try last-good cache
+  // Both attempts failed — serve a prior valid response if available
   const lastGood = getLastGood(lastGoodKey);
   if (lastGood) {
     console.log(`  📦 Serving last-good NSE data for ${endpoint}:${symbol || ""}`);
@@ -1326,6 +1326,25 @@ function readJsonBody(req) {
 }
 
 // ══════════════════════════════════════════════
+// ── Middleware: Validate API Secret for Broker Endpoints ──
+// ══════════════════════════════════════════════
+function requireApiSecret(req) {
+  const secret = req.headers["x-railway-api-secret"];
+  const expectedSecret = process.env.RAILWAY_API_SECRET;
+
+  if (!expectedSecret) {
+    console.warn("⚠️  RAILWAY_API_SECRET not configured - broker endpoints are unprotected!");
+    return true; // Allow requests when not configured (dev mode)
+  }
+
+  if (!secret || secret !== expectedSecret) {
+    return false; // Unauthorized
+  }
+
+  return true; // Authorized
+}
+
+// ══════════════════════════════════════════════
 // ── HTTP Server ──
 // ══════════════════════════════════════════════
 
@@ -1347,6 +1366,13 @@ const server = http.createServer(async (req, res) => {
     // ──────────────────────────────────────────────
 
     if (url.pathname === "/api/broker/connections/test" && req.method === "POST") {
+      // Authenticate request
+      if (!requireApiSecret(req)) {
+        res.writeHead(401);
+        res.end(JSON.stringify({ error: "Unauthorized - invalid or missing API secret" }));
+        return;
+      }
+
       const body = await readJsonBody(req);
       const { connection_id, broker_id, environment } = body;
       
@@ -1355,7 +1381,7 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: "Missing required fields: connection_id, broker_id, environment" }));
         return;
       }
-      
+
       try {
         const { credentials } = await getBrokerConnectionById(connection_id, { broker_id, environment });
         
@@ -1368,7 +1394,7 @@ const server = http.createServer(async (req, res) => {
         } else {
           throw new Error("Unsupported broker");
         }
-        
+
         await provider.authenticate();
         
         res.writeHead(200);
@@ -1379,7 +1405,7 @@ const server = http.createServer(async (req, res) => {
           environment 
         }));
       } catch (error) {
-        console.error("Broker test error:", error);
+        console.error("Broker test error:", { message: error.message, code: error.code, status: error.upstreamStatus });
         res.writeHead(error.upstreamStatus || 500);
         res.end(JSON.stringify({ 
           success: false, 
@@ -1391,10 +1417,17 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === "/api/broker/instruments/search" && req.method === "GET") {
+      // Authenticate request
+      if (!requireApiSecret(req)) {
+        res.writeHead(401);
+        res.end(JSON.stringify({ error: "Unauthorized - invalid or missing API secret" }));
+        return;
+      }
+
       const query = params.get("query");
       const accountId = params.get("account_id");
       const brokerId = params.get("broker_id") || "dhan";
-      
+
       if (!query || !accountId) {
         res.writeHead(400);
         res.end(JSON.stringify({ error: "Missing query or account_id parameter" }));
@@ -1416,7 +1449,7 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200);
         res.end(JSON.stringify({ data: instruments, count: instruments.length }));
       } catch (error) {
-        console.error("Instrument search error:", error);
+        console.error("Instrument search error:", { message: error.message, code: error.code, status: error.upstreamStatus });
         res.writeHead(error.upstreamStatus || 500);
         res.end(JSON.stringify({ error: error.message, code: error.code }));
       }
@@ -1424,6 +1457,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === "/api/broker/quote" && req.method === "GET") {
+      // Authenticate request
+      if (!requireApiSecret(req)) {
+        res.writeHead(401);
+        res.end(JSON.stringify({ error: "Unauthorized - invalid or missing API secret" }));
+        return;
+      }
+
       const symbol = params.get("symbol");
       const exchange = params.get("exchange") || "NSE";
       const accountId = params.get("account_id");
@@ -1432,7 +1472,7 @@ const server = http.createServer(async (req, res) => {
       const brokerId = params.get("broker_id") || "dhan";
       const exchangeSegment = params.get("exchange_segment") || (exchange === "NSE" ? "IDX_I" : exchange);
       const instrumentType = params.get("instrument_type") || "INDEX";
-      
+
       if (!symbol || !accountId) {
         res.writeHead(400);
         res.end(JSON.stringify({ error: "Missing symbol or account_id parameter" }));
@@ -1464,7 +1504,7 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200);
         res.end(JSON.stringify({ data: quote }));
       } catch (error) {
-        console.error("Quote error:", error);
+        console.error("Quote error:", { message: error.message, code: error.code, status: error.upstreamStatus });
         res.writeHead(error.upstreamStatus || 500);
         res.end(JSON.stringify({ error: error.message, code: error.code }));
       }
@@ -1472,6 +1512,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === "/api/broker/historical" && req.method === "GET") {
+      // Authenticate request
+      if (!requireApiSecret(req)) {
+        res.writeHead(401);
+        res.end(JSON.stringify({ error: "Unauthorized - invalid or missing API secret" }));
+        return;
+      }
+
       const symbol = params.get("symbol");
       const interval = params.get("interval") || "5";
       const fromDate = params.get("from");
@@ -1514,7 +1561,7 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200);
         res.end(JSON.stringify({ data: candles, count: candles.length }));
       } catch (error) {
-        console.error("Historical data error:", error);
+        console.error("Historical data error:", { message: error.message, code: error.code, status: error.upstreamStatus });
         res.writeHead(error.upstreamStatus || 500);
         res.end(JSON.stringify({ error: error.message, code: error.code }));
       }
@@ -1530,8 +1577,9 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       
+      // Use environment variable or construct from current host
       const redirectUrl = process.env.KITE_REDIRECT_URL || 
-        `https://new-terminal-production.up.railway.app/api/kite/callback`;
+        `${req.headers["x-forwarded-proto"] || "http"}://${req.headers.host}/api/kite/callback`;
       
       const loginUrl = new URL("https://kite.trade/connect/login");
       loginUrl.searchParams.set("api_key", apiKey);
@@ -1610,7 +1658,7 @@ ${tokenData.data.access_token}
         res.writeHead(200, { "Content-Type": "text/html" });
         res.end(html);
       } catch (error) {
-        console.error("Kite OAuth error:", error);
+        console.error("Kite OAuth error:", { message: error.message, stack: error.stack });
         res.writeHead(500, { "Content-Type": "text/html" });
         res.end(`<h1>Kite OAuth Error</h1><pre>${error.message}</pre>`);
       }

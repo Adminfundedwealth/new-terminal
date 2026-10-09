@@ -47,6 +47,43 @@ describe("customer account context", () => {
     expect(result.current.accountContext?.risk_state.status).toBe("BREACHED");
   });
 
+  it("shares account selection across all mounted account-context consumers", async () => {
+    const secondAccount = { ...account, id: "account-2", account_code: "FW-002" };
+    vi.mocked(useAuth).mockReturnValue({ user } as never);
+    vi.mocked(fetchTerminalAccounts).mockResolvedValue({ data: [account, secondAccount], meta: { total: 2, page: 1, page_size: 2 } });
+    vi.mocked(fetchAccountContext).mockResolvedValue(context as never);
+    vi.mocked(setActiveAccount).mockResolvedValue(undefined);
+
+    const { result } = renderHook(() => [useAccountContext(), useAccountContext()] as const, { wrapper });
+    await waitFor(() => expect(result.current[0].activeAccountId).toBe(account.id));
+    expect(result.current[1].activeAccountId).toBe(account.id);
+
+    await result.current[0].selectAccount(secondAccount.id);
+
+    await waitFor(() => {
+      expect(result.current[0].activeAccountId).toBe(secondAccount.id);
+      expect(result.current[1].activeAccountId).toBe(secondAccount.id);
+    });
+  });
+
+  it("restores the canonical selected account from FundedWealth settings", async () => {
+    const secondAccount = { ...account, id: "account-2", account_code: "FW-002" };
+    const secondContext = { ...context, account: { ...context.account, id: secondAccount.id } };
+    vi.mocked(useAuth).mockReturnValue({ user } as never);
+    vi.mocked(fetchTerminalAccounts).mockResolvedValue({
+      data: [account, secondAccount],
+      active_account_id: secondAccount.id,
+      meta: { total: 2, page: 1, page_size: 2 },
+    });
+    vi.mocked(fetchAccountContext).mockResolvedValue(secondContext as never);
+
+    const { result } = renderHook(() => useAccountContext(), { wrapper });
+    await waitFor(() => expect(result.current.accountContext).toEqual(secondContext));
+
+    expect(result.current.activeAccountId).toBe(secondAccount.id);
+    expect(fetchAccountContext).toHaveBeenCalledWith(secondAccount.id);
+  });
+
   it("reports an authenticated no-account state without fetching account context", async () => {
     vi.mocked(useAuth).mockReturnValue({ user } as never);
     vi.mocked(fetchTerminalAccounts).mockResolvedValue({ data: [], meta: { total: 0, page: 1, page_size: 0 } });

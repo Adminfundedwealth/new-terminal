@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -12,6 +12,7 @@ import {
 
 export const accountContextQueryKeys = {
   accounts: (userId: string) => ["customer-account", userId, "accounts"] as const,
+  selection: (userId: string) => ["customer-account", userId, "selection"] as const,
   context: (userId: string, accountId: string) => ["customer-account", userId, "context", accountId] as const,
   terminal: (userId: string, resource: string, accountId: string) => ["customer-account", userId, "terminal", resource, accountId] as const,
 };
@@ -36,7 +37,6 @@ export function useAccountContext(): CustomerAccountContextState {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const userId = user?.id ?? null;
-  const [requestedAccountId, setRequestedAccountId] = useState<string | null>(null);
 
   const accountsQuery = useQuery({
     queryKey: userId ? accountContextQueryKeys.accounts(userId) : ["customer-account", "anonymous", "accounts"],
@@ -45,12 +45,23 @@ export function useAccountContext(): CustomerAccountContextState {
     retry: false,
     staleTime: 30_000,
   });
-  const accounts = accountsQuery.data?.data ?? [];
-  const activeAccountId = useMemo(() => resolveSelectedAccountId(accounts, requestedAccountId), [accounts, requestedAccountId]);
+  const accounts = useMemo(() => accountsQuery.data?.data ?? [], [accountsQuery.data?.data]);
+  const selectionQuery = useQuery<string | null>({
+    queryKey: userId ? accountContextQueryKeys.selection(userId) : ["customer-account", "anonymous", "selection"],
+    queryFn: async () => null,
+    enabled: false,
+    initialData: null,
+    staleTime: Infinity,
+  });
+  const selectedAccountId = selectionQuery.data;
+  const preferredAccountId = selectedAccountId ?? accountsQuery.data?.active_account_id ?? null;
+  const activeAccountId = useMemo(() => resolveSelectedAccountId(accounts, preferredAccountId), [accounts, preferredAccountId]);
 
   useEffect(() => {
-    if (requestedAccountId && !accounts.some((account) => account.id === requestedAccountId)) setRequestedAccountId(null);
-  }, [accounts, requestedAccountId]);
+    if (selectedAccountId && !accounts.some((account) => account.id === selectedAccountId)) {
+      queryClient.setQueryData(userId ? accountContextQueryKeys.selection(userId) : ["customer-account", "anonymous", "selection"], null);
+    }
+  }, [accounts, queryClient, selectedAccountId, userId]);
 
   const contextQuery = useQuery({
     queryKey: userId && activeAccountId ? accountContextQueryKeys.context(userId, activeAccountId) : ["customer-account", "anonymous", "context", "none"],
@@ -68,21 +79,17 @@ export function useAccountContext(): CustomerAccountContextState {
     });
   }, [queryClient, userId]);
 
-  useEffect(() => {
-    if (userId) return;
-    setRequestedAccountId(null);
-  }, [userId]);
-
   const selectAccount = async (accountId: string) => {
     if (!userId) throw new Error("Authentication required to select a trading account");
     if (!accounts.some((account) => account.id === accountId)) throw new Error("Trading account is not available to the authenticated user");
-    const previousAccountId = activeAccountId;
-    setRequestedAccountId(accountId);
+    const selectionKey = accountContextQueryKeys.selection(userId);
+    const previousSelection = queryClient.getQueryData<string | null>(selectionKey) ?? null;
+    queryClient.setQueryData(selectionKey, accountId);
     try {
       await setActiveAccount(accountId);
       await queryClient.invalidateQueries({ queryKey: accountContextQueryKeys.context(userId, accountId) });
     } catch (error) {
-      setRequestedAccountId(previousAccountId);
+      queryClient.setQueryData(selectionKey, previousSelection);
       throw error;
     }
   };

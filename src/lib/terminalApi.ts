@@ -89,6 +89,7 @@ export interface CreateOrderResponse {
 
 interface AccountsResponse {
   data: TerminalAccount[];
+  active_account_id?: string | null;
   meta: {
     total: number;
     page: number;
@@ -843,7 +844,18 @@ export async function fetchTerminalAccounts(): Promise<AccountsResponse> {
     available_margin: account.available_margin == null ? undefined : Number(account.available_margin),
     used_margin: account.used_margin == null ? undefined : Number(account.used_margin),
   }));
-  return { data: accounts, meta: { total: accounts.length, page: 1, page_size: accounts.length, has_more: false } };
+  const { data: settings, error: settingsError } = await supabase
+    .from("terminal_settings")
+    .select("active_account_id")
+    .eq("owner_user_id", user.id)
+    .maybeSingle();
+  if (settingsError) throw new Error(`Active account preference request failed: ${settingsError.message}`);
+
+  return {
+    data: accounts,
+    active_account_id: settings?.active_account_id ?? null,
+    meta: { total: accounts.length, page: 1, page_size: accounts.length, has_more: false },
+  };
 }
 
 export interface RuleVersionRecord {

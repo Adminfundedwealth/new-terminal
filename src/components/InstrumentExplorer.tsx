@@ -163,7 +163,7 @@ export function InstrumentExplorer({
     ],
     enabled: Boolean(activeAccountId && marketDataProvider && visibleRows.length > 0),
     queryFn: async () => {
-      if (!activeAccountId || !marketDataProvider) throw new Error("Select an active Dhan account to load quotes.");
+      if (!activeAccountId || !marketDataProvider) throw new Error("An active account and market-data provider are required for account-scoped quotes.");
       const quotes: Record<string, TerminalMarketDataQuote> = {};
       const errors: string[] = [];
       for (let offset = 0; offset < visibleRows.length; offset += 10) {
@@ -194,13 +194,13 @@ export function InstrumentExplorer({
     retry: false,
   });
   const marketDataNotice = hasNoAccount
-    ? "No trading account is linked to this user. Link a Dhan account in Broker API Keys to load Terminal OS quotes and historical candles."
+    ? null
     : !activeAccountId && isAccountLoading
-      ? "Checking linked trading accounts..."
+      ? "Checking account-specific market data availability..."
       : !activeAccountId
-        ? "No active trading account is available. Sign in or link a Dhan account to load quotes and historical candles."
+        ? null
         : !marketDataProvider
-          ? "The selected trading account is not configured for Dhan market data."
+          ? "Account-specific market data is unavailable for the selected account."
           : visibleQuotesQuery.data?.errors[0] ?? (visibleQuotesQuery.error instanceof Error ? visibleQuotesQuery.error.message : null);
 
   const displayedRows = useMemo(() => visibleRows.map((row) => {
@@ -358,11 +358,11 @@ export function InstrumentExplorer({
         ? "STALE"
         : "UNAVAILABLE";
   const chartUnavailableMessage = isAccountLoading
-    ? "Checking linked Dhan account before requesting historical candles."
+    ? "Checking account-specific historical data availability."
     : !activeAccountId
-      ? "Link a Dhan trading account to request historical candles."
+      ? "Historical market data is currently unavailable for this chart."
       : !marketDataProvider
-        ? "Select an active Dhan account to request historical candles."
+        ? "Historical market data is unavailable for the selected account."
         : undefined;
 
   const futuresContracts = useMemo(

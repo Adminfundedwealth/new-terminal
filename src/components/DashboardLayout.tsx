@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { StatusFooter } from "@/components/StatusFooter";
 import { CommandPalette } from "@/components/CommandPalette";
 import { AlertSystem } from "@/components/AlertSystem";
+import { TradingAccountBar } from "@/components/TradingAccountBar";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useAuth } from "@/hooks/useAuth";
 import { useAccountContext } from "@/hooks/useAccountContext";
@@ -22,18 +23,9 @@ import {
   fetchTerminalRisk,
   fetchTerminalWatchlists,
 } from "@/lib/terminalApi";
-import { Search, Bell, Timer, RefreshCw, Wifi, WifiOff, Plane, WalletCards, Check, LogOut } from "lucide-react";
+import { Search, Bell, Timer, RefreshCw, Wifi, WifiOff, Plane, LogOut } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 
 export default function DashboardLayout() {
   const { user, signOut } = useAuth();
@@ -44,7 +36,7 @@ export default function DashboardLayout() {
   const [timeToExpiry, setTimeToExpiry] = useState("");
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const { accounts: tradingAccounts, accountContext, activeAccountId, isLoading: accountLoading, isError: accountError, selectAccount } = useAccountContext();
+  const { accounts: tradingAccounts, activeAccountId } = useAccountContext();
   const activeAccountProvider = resolveTerminalMarketDataProvider(
     tradingAccounts.find((account) => account.id === activeAccountId)?.broker_provider,
   );
@@ -68,8 +60,6 @@ export default function DashboardLayout() {
       { queryKey: ["terminal-os", user?.id ?? "anonymous", "watchlists", activeAccountId], queryFn: fetchTerminalWatchlists, retry: false, staleTime: 30_000, enabled: Boolean(user?.id) },
     ],
   });
-
-  const handleAccountChange = (accountId: string) => { void selectAccount(accountId); };
 
   const handleSignOut = async () => {
     await signOut();
@@ -264,57 +254,6 @@ export default function DashboardLayout() {
                 <TooltipContent side="bottom" className="text-xs">Alerts</TooltipContent>
               </Tooltip>
 
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" className="h-7 gap-1.5 px-2 text-xs font-semibold hover:bg-primary/5">
-                    <WalletCards className="h-3.5 w-3.5" />
-                    <span className="hidden lg:inline">Trading Accounts</span>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-80 p-0">
-                  <DropdownMenuLabel className="flex items-center justify-between px-3 py-2 text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
-                    <span>Trading Accounts ({tradingAccounts.length})</span>
-                    <WalletCards className="h-3.5 w-3.5" />
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator className="m-0" />
-                  {tradingAccounts.length > 0 ? (
-                    <DropdownMenuRadioGroup value={activeAccountId ?? ""} onValueChange={handleAccountChange} className="p-1.5">
-                      {tradingAccounts.map((account) => (
-                        <DropdownMenuRadioItem key={account.id} value={account.id} className="items-start gap-2 py-2.5 pl-8 pr-3">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="truncate text-xs font-semibold">{account.account_code || account.id.slice(0, 8)}</span>
-                              {account.status === "active" && <Check className="h-3.5 w-3.5 text-primary" />}
-                            </div>
-                            <div className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground">
-                              <span>{account.status}</span>
-                              <span>₹{account.balance.toLocaleString("en-IN")}</span>
-                            </div>
-                          </div>
-                        </DropdownMenuRadioItem>
-                      ))}
-                    </DropdownMenuRadioGroup>
-                  ) : accountLoading ? (
-                    <div className="px-3 py-5 text-center">
-                      <WalletCards className="mx-auto h-5 w-5 animate-pulse text-muted-foreground/50" />
-                      <p className="mt-2 text-xs font-semibold">Loading account context</p>
-                    </div>
-                  ) : accountError ? (
-                    <div className="px-3 py-5 text-center">
-                      <WalletCards className="mx-auto h-5 w-5 text-muted-foreground/50" />
-                      <p className="mt-2 text-xs font-semibold">Account context unavailable</p>
-                      <p className="mt-1 text-[11px] text-muted-foreground">Sign in to load your canonical accounts.</p>
-                    </div>
-                  ) : (
-                    <div className="px-3 py-5 text-center">
-                      <WalletCards className="mx-auto h-5 w-5 text-muted-foreground/50" />
-                      <p className="mt-2 text-xs font-semibold">No trading accounts connected</p>
-                      <p className="mt-1 text-[11px] text-muted-foreground">Your linked accounts will appear here.</p>
-                    </div>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button aria-label={`Sign out ${user?.email ?? "account"}`} variant="ghost" size="icon" className="h-7 w-7 hover:bg-destructive/10 hover:text-destructive" onClick={() => void handleSignOut()}>
@@ -343,51 +282,7 @@ export default function DashboardLayout() {
           </header>
 
           <main className="dashboard-main flex min-h-0 flex-1 flex-col overflow-auto p-2.5 sm:p-3 lg:p-4 pb-14 sm:pb-12">
-            {accountContext && (
-              <section className="mb-3 overflow-x-auto rounded-lg border border-border/70 bg-card/70 px-3 py-2" aria-label="Account status">
-                {(() => {
-                  const account = accountContext.account;
-                  const risk = accountContext.risk_state;
-                  const rules = accountContext.rules;
-                  const formatCurrency = (value: unknown) => typeof value === "number" && Number.isFinite(value)
-                    ? `₹${value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                    : "—";
-                  const formatPnl = (value: unknown) => typeof value === "number" && Number.isFinite(value)
-                    ? `${value > 0 ? "+" : value < 0 ? "−" : ""}${formatCurrency(Math.abs(value))}`
-                    : "—";
-                  const accountType = account.account_type ?? account.challenge_type ?? accountContext.product.name ?? "—";
-                  const accountStatus = account.status === "active"
-                    ? risk.status ?? account.status
-                    : account.status ?? risk.status ?? "UNKNOWN";
-                  const metrics = [
-                    ["Account Type", String(accountType).replace(/[_-]+/g, " ")],
-                    ["Balance", formatCurrency(account.current_balance)],
-                    ["Equity", formatCurrency(account.equity)],
-                    ["Available Funds", formatCurrency(account.available_margin)],
-                    ["Total P&L", formatPnl(risk.profit_current)],
-                    ["Daily Loss", `${formatCurrency(risk.daily_loss)} / ${formatCurrency(rules.daily_loss_limit)}`],
-                    ["Max Drawdown", `${formatCurrency(risk.drawdown_amount)} / ${formatCurrency(rules.maximum_drawdown)}`],
-                    ["Profit Target", risk.profit_target == null ? "—" : `${formatCurrency(risk.profit_current)} / ${formatCurrency(risk.profit_target)}`],
-                    ["Open Risk Events", String(risk.open_events)],
-                  ];
-                  return (
-                    <div className="grid min-w-[1250px] grid-cols-[1.1fr_1fr_1fr_1.15fr_1fr_1.5fr_1.6fr_1.5fr_1fr_auto] items-center">
-                      {metrics.map(([label, value], index) => (
-                        <div key={label} className={`min-w-0 flex-1 px-2 first:pl-0 ${index > 0 ? "border-l border-border/70" : ""}`}>
-                          <p className="whitespace-nowrap text-[9px] leading-3 uppercase text-muted-foreground">{label}</p>
-                          <p className={`whitespace-nowrap font-mono text-xs leading-4 tabular-nums ${label === "Total P&L" && typeof risk.profit_current === "number" ? risk.profit_current >= 0 ? "text-bullish" : "text-bearish" : ""}`}>
-                            {value}
-                          </p>
-                        </div>
-                      ))}
-                      <div className="shrink-0 border-l border-border/70 pl-3">
-                        <span className="rounded border border-border px-2 py-1 text-[10px] font-semibold tracking-wide">{String(accountStatus).toUpperCase()}</span>
-                      </div>
-                    </div>
-                  );
-                })()}
-              </section>
-            )}
+            <TradingAccountBar />
             <div className="page-transition min-h-0 flex-1" key={location.pathname}>
               <Outlet />
             </div>

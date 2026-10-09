@@ -76,7 +76,7 @@ describe("terminal SSO bridge", () => {
     })).rejects.toMatchObject({ code: "EXPIRED" });
   });
 
-  it("rejects reused launch codes", async () => {
+  it("removes redeemed launch codes from the bridge store so retries fail as invalid", async () => {
     const issued = issueLaunchCode({
       mainUserId: "main-user-3",
       newTerminalUserId: "terminal-user-3",
@@ -106,7 +106,7 @@ describe("terminal SSO bridge", () => {
       accountResolver: async () => makeAccount("acct-3", "terminal-user-3"),
       sessionCreator: async () => ({ supported: true, sessionId: "sess-3" }),
       now: Date.now() + 1,
-    })).rejects.toMatchObject({ code: "REPLAYED" });
+    })).rejects.toMatchObject({ code: "INVALID" });
   });
 
   it("rejects mismatched main users and accounts", async () => {
@@ -173,5 +173,45 @@ describe("terminal SSO bridge", () => {
       sessionCreator: async () => ({ supported: false, reason: SSO_BRIDGE_BLOCKER }),
       now: Date.now(),
     })).rejects.toMatchObject({ code: "BACKEND_SESSION_UNSUPPORTED" });
+  });
+
+  it("normalizes internal app paths and rejects external redirect targets", () => {
+    expect(issueLaunchCode({
+      mainUserId: "main-user-7",
+      newTerminalUserId: "terminal-user-7",
+      accountId: "acct-7",
+      requestedRoute: "https://evil.example/pwned",
+      sessionCreator: async () => ({ supported: true, sessionId: "sess-7" }),
+    }).requestedRoute).toBe("/dashboard");
+
+    expect(issueLaunchCode({
+      mainUserId: "main-user-8",
+      newTerminalUserId: "terminal-user-8",
+      accountId: "acct-8",
+      requestedRoute: "options?tab=greeks",
+      sessionCreator: async () => ({ supported: true, sessionId: "sess-8" }),
+    }).requestedRoute).toBe("/dashboard/options?tab=greeks");
+  });
+
+  it("rejects suspended or closed accounts even when ownership matches", async () => {
+    const issued = issueLaunchCode({
+      mainUserId: "main-user-9",
+      newTerminalUserId: "terminal-user-9",
+      accountId: "acct-9",
+      requestedRoute: "/dashboard",
+      ttlMs: 60_000,
+      sessionCreator: async () => ({ supported: true, sessionId: "sess-9" }),
+    });
+
+    await expect(redeemLaunchCode({
+      code: issued.code,
+      mainUserId: "main-user-9",
+      newTerminalUserId: "terminal-user-9",
+      requestedAccountId: "acct-9",
+      userResolver: async () => makeUser("main-user-9", "terminal-user-9"),
+      accountResolver: async () => ({ ...makeAccount("acct-9", "terminal-user-9"), status: "suspended", is_active: true }),
+      sessionCreator: async () => ({ supported: true, sessionId: "sess-9" }),
+      now: Date.now(),
+    })).rejects.toMatchObject({ code: "ACCOUNT_NOT_AUTHORIZED" });
   });
 });

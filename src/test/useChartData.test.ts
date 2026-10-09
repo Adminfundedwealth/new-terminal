@@ -6,9 +6,11 @@ import { beforeEach, describe, it, expect, vi } from "vitest";
 const gatewayMocks = vi.hoisted(() => ({
   accountContext: vi.fn(),
   requestMarketData: vi.fn(),
+  fetchYahooChart: vi.fn(),
 }));
 
 vi.mock("@/hooks/useAccountContext", () => ({ useAccountContext: gatewayMocks.accountContext }));
+vi.mock("@/lib/marketApi", () => ({ fetchYahooChart: gatewayMocks.fetchYahooChart }));
 vi.mock("@/lib/terminalApi", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/terminalApi")>();
   return { ...actual, requestTerminalMarketData: gatewayMocks.requestMarketData };
@@ -105,6 +107,7 @@ describe("account-scoped chart history gateway", () => {
   beforeEach(() => {
     queryClient.clear();
     gatewayMocks.requestMarketData.mockReset();
+    gatewayMocks.fetchYahooChart.mockReset();
     gatewayMocks.accountContext.mockReturnValue({
       activeAccountId: accountId,
       accounts: [{ id: accountId, broker_provider: "dhan" }],
@@ -153,6 +156,28 @@ describe("account-scoped chart history gateway", () => {
       instrument: expect.objectContaining({ providerInstrumentId }),
       interval: expectedInterval,
     }));
+    expect(result.current.data?.[0]).toMatchObject({ open: 100, high: 105, low: 99, close: 103, volume: 10 });
+  });
+
+  it("loads real Yahoo chart history without requiring a FundedWealth trading account", async () => {
+    gatewayMocks.accountContext.mockReturnValue({ activeAccountId: null, accounts: [] });
+    gatewayMocks.fetchYahooChart.mockResolvedValue({
+      status: "success",
+      data: {
+        timestamp: [1779200000],
+        open: [100],
+        high: [105],
+        low: [99],
+        close: [103],
+        volume: [10],
+      },
+    });
+
+    const { result } = renderHook(() => useChartData("RELIANCE", "3M"), { wrapper });
+    await waitFor(() => expect(result.current.data).toHaveLength(1));
+
+    expect(gatewayMocks.fetchYahooChart).toHaveBeenCalledWith("RELIANCE", "D", expect.any(String), expect.any(String));
+    expect(gatewayMocks.requestMarketData).not.toHaveBeenCalled();
     expect(result.current.data?.[0]).toMatchObject({ open: 100, high: 105, low: 99, close: 103, volume: 10 });
   });
 });

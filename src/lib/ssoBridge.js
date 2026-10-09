@@ -13,7 +13,14 @@ function normalizeRoute(requestedRoute) {
     const value = requestedRoute?.trim();
     if (!value || value === "/")
         return "/dashboard";
-    return value.startsWith("/") ? value : `/dashboard${value.startsWith("?") ? "" : ""}`;
+    if (value.startsWith("?") || value.startsWith("#"))
+        return `/dashboard${value}`;
+    if (/^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|\/\/)/.test(value))
+        return "/dashboard";
+    const relative = value.replace(/^\/+/, "");
+    if (!relative)
+        return "/dashboard";
+    return value.startsWith("/") ? value : `/dashboard/${relative}`;
 }
 function asBridgeError(code, message) {
     const error = new Error(message);
@@ -23,12 +30,18 @@ function asBridgeError(code, message) {
 export function issueLaunchCode(input) {
     const now = Date.now();
     const ttlMs = input.ttlMs ?? 60000;
+    const mainUserId = input.mainUserId?.trim();
+    const newTerminalUserId = input.newTerminalUserId?.trim();
+    const accountId = input.accountId?.trim();
+    if (!mainUserId || !newTerminalUserId || !accountId) {
+        throw asBridgeError("INVALID", "Launch code requires a mapped user and an authorized trading account.");
+    }
     const code = `l${getSecureRandomString(28)}`;
     const record = {
         code,
-        mainUserId: input.mainUserId,
-        newTerminalUserId: input.newTerminalUserId,
-        accountId: input.accountId,
+        mainUserId,
+        newTerminalUserId,
+        accountId,
         requestedRoute: normalizeRoute(input.requestedRoute),
         issuedAt: now,
         expiresAt: now + ttlMs,
@@ -52,6 +65,7 @@ export async function redeemLaunchCode(input) {
         throw asBridgeError("INVALID", "Launch code is unknown to the terminal bridge.");
     }
     if (record.expiresAt <= now) {
+        launchCodeStore.delete(input.code);
         record.used = true;
         record.usedAt = now;
         throw asBridgeError("EXPIRED", "Launch code has expired and cannot be used.");
@@ -74,7 +88,8 @@ export async function redeemLaunchCode(input) {
         throw asBridgeError("ACCOUNT_NOT_AUTHORIZED", "The requested account is missing or not assigned to the bridge user.");
     }
     const userOwnsAccount = account.owner_user_id === user.newTerminalUserId;
-    const isAccountUsable = account.is_active !== false && account.status !== "inactive" && account.status !== "disabled";
+    const accountStatus = String(account.status ?? "").trim().toLowerCase();
+    const isAccountUsable = account.is_active !== false && !["inactive", "disabled", "suspended", "expired", "closed"].includes(accountStatus);
     if (!userOwnsAccount || !isAccountUsable) {
         throw asBridgeError("ACCOUNT_NOT_AUTHORIZED", "The requested account is not active or not authorized for this user.");
     }
@@ -84,6 +99,7 @@ export async function redeemLaunchCode(input) {
     }
     record.used = true;
     record.usedAt = now;
+    launchCodeStore.delete(input.code);
     const redirectUrl = normalizeRoute(record.requestedRoute);
     return {
         ok: true,

@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAccountContext } from "@/hooks/useAccountContext";
 import { normalizeCandlePayload } from "@/lib/historicalData";
+import { fetchYahooChart } from "@/lib/marketApi";
 import {
   requestTerminalMarketData,
   resolveTerminalMarketDataProvider,
@@ -241,6 +242,18 @@ async function fetchHistorical(
     } catch (error) {
       if (!(error instanceof TerminalMarketDataError) || error.code !== "MISSING_CREDENTIALS") throw error;
     }
+  } else {
+    const { interval, daysBack } = rangeToParams(range);
+    const now = new Date();
+    const from = new Date(now);
+    from.setDate(from.getDate() - daysBack);
+    const response = await fetchYahooChart(
+      symbol,
+      interval,
+      from.toISOString().split("T")[0],
+      now.toISOString().split("T")[0],
+    );
+    return parseColumnarCandles(response.data);
   }
 
   return [];

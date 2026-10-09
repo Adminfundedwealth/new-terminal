@@ -24,6 +24,7 @@ const PositionTracker = lazy(() => import("./pages/PositionTracker"));
 const Calendar = lazy(() => import("./pages/Calendar"));
 const MarketNews = lazy(() => import("./pages/MarketNews"));
 const BrokerSettings = lazy(() => import("./pages/BrokerSettings"));
+const MyStats = lazy(() => import("./pages/MyStats"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const Login = lazy(() => import("./pages/Login"));
 const RealtimeMockE2E = lazy(() => import("./pages/RealtimeMockE2E"));
@@ -78,6 +79,7 @@ const App = () => (
               <Route path="/calendar" element={<PageSuspense><Calendar /></PageSuspense>} />
               <Route path="/market-news" element={<PageSuspense><MarketNews /></PageSuspense>} />
               <Route path="/broker-settings" element={<PageSuspense><BrokerSettings /></PageSuspense>} />
+              <Route path="/my-stats" element={<PageSuspense><MyStats /></PageSuspense>} />
               <Route path="/__realtime-e2e" element={<PageSuspense><RealtimeMockE2E /></PageSuspense>} />
             </Route>
             <Route path="*" element={<Suspense fallback={null}><NotFound /></Suspense>} />
