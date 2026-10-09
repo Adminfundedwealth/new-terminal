@@ -275,7 +275,7 @@ describe("InstrumentExplorer stock workspace", () => {
       </QueryClientProvider>
     );
 
-    await waitFor(() => expect(queryClient.getQueryState(["terminal-central-chart-quote", "TATAMOTORS"])?.status).toBe("success"));
+    await waitFor(() => expect(queryClient.getQueryState(["terminal-central-chart-quote", "TATAMOTORS", "NSE_EQ", "3456"])?.status).toBe("success"));
     expect(fetchCashQuotes).toHaveBeenCalledWith("NSE_EQ", ["3456"]);
     expect(screen.getByText("₹279.90")).toBeInTheDocument();
     expect(screen.getByText("+2.53%")).toBeInTheDocument();

@@ -209,6 +209,9 @@ export function InstrumentExplorer({
     : activeAccountId && !marketDataProvider
       ? "Account-specific market data is unavailable for the selected account."
       : visibleQuotesQuery.data?.errors[0] ?? (visibleQuotesQuery.error instanceof Error ? visibleQuotesQuery.error.message : null);
+  const centralChartInstrument = chartSymbol
+    ? findWatchlistInstrument(instruments, chartSymbol)
+    : undefined;
 
   const displayedRows = useMemo(() => visibleRows.map((row) => {
     const quote = visibleQuotesQuery.data?.quotes[row.chartSymbol ?? row.symbol];
@@ -275,17 +278,16 @@ export function InstrumentExplorer({
   });
 
   const centralChartQuoteQuery = useQuery({
-    queryKey: ["terminal-central-chart-quote", chartSymbol],
+    queryKey: ["terminal-central-chart-quote", chartSymbol, centralChartInstrument?.exchangeSegment, centralChartInstrument?.securityId],
     queryFn: async () => {
-      if (!chartSymbol) return null;
-      const instrument = findWatchlistInstrument(instruments, chartSymbol);
-      if (!instrument) return null;
-      const result = await fetchCentralMarketQuotes([{ key: chartSymbol, instrument }]);
+      if (!chartSymbol || !centralChartInstrument) return null;
+      const result = await fetchCentralMarketQuotes([{ key: chartSymbol, instrument: centralChartInstrument }]);
       return result.quotes[chartSymbol] ?? null;
     },
     enabled: Boolean(
       !activeAccountId &&
       !isAccountLoading &&
+      centralChartInstrument?.provider === "dhan" &&
       chartSymbol &&
       workspaceContext !== "options" &&
       (
@@ -350,7 +352,7 @@ export function InstrumentExplorer({
         high: centralChartQuoteQuery.data.high,
         low: centralChartQuoteQuery.data.low,
         volume: centralChartQuoteQuery.data.volume,
-        instrument: findWatchlistInstrument(instruments, chartSymbol ?? ""),
+        instrument: centralChartInstrument,
       };
     }
     if (rowQuote || workspaceContext !== "options" || !ticketInstrument?.strikePrice || !ticketInstrument.optionType) {
@@ -388,7 +390,7 @@ export function InstrumentExplorer({
       volume: leg.volume,
       instrument: ticketInstrument,
     };
-  }, [centralChartQuoteQuery.data, chartSymbol, derivativeQuote, filteredRows, instruments, optionChainData, rows, selectedRowQuote, selectedTerminalQuote, ticketInstrument, workspaceContext]);
+  }, [centralChartInstrument, centralChartQuoteQuery.data, chartSymbol, derivativeQuote, filteredRows, optionChainData, rows, selectedRowQuote, selectedTerminalQuote, ticketInstrument, workspaceContext]);
   const selectedQuoteIsAvailable = Boolean(
     selectedQuote && Number.isFinite(selectedQuote.ltp) && selectedQuote.ltp > 0
   );
