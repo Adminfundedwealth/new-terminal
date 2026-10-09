@@ -60,6 +60,20 @@ describe("Task 35 instrument master", () => {
     expect(report.issues.map((issue) => issue.code)).toEqual(["DUPLICATE_IDENTIFIER", "CONFLICTING_METADATA"]);
   });
 
+  it("preserves provider identifiers reused across exchange segments", () => {
+    const report = normalizeInstrumentMaster([
+      row({ SEM_SMST_SECURITY_ID: "13", SEM_EXM: "NSE_EQ", SEM_TRADING_SYMBOL: "ABB", SEM_CUSTOM_SYMBOL: "ABB INDIA LIMITED" }),
+      row({ SEM_SMST_SECURITY_ID: "13", SEM_EXM: "IDX_I", SEM_TRADING_SYMBOL: "NIFTY", SEM_CUSTOM_SYMBOL: "NIFTY 50", SEM_INSTRUMENT_NAME: "INDEX", SEM_TICK_SIZE: "0.05" }),
+    ], "dhan");
+
+    expect(report.instruments).toHaveLength(2);
+    expect(report.instruments.map((instrument) => [instrument.exchangeSegment, instrument.securityId])).toEqual([
+      ["NSE_EQ", "13"],
+      ["IDX_I", "13"],
+    ]);
+    expect(report.issues).toEqual([]);
+  });
+
   it("isolates exchange-symbol keys and keeps expiries and strikes distinguishable", () => {
     const first = normalizeProviderInstrument(row({ SEM_SMST_SECURITY_ID: "4001", SEM_TRADING_SYMBOL: "ABC", SEM_EXM: "NSE_EQ" }), "dhan").instrument!;
     const second = normalizeProviderInstrument(row({ SEM_SMST_SECURITY_ID: "4002", SEM_TRADING_SYMBOL: "ABC", SEM_EXM: "BSE_EQ" }), "dhan").instrument!;

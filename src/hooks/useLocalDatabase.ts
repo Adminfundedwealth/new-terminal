@@ -218,21 +218,13 @@ export function useInstrumentLookup() {
     staleTime: 6 * 60 * 60 * 1000,
   });
 
-  const localDhanInstruments = useMemo(
-    () => localInstruments.filter((instrument) => instrument.provider === "dhan"),
-    [localInstruments],
-  );
   const centralMasterQuery = useQuery({
     queryKey: ["central-dhan-instrument-master"],
-    enabled: localLoaded && !isAccountLoading && !activeAccountId && localDhanInstruments.length === 0,
+    enabled: localLoaded && !isAccountLoading && !activeAccountId,
     queryFn: async () => {
       const response = await fetchInstrumentMaster();
       const report = normalizeInstrumentMaster(normalizeInstrumentMasterResponse(response), "dhan");
       if (report.instruments.length === 0) throw new Error("The central Dhan instrument master contained no valid instruments.");
-      const BATCH_SIZE = 2000;
-      for (let i = 0; i < report.instruments.length; i += BATCH_SIZE) {
-        await saveInstruments(report.instruments.slice(i, i + BATCH_SIZE));
-      }
       return report.instruments;
     },
     retry: false,
@@ -243,14 +235,13 @@ export function useInstrumentLookup() {
   const allInstruments = accountMasterRequired
     ? gatewayQuery.data ?? localInstruments
     : !activeAccountId
-      ? centralMasterQuery.data ?? localDhanInstruments
+      ? centralMasterQuery.data ?? []
       : localInstruments;
   const isLoaded = localLoaded && (
     accountMasterRequired
       ? gatewayQuery.isFetched
       : !isAccountLoading && (
         Boolean(activeAccountId) ||
-        localDhanInstruments.length > 0 ||
         centralMasterQuery.isFetched
       )
   );

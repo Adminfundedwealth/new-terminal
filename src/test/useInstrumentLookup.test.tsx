@@ -37,7 +37,7 @@ describe("useInstrumentLookup central Dhan fallback", () => {
     return renderHook(() => useInstrumentLookup(), { wrapper });
   }
 
-  it("loads, normalizes, and caches central instruments when there is no linked account", async () => {
+  it("loads and normalizes central instruments without a linked account or IndexedDB write", async () => {
     vi.mocked(fetchInstrumentMaster).mockResolvedValue({
       count: 1,
       instruments: [{
@@ -57,9 +57,7 @@ describe("useInstrumentLookup central Dhan fallback", () => {
     expect(result.current.instruments).toMatchObject([
       { securityId: "2885", tradingSymbol: "RELIANCE", provider: "dhan", tickSize: 0.05 },
     ]);
-    expect(saveInstruments).toHaveBeenCalledWith([
-      expect.objectContaining({ securityId: "2885", provider: "dhan" }),
-    ]);
+    expect(saveInstruments).not.toHaveBeenCalled();
     expect(result.current.loadError).toBeNull();
   });
 

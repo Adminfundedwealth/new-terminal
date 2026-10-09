@@ -92,12 +92,13 @@ export function normalizeInstrumentMaster(rawRows: unknown[], provider: Instrume
     const result = normalizeProviderInstrument(row, provider, index);
     if (result.issue || !result.instrument) { if (result.issue) issues.push(result.issue); return; }
     const instrument = result.instrument;
-    const existingId = byId.get(instrument.securityId);
-    const symbolKey = `${instrument.exchange}|${instrument.tradingSymbol.toUpperCase()}`;
+    const idKey = `${instrument.exchangeSegment}|${instrument.securityId}`;
+    const existingId = byId.get(idKey);
+    const symbolKey = `${instrument.exchangeSegment}|${instrument.exchange}|${instrument.tradingSymbol.toUpperCase()}`;
     const existingSymbol = byExchangeSymbol.get(symbolKey);
     if (existingId) { issues.push({ index, code: JSON.stringify(existingId) === JSON.stringify(instrument) ? "DUPLICATE_IDENTIFIER" : "CONFLICTING_METADATA", message: `Identifier ${instrument.securityId} already exists.` }); return; }
     if (existingSymbol) { issues.push({ index, code: "DUPLICATE_SYMBOL", message: `Duplicate ${symbolKey}; existing identifier ${existingSymbol.securityId} retained.` }); return; }
-    byId.set(instrument.securityId, instrument); byExchangeSymbol.set(symbolKey, instrument); instruments.push(instrument);
+    byId.set(idKey, instrument); byExchangeSymbol.set(symbolKey, instrument); instruments.push(instrument);
   });
   return { instruments, issues };
 }
