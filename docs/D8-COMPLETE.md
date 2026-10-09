@@ -49,27 +49,27 @@ Duration: 70.53s
 ```
 
 ### Task D7 Certification Tests
-All 5 tests passing (0 skipped, 0 failed):
+Latest focused verification: 3 tests passed, 2 database-backed certification gates skipped, 0 failed. The skipped D4/D5 gates are not counted as passes.
 
 #### Authentication Tests (3 passed)
 1. ✅ Opens the protected Terminal route only after synthetic customer session hydration
 2. ✅ Redirects an unauthenticated customer away from the protected Terminal route
 3. ✅ Returns to login and expires the Terminal session on sign-out or auth-session loss
 
-#### Integration Tests (2 passed)
-4. ✅ **PENDING D4:** Validates final execution-worker handoff and persisted execution outcome
+#### Integration Gates (2 skipped by default; pending)
+4. ⏸️ **PENDING D4:** Validates final execution-worker handoff and persisted execution outcome when explicitly enabled
    - Queries `order_execution_outbox` for D6BSYNTH order
-   - Asserts `claimed_at IS NOT NULL`, `processed_at IS NOT NULL`
+   - Asserts the outbox is claimed and completed
    - Validates `execution_submissions` table for acceptance record
-   - Gracefully handles missing service-role credentials
+   - Requires explicit synthetic database certification opt-in and process-only service-role credentials
 
-5. ✅ **PENDING D5:** Validates downstream execution completion and recovery assertions
+5. ⏸️ **PENDING D5:** Validates downstream execution completion and recovery assertions when explicitly enabled
    - Queries `executions` table for D6BSYNTH order fills
    - Asserts position updated in `positions` table
    - Validates account metrics in `trading_accounts` table
-   - Gracefully handles missing service-role credentials
+   - Requires explicit synthetic database certification opt-in and process-only service-role credentials
 
-**Note:** D4 and D5 tests check for `VITE_SUPABASE_SECRET_KEY` environment variable and return early with passing assertion if not available. When service-role credentials are provided, tests perform full validation of the execution workflow.
+**Note:** The D4/D5 gates are opt-in through `RUN_D6B_SYNTHETIC_DB_CERTIFICATION=true`. Missing credentials or missing synthetic records fail an opted-in run. See `docs/TASK_D7_A_E2E_CERTIFICATION_PREPARATION.md` for the safe invocation details.
 
 ---
 

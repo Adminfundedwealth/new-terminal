@@ -24,11 +24,11 @@ The fixed paper account allowed for realtime test mode is `REALTIME_MOCK_TEST_AC
 | 12 | Order-command submission | `terminalOrderCommandClient.test.ts` | Runnable, mocked fetch |
 | 13 | D3 server-side risk validation | `riskEngine.test.ts`, `databaseConsistency.test.ts` canonical RPC contract | Runnable contract tests; no D7 live-DB order attempt |
 | 14 | D2 order/outbox persistence | `databaseConsistency.test.ts`, D2 PostgreSQL verification | Runnable; no new live write |
-| 15 | D4 execution-worker integration point | Explicit skipped D7 assertion | **PENDING D4** |
-| 16 | Fill ingestion | Execution completion is not asserted by D7-A | **PENDING D4/D5** |
-| 17 | Position update | Execution completion is not asserted by D7-A | **PENDING D4/D5** |
-| 18 | P&L/valuation update | Execution completion is not asserted by D7-A | **PENDING D4/D5** |
-| 19 | Account metrics update | Execution completion is not asserted by D7-A | **PENDING D4/D5** |
+| 15 | D4 execution-worker integration point | Opt-in read-only D6B check against the persisted mock order | Passed for the existing synthetic record |
+| 16 | Fill ingestion | One persisted fill reconciles to the filled order quantity and average price | Passed for the existing synthetic record |
+| 17 | Position update | The synthetic position quantity and average price reconcile to the fill | Passed for the existing synthetic record |
+| 18 | P&L/valuation update | Position and account P&L/equity aggregates reconcile at the current zero mark | Passed for zero-P&L state only |
+| 19 | Account metrics update | Account P&L aggregates match the account's synthetic positions | Passed for the existing synthetic record |
 | 20 | Cancel/modify flow | `instrumentExplorerWorkspace.test.tsx` position protection/close controls; `task42BrokerExecutionCertification.test.ts` mock-runtime order lifecycle | Runnable with mocks; final integration pending D4/D5 |
 | 21 | Duplicate submission protection | `terminalOrderCommandClient.test.ts`, `databaseConsistency.test.ts` idempotency contract | Runnable, local/mock boundary |
 | 22 | Reconnect/recovery behavior | `task38RealtimeReconnect.test.ts`, `terminalRealtimeClient.test.ts` | Runnable, fake transport |
@@ -37,12 +37,23 @@ The fixed paper account allowed for realtime test mode is `REALTIME_MOCK_TEST_AC
 
 ## Gates
 
-The D7 test file contains two skipped tests so Vitest reports the unfinished gates instead of representing them as passes:
+The D7 test file contains two database-backed checks that are skipped by default:
 
-- **PENDING D4:** connect the certified order/outbox boundary to the finalized D4 worker and assert its authoritative handoff/recovery contract.
-- **PENDING D5:** add only the downstream final-execution assertions after D5 is finalized. Fill, position, valuation, and account-metric results are not certified by this preparation task.
+- **D4:** checks the existing D6B order's claimed/completed outbox row, provider acknowledgement, and persisted mock submission response.
+- **D5:** checks the single persisted fill, its order totals, matching position, P&L/equity consistency, and audit events.
 
-Existing worker, mock-provider, and broker-runtime tests remain unit/contract evidence only; they are not substituted for these pending D7 integration assertions.
+These database-backed checks are opt-in. They run only when `RUN_D6B_SYNTHETIC_DB_CERTIFICATION=true` and use `SUPABASE_URL` plus a server-only service-role key (`SUPABASE_SERVICE_ROLE_KEY` or the existing Railway `SUPABASE_SECRET_KEY`) from the test process environment (not Vite's client-exposed `VITE_*` namespace). When opted in, missing credentials, a missing synthetic order, or a database error fails the test; it is not converted into a pass. Run them only against the dedicated D6B synthetic test account and database.
+
+**Live read-only result (2026-10-09):** D4 and D5 both passed against the pre-existing D6B synthetic mock order. The order has one persisted fill; the fill, position, order totals, account P&L aggregates, and audit events reconcile. The position and account P&L are zero at the recorded mark. This did not create or modify an order and does not certify nonzero mark-to-market changes, live duplicate/retry behavior, ambiguous-submission recovery, or worker restart recovery. Those remain separate release checks; the worker recovery behavior is covered only by the local mock-safe tests.
+
+Example PowerShell opt-in:
+
+```powershell
+$env:RUN_D6B_SYNTHETIC_DB_CERTIFICATION = "true"
+$env:SUPABASE_URL = "https://your-test-project.supabase.co"
+$env:SUPABASE_SERVICE_ROLE_KEY = "<test-project-service-role-key>"
+npx vitest run src/test/taskD7Certification.test.tsx
+```
 
 ## Commands
 

@@ -19,6 +19,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
+import { formatDhanChartDateTime } from "./dhan-chart-date-time.mjs";
 
 // ── Load .env manually (no external deps needed) ──
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -573,8 +574,8 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
       const defaultFrom = new Date(now);
       defaultFrom.setDate(defaultFrom.getDate() - defaultDaysBack);
       
-      let from = fromDate || `${defaultFrom.toISOString().split("T")[0]} 09:15`;
-      const to = toDate || `${now.toISOString().split("T")[0]} 15:30`;
+      let from = fromDate || `${defaultFrom.toISOString().split("T")[0]} 09:15:00`;
+      const to = toDate || `${now.toISOString().split("T")[0]} 15:30:00`;
 
       // Enforce Dhan's 90-day limit for intraday charts (DH-905)
       if (!isDailyCandle) {
@@ -584,7 +585,7 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
         if (daysDiff > 90) {
           const clampedFrom = new Date(toDateObj);
           clampedFrom.setDate(clampedFrom.getDate() - 89);
-          from = `${clampedFrom.toISOString().split("T")[0]} 09:15`;
+          from = `${clampedFrom.toISOString().split("T")[0]} 09:15:00`;
           console.log(`  📐 Clamped intraday date range to 90 days (was ${daysDiff}d)`);
         }
       }
@@ -601,8 +602,8 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
         securityId: secId,
         exchangeSegment: exchSeg,
         instrument,
-        fromDate: from.includes(" ") ? from : `${from} 09:15`,
-        toDate: to.includes(" ") ? to : `${to} 15:30`,
+        fromDate: formatDhanChartDateTime(from, "09:15:00"),
+        toDate: formatDhanChartDateTime(to, "15:30:00"),
         expiryCode: 0,
         oi: exchSeg === "NSE_FNO",
       };
@@ -1166,7 +1167,7 @@ function connectDhanWebSocket(clientId, accessToken) {
 
     // Subscribe to index instruments (Quote data = RequestCode 17)
     const subscribeMsg = JSON.stringify({
-      RequestCode: 21, // Subscribe Quote for indices (use 15 for ticker, 17 for quote, 21 for full)
+      RequestCode: 17, // Quote packet (15 = ticker, 21 = full packet)
       InstrumentCount: WS_INSTRUMENTS.length,
       InstrumentList: WS_INSTRUMENTS,
     });
