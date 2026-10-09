@@ -99,7 +99,6 @@ export function InstrumentExplorer({
   onTradeOpen,
   activeAccountId,
   activeAccountProvider,
-  hasNoAccount,
   isAccountLoading,
   loadError,
   searchPlaceholder,
@@ -286,7 +285,7 @@ export function InstrumentExplorer({
     },
     enabled: Boolean(
       !activeAccountId &&
-      hasNoAccount &&
+      !isAccountLoading &&
       chartSymbol &&
       workspaceContext !== "options" &&
       (

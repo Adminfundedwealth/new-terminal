@@ -270,7 +270,6 @@ describe("InstrumentExplorer stock workspace", () => {
           isLoading={false}
           watchedSymbols={[]}
           onToggleWatchlist={() => {}}
-          hasNoAccount
           initialChartSymbol="TATAMOTORS"
         />
       </QueryClientProvider>
@@ -333,7 +332,6 @@ describe("InstrumentExplorer stock workspace", () => {
           isLoading={false}
           watchedSymbols={[]}
           onToggleWatchlist={() => {}}
-          hasNoAccount
           initialChartSymbol="TMPV"
         />
       </QueryClientProvider>
