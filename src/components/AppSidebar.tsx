@@ -1,4 +1,4 @@
-import { BarChart3, Briefcase, CalendarDays, CandlestickChart, LayoutDashboard, Layers, Moon, Newspaper, Settings, Star, Sun, TableProperties, TrendingUp } from "lucide-react";
+import { BarChart3, Briefcase, CalendarDays, CandlestickChart, LayoutDashboard, Layers, Moon, Newspaper, Star, Sun, TableProperties, TrendingUp } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import {
   Sidebar,
@@ -35,7 +35,6 @@ const tradingItems = [
 ];
 
 const settingItems = [
-  { title: "Broker API Keys", url: "/broker-settings", icon: Settings },
   { title: "My Stats", url: "/my-stats", icon: BarChart3 },
 ];
 
