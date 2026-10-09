@@ -4,6 +4,9 @@
   "description": "FundedWealth Terminal for NSE F&O analytics.",
   "private": false,
   "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "author": "FundedWealth",
   "license": "MIT",
   "repository": {
@@ -84,7 +87,7 @@
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.61.1",
     "react-resizable-panels": "^2.1.9",
-    "react-router-dom": "^6.30.1",
+    "react-router-dom": "^7.18.0",
     "recharts": "^2.15.4",
     "sonner": "^1.7.4",
     "tailwind-merge": "^2.6.0",
@@ -115,12 +118,21 @@
     "tsx": "^4.23.15",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.38.0",
-    "vite": "^5.4.19",
-    "vitest": "^3.2.4"
+    "vite": "^6.4.3",
+    "vitest": "^4.1.11"
   },
   "overrides": {
+    "baseline-browser-mapping": "^2.11.0",
+    "brace-expansion@^1.1.0": "^1.1.21",
+    "brace-expansion@^5.0.0": "^5.0.12",
     "braces": "^3.0.3",
+    "browserslist": "^4.28.7",
+    "esbuild": "^0.28.2",
+    "form-data": "^4.0.6",
+    "js-yaml": "^4.3.2",
     "micromatch": "^4.0.0",
-    "nanoid": "^3.3.18"
+    "nanoid": "^3.3.18",
+    "postcss-selector-parser": "^7.1.6",
+    "shell-quote": "^1.9.0"
   }
 }
