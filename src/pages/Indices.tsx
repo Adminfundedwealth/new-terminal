@@ -49,7 +49,7 @@ export default function Indices() {
     <main className="mx-auto flex h-full min-h-0 w-full max-w-[1500px] flex-col p-3 sm:p-5">
       <InstrumentExplorer
         title="Indices"
-        subtitle="Cash indices with account-scoped Terminal OS quotes and historical charts."
+        subtitle="Cash indices with central Dhan quotes and account-scoped trading."
         asset="indices"
         rows={rows}
         isLoading={!isLoaded}

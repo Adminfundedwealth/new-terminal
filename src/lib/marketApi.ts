@@ -381,16 +381,54 @@ export interface CashMarketQuote {
   high: number | null;
   low: number | null;
   previousClose: number | null;
-  volume: number;
+  change: number | null;
+  changePercent: number | null;
+  volume: number | null;
+  openInterest: number | null;
+  timestamp: string | null;
+}
+
+export function normalizeDhanQuoteTimestamp(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const milliseconds = value > 1_000_000_000_000 ? value : value * 1000;
+    const parsed = new Date(milliseconds);
+    return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
+  }
+  if (typeof value !== "string" || !value.trim()) return null;
+
+  const text = value.trim();
+  const localTime = text.match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2}):(\d{2})$/);
+  if (localTime) {
+    const [, dayText, monthText, yearText, hourText, minuteText, secondText] = localTime;
+    const day = Number(dayText);
+    const month = Number(monthText);
+    const year = Number(yearText);
+    const hour = Number(hourText);
+    const minute = Number(minuteText);
+    const second = Number(secondText);
+    const istWallTime = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+    if (
+      istWallTime.getUTCFullYear() !== year ||
+      istWallTime.getUTCMonth() !== month - 1 ||
+      istWallTime.getUTCDate() !== day ||
+      hour > 23 ||
+      minute > 59 ||
+      second > 59
+    ) return null;
+    return new Date(istWallTime.getTime() - 5.5 * 60 * 60 * 1000).toISOString();
+  }
+
+  const parsed = Date.parse(text);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
 }
 
 export async function fetchCashQuotes(exchangeSegment: string, securityIds: string[]): Promise<Record<string, CashMarketQuote>> {
-  const allowedSegments = new Set(["NSE_EQ", "BSE_EQ", "IDX_I", "BSE_IDX"]);
+  const allowedSegments = new Set(["NSE_EQ", "NSE_FNO", "BSE_EQ", "IDX_I", "BSE_IDX"]);
   const uniqueIds = [...new Set(securityIds.map((id) => id.trim()))];
-  if (!allowedSegments.has(exchangeSegment)) throw new Error(`Unsupported cash quote segment: ${exchangeSegment}`);
+  if (!allowedSegments.has(exchangeSegment)) throw new Error(`Unsupported market quote segment: ${exchangeSegment}`);
   if (uniqueIds.length === 0) return {};
   if (uniqueIds.length > 1000 || uniqueIds.some((id) => !/^\d+$/.test(id))) {
-    throw new Error("Cash quote requests require up to 1,000 numeric security IDs");
+    throw new Error("Market quote requests require up to 1,000 numeric security IDs");
   }
 
   const response = await fetchDhanProxy("cash-quotes", {
@@ -408,19 +446,29 @@ export async function fetchCashQuotes(exchangeSegment: string, securityIds: stri
         low?: number;
         close?: number;
         previous_close?: number;
+        net_change?: number;
         volume?: number;
+        oi?: number;
+        last_trade_time?: string | number;
+        timestamp?: string | number;
         ohlc?: { open?: number; high?: number; low?: number; close?: number };
       };
       const ltp = Number(quote.last_price ?? quote.ltp);
       if (!Number.isFinite(ltp) || ltp <= 0) return [];
       const readValue = (value: number | undefined) => value == null || !Number.isFinite(Number(value)) ? null : Number(value);
+      const previousClose = readValue(quote.ohlc?.close ?? quote.previous_close ?? quote.close);
+      const change = readValue(quote.net_change) ?? (previousClose == null ? null : ltp - previousClose);
       return [[securityId, {
         ltp,
         open: readValue(quote.ohlc?.open ?? quote.open),
         high: readValue(quote.ohlc?.high ?? quote.high),
         low: readValue(quote.ohlc?.low ?? quote.low),
-        previousClose: readValue(quote.ohlc?.close ?? quote.previous_close ?? quote.close),
-        volume: Number(quote.volume) || 0,
+        previousClose,
+        change,
+        changePercent: previousClose && change != null ? (change / previousClose) * 100 : null,
+        volume: readValue(quote.volume),
+        openInterest: readValue(quote.oi),
+        timestamp: normalizeDhanQuoteTimestamp(quote.last_trade_time ?? quote.timestamp),
       }]];
     }),
   );

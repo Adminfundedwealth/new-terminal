@@ -67,7 +67,7 @@ export default function Futures() {
       {quoteStatus && <p className="mb-3 text-sm text-amber-500" role="status">{quoteStatus}</p>}
       <InstrumentExplorer
         title="Futures"
-        subtitle="Stock and index futures with account-scoped Terminal OS quotes and historical charts."
+        subtitle="Stock and index futures with central Dhan quotes and account-scoped trading."
         asset="futures"
         rows={rows}
         isLoading={!isLoaded}

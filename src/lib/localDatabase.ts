@@ -21,6 +21,7 @@ export interface Instrument {
   exchangeSegment: string;
   instrumentType: string;
   lotSize: number;
+  tickSize?: number;
   provider?: "dhan" | "kite" | "zerodha";
   providerInstrumentId?: string;
   exchange?: string;

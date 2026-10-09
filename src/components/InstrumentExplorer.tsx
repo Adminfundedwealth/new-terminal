@@ -12,6 +12,7 @@ import { isWatchlisted } from "@/lib/watchlist";
 import { useLiveOptionChain } from "@/hooks/useMarketData";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { classifyInstrument, isProductionInstrument } from "@/lib/instrumentClassification";
+import { fetchCashQuotes } from "@/lib/marketApi";
 import { getPreferredMarketAdapter } from "@/lib/brokerRouter";
 import {
   createClientOrderId,
@@ -161,11 +162,62 @@ export function InstrumentExplorer({
       marketDataProvider,
       visibleRows.map((row) => row.instrument?.providerInstrumentId ?? row.instrument?.securityId ?? row.chartSymbol ?? row.symbol),
     ],
-    enabled: Boolean(activeAccountId && marketDataProvider && visibleRows.length > 0),
+    enabled: Boolean(visibleRows.length > 0 && (
+      (activeAccountId && marketDataProvider) ||
+      (!activeAccountId && !isAccountLoading)
+    )),
     queryFn: async () => {
-      if (!activeAccountId || !marketDataProvider) throw new Error("An active account and market-data provider are required for account-scoped quotes.");
       const quotes: Record<string, TerminalMarketDataQuote> = {};
       const errors: string[] = [];
+      if (!activeAccountId) {
+        const instrumentsBySegment = new Map<string, Map<string, Instrument>>();
+        for (const row of visibleRows) {
+          const instrument = row.instrument;
+          if (!instrument || instrument.provider !== "dhan") {
+            errors.push(`Central Dhan instrument data is unavailable for ${row.chartSymbol ?? row.symbol}.`);
+            continue;
+          }
+          const ids = instrumentsBySegment.get(instrument.exchangeSegment) ?? new Map<string, Instrument>();
+          ids.set(instrument.securityId, instrument);
+          instrumentsBySegment.set(instrument.exchangeSegment, ids);
+        }
+
+        const quoteGroups = await Promise.all(
+          [...instrumentsBySegment].map(async ([segment, segmentInstruments]) => [
+            segment,
+            await fetchCashQuotes(segment, [...segmentInstruments.keys()]),
+          ] as const),
+        );
+        const quotesBySegment = new Map(quoteGroups);
+        for (const row of visibleRows) {
+          const instrument = row.instrument;
+          if (!instrument || instrument.provider !== "dhan") continue;
+          const quote = quotesBySegment.get(instrument.exchangeSegment)?.[instrument.securityId];
+          if (!quote) {
+            errors.push(`Central Dhan returned no quote for ${instrument.tradingSymbol}.`);
+            continue;
+          }
+          quotes[row.chartSymbol ?? row.symbol] = {
+            provider: "dhan",
+            symbol: instrument.symbol,
+            tradingSymbol: instrument.tradingSymbol,
+            exchange: instrument.exchange ?? "NSE",
+            ltp: quote.ltp,
+            open: quote.open,
+            high: quote.high,
+            low: quote.low,
+            previousClose: quote.previousClose,
+            change: quote.change,
+            changePercent: quote.changePercent,
+            volume: quote.volume,
+            openInterest: quote.openInterest,
+            timestamp: quote.timestamp ?? "",
+          };
+        }
+        return { quotes, errors: [...new Set(errors)] };
+      }
+
+      if (!marketDataProvider) throw new Error("The selected account has no supported market-data provider.");
       for (let offset = 0; offset < visibleRows.length; offset += 10) {
         const batch = visibleRows.slice(offset, offset + 10);
         const results = await Promise.allSettled(batch.map(async (row) => {
@@ -193,15 +245,11 @@ export function InstrumentExplorer({
     refetchInterval: 30_000,
     retry: false,
   });
-  const marketDataNotice = hasNoAccount
+  const marketDataNotice = !activeAccountId && isAccountLoading
     ? null
-    : !activeAccountId && isAccountLoading
-      ? "Checking account-specific market data availability..."
-      : !activeAccountId
-        ? null
-        : !marketDataProvider
-          ? "Account-specific market data is unavailable for the selected account."
-          : visibleQuotesQuery.data?.errors[0] ?? (visibleQuotesQuery.error instanceof Error ? visibleQuotesQuery.error.message : null);
+    : activeAccountId && !marketDataProvider
+      ? "Account-specific market data is unavailable for the selected account."
+      : visibleQuotesQuery.data?.errors[0] ?? (visibleQuotesQuery.error instanceof Error ? visibleQuotesQuery.error.message : null);
 
   const displayedRows = useMemo(() => visibleRows.map((row) => {
     const quote = visibleQuotesQuery.data?.quotes[row.chartSymbol ?? row.symbol];
@@ -287,8 +335,10 @@ export function InstrumentExplorer({
     staleTime: 5_000,
   });
 
+  const selectedRowQuote = displayedRows.find((row) => (row.chartSymbol ?? row.symbol) === chartSymbol);
   const selectedQuote = useMemo(() => {
-    const rowQuote = rows.find((row) => (row.chartSymbol ?? row.symbol) === chartSymbol)
+    const rowQuote = selectedRowQuote
+      ?? rows.find((row) => (row.chartSymbol ?? row.symbol) === chartSymbol)
       ?? filteredRows.find((row) => (row.chartSymbol ?? row.symbol) === chartSymbol);
     if (selectedTerminalQuote && Number.isFinite(selectedTerminalQuote.ltp) && selectedTerminalQuote.ltp > 0) {
       return {
@@ -340,15 +390,18 @@ export function InstrumentExplorer({
       volume: leg.volume,
       instrument: ticketInstrument,
     };
-  }, [chartSymbol, derivativeQuote, filteredRows, optionChainData, rows, selectedTerminalQuote, ticketInstrument, workspaceContext]);
+  }, [chartSymbol, derivativeQuote, filteredRows, optionChainData, rows, selectedRowQuote, selectedTerminalQuote, ticketInstrument, workspaceContext]);
   const selectedQuoteIsAvailable = Boolean(
-    selectedTerminalQuote && Number.isFinite(selectedTerminalQuote.ltp) && selectedTerminalQuote.ltp > 0
+    selectedQuote && Number.isFinite(selectedQuote.ltp) && selectedQuote.ltp > 0
   );
   const selectedQuoteIsLive = Boolean(
-    selectedQuoteIsAvailable &&
-    Number.isFinite(Date.parse(selectedTerminalQuote?.timestamp ?? "")) &&
-    Date.now() - Date.parse(selectedTerminalQuote?.timestamp ?? "") >= 0 &&
-    Date.now() - Date.parse(selectedTerminalQuote?.timestamp ?? "") <= 60_000
+    selectedQuoteIsAvailable && (
+      selectedRowQuote?.isLive ||
+      (selectedTerminalQuote != null &&
+        Number.isFinite(Date.parse(selectedTerminalQuote.timestamp)) &&
+        Date.now() - Date.parse(selectedTerminalQuote.timestamp) >= 0 &&
+        Date.now() - Date.parse(selectedTerminalQuote.timestamp) <= 60_000)
+    )
   );
   const chartQuoteStatus = workspaceContext === "options" && selectedQuote?.ltp
     ? "AVAILABLE"

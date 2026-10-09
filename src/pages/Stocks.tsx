@@ -52,7 +52,7 @@ export default function Stocks() {
     <main className="mx-auto flex h-full min-h-0 w-full max-w-[1500px] flex-col p-3 sm:p-5">
       <InstrumentExplorer
         title="Stocks"
-        subtitle="NSE cash-equity instruments with account-scoped Terminal OS quotes."
+        subtitle="NSE cash-equity instruments with central Dhan quotes."
         asset="stocks"
         rows={rows}
         isLoading={!isLoaded}

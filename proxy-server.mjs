@@ -456,8 +456,8 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
     }
 
     case "cash-quotes": {
-      const allowedSegments = new Set(["NSE_EQ", "BSE_EQ", "IDX_I", "BSE_IDX"]);
-      if (!allowedSegments.has(quoteSegment)) throw new Error(`Unsupported cash quote segment: ${quoteSegment || "(missing)"}`);
+      const allowedSegments = new Set(["NSE_EQ", "NSE_FNO", "BSE_EQ", "IDX_I", "BSE_IDX"]);
+      if (!allowedSegments.has(quoteSegment)) throw new Error(`Unsupported market quote segment: ${quoteSegment || "(missing)"}`);
       if (quoteIds.length === 0 || quoteIds.length > 1000 || quoteIds.some((id) => !/^\d+$/.test(id))) {
         throw new Error("Cash quotes require between 1 and 1,000 numeric security IDs");
       }
@@ -517,11 +517,15 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
         const instrName = cols[header.indexOf("SEM_INSTRUMENT_NAME")]?.trim();
         const tradingSymbol = cols[header.indexOf("SEM_TRADING_SYMBOL")]?.trim();
         const lotUnitsRaw = cols[header.indexOf("SEM_LOT_UNITS")]?.trim();
-        const lotSize = parseInt(parseFloat(lotUnitsRaw) || 1);
+        const parsedLotSize = Number.parseFloat(lotUnitsRaw);
+        const lotSize = Number.isFinite(parsedLotSize) && parsedLotSize > 0 ? Math.trunc(parsedLotSize) : undefined;
+        const parsedTickSize = Number.parseFloat(cols[header.indexOf("SEM_TICK_SIZE")]?.trim());
+        const tickSize = Number.isFinite(parsedTickSize) && parsedTickSize > 0 ? parsedTickSize : undefined;
         const customSymbol = cols[header.indexOf("SEM_CUSTOM_SYMBOL")]?.trim();
         const symbolName = cols[header.indexOf("SM_SYMBOL_NAME")]?.trim();
         const expiryDate = cols[header.indexOf("SEM_EXPIRY_DATE")]?.trim();
-        const strikePrice = parseFloat(cols[header.indexOf("SEM_STRIKE_PRICE")]?.trim()) || 0;
+        const parsedStrikePrice = Number.parseFloat(cols[header.indexOf("SEM_STRIKE_PRICE")]?.trim());
+        const strikePrice = Number.isFinite(parsedStrikePrice) && parsedStrikePrice > 0 ? parsedStrikePrice : undefined;
         const optionType = cols[header.indexOf("SEM_OPTION_TYPE")]?.trim();
         const series = cols[header.indexOf("SEM_SERIES")]?.trim();
 
@@ -539,6 +543,7 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
           exchangeSegment,
           instrumentType: instrName,
           lotSize,
+          tickSize,
           series: series || undefined,
           expiryDate: expiryDate && expiryDate !== "0001-01-01" ? expiryDate : undefined,
           strikePrice: strikePrice || undefined,

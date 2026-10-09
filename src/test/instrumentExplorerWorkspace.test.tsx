@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { InstrumentExplorer } from "@/components/InstrumentExplorer";
 import { useLiveOptionChain } from "@/hooks/useMarketData";
 import { createTerminalOrder, fetchTerminalExecutions, fetchTerminalOrders, fetchTerminalPositions, modifyTerminalPositionProtection } from "@/lib/terminalApi";
+import { fetchCashQuotes } from "@/lib/marketApi";
 
 vi.mock("@/hooks/useLocalDatabase", () => ({
   useInstrumentLookup: () => ({
@@ -22,6 +23,7 @@ vi.mock("@/hooks/useMarketData", () => ({
 
 vi.mock("@/lib/marketApi", () => ({
   fetchInstrumentMaster: vi.fn().mockResolvedValue({ instruments: [] }),
+  fetchCashQuotes: vi.fn().mockResolvedValue({}),
 }));
 
 vi.mock("@/lib/terminalApi", () => ({
@@ -102,7 +104,21 @@ vi.mock("@/components/StockChart", () => ({
 }));
 
 describe("InstrumentExplorer stock workspace", () => {
-  it("opens the existing chart workspace for a stock row using the same shared layout", () => {
+  it("opens the existing chart workspace for a stock row using the same shared layout", async () => {
+    vi.mocked(fetchCashQuotes).mockResolvedValueOnce({
+      "500490": {
+        ltp: 7060,
+        open: 7020,
+        high: 7070,
+        low: 7010,
+        previousClose: 7050,
+        change: 10,
+        changePercent: 10 / 7050 * 100,
+        volume: 10000,
+        openInterest: null,
+        timestamp: new Date().toISOString(),
+      },
+    });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     render(
@@ -139,6 +155,15 @@ describe("InstrumentExplorer stock workspace", () => {
     ]);
     expect(screen.queryByText("NSE_EQ")).not.toBeInTheDocument();
     expect(screen.queryByText("500490")).not.toBeInTheDocument();
+    const quoteQueryKey = ["terminal-explorer-quotes", "stocks", undefined, null, ["500490"]];
+    await waitFor(() => {
+      expect(fetchCashQuotes).toHaveBeenCalledWith("NSE_EQ", ["500490"]);
+      expect(queryClient.getQueryState(quoteQueryKey)?.status).toBe("success");
+    });
+    expect(queryClient.getQueryData(quoteQueryKey)).toMatchObject({
+      quotes: { ABB: { ltp: 7060 } },
+    });
+    expect(screen.getByText("₹7,060.00")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open ABB stock chart" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open ABB stock chart" }));
 
@@ -148,8 +173,7 @@ describe("InstrumentExplorer stock workspace", () => {
     expect(screen.getByTestId("stock-chart")).toHaveTextContent("ABB chart mock");
     expect(screen.getByTestId("stock-chart")).toHaveAttribute("data-unavailable-message", "Historical market data is currently unavailable for this chart.");
     expect(screen.queryByText(/Dhan|broker|link .*account/i)).not.toBeInTheDocument();
-    expect(screen.getByText("UNAVAILABLE")).toBeInTheDocument();
-    expect(screen.queryByText("LIVE")).not.toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Option Chain" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Futures" })).not.toBeInTheDocument();
   });

@@ -19,7 +19,6 @@ import {
   getAllCandleHistories,
   getDatabaseStats,
   getFnOStockList,
-  findInstrumentsBySymbol,
   getAllInstruments,
   saveInstruments,
   type PriceSnapshot,
@@ -30,6 +29,8 @@ import {
 } from "@/lib/localDatabase";
 import { classifyInstrument, type InstrumentCategory } from "@/lib/instrumentClassification";
 import { useAccountContext } from "@/hooks/useAccountContext";
+import { fetchInstrumentMaster, normalizeInstrumentMasterResponse } from "@/lib/marketApi";
+import { normalizeInstrumentMaster } from "@/lib/instrumentMaster";
 import {
   requestTerminalMarketData,
   resolveTerminalMarketDataProvider,
@@ -174,7 +175,7 @@ export function useLocalFnOStocks() {
 export function useInstrumentLookup() {
   const [localInstruments, setLocalInstruments] = useState<Instrument[]>([]);
   const [localLoaded, setLocalLoaded] = useState(false);
-  const { activeAccountId, accounts } = useAccountContext();
+  const { activeAccountId, accounts, isLoading: isAccountLoading } = useAccountContext();
   const provider = resolveTerminalMarketDataProvider(
     accounts.find((account) => account.id === activeAccountId)?.broker_provider,
   );
@@ -216,12 +217,47 @@ export function useInstrumentLookup() {
     retry: false,
     staleTime: 6 * 60 * 60 * 1000,
   });
-  const allInstruments = gatewayQuery.data ?? localInstruments;
-  const isLoaded = localLoaded && (!activeAccountId || !provider || gatewayQuery.isFetched);
+
+  const localDhanInstruments = useMemo(
+    () => localInstruments.filter((instrument) => instrument.provider === "dhan"),
+    [localInstruments],
+  );
+  const centralMasterQuery = useQuery({
+    queryKey: ["central-dhan-instrument-master"],
+    enabled: localLoaded && !isAccountLoading && !activeAccountId && localDhanInstruments.length === 0,
+    queryFn: async () => {
+      const response = await fetchInstrumentMaster();
+      const report = normalizeInstrumentMaster(normalizeInstrumentMasterResponse(response), "dhan");
+      if (report.instruments.length === 0) throw new Error("The central Dhan instrument master contained no valid instruments.");
+      const BATCH_SIZE = 2000;
+      for (let i = 0; i < report.instruments.length; i += BATCH_SIZE) {
+        await saveInstruments(report.instruments.slice(i, i + BATCH_SIZE));
+      }
+      return report.instruments;
+    },
+    retry: false,
+    staleTime: 6 * 60 * 60 * 1000,
+  });
+
+  const accountMasterRequired = Boolean(activeAccountId && provider);
+  const allInstruments = accountMasterRequired
+    ? gatewayQuery.data ?? localInstruments
+    : !activeAccountId
+      ? centralMasterQuery.data ?? localDhanInstruments
+      : localInstruments;
+  const isLoaded = localLoaded && (
+    accountMasterRequired
+      ? gatewayQuery.isFetched
+      : !isAccountLoading && (
+        Boolean(activeAccountId) ||
+        localDhanInstruments.length > 0 ||
+        centralMasterQuery.isFetched
+      )
+  );
   const loadError = gatewayQuery.error instanceof Error
     ? gatewayQuery.error.message
-    : localLoaded && !activeAccountId && localInstruments.length === 0
-      ? "Select an active Dhan or Kite account to load instruments from Terminal OS."
+    : centralMasterQuery.error instanceof Error
+      ? centralMasterQuery.error.message
       : null;
 
   const search = useCallback((query: string, category?: InstrumentCategory, limit = 20) => {
@@ -234,9 +270,12 @@ export function useInstrumentLookup() {
   }, [allInstruments]);
 
   const findBySymbol = useCallback(async (symbol: string, category?: InstrumentCategory) => {
-    const matches = await findInstrumentsBySymbol(symbol);
-    return matches.find((instrument) => !category || classifyInstrument(instrument) === category);
-  }, []);
+    const normalized = symbol.trim().toUpperCase();
+    return allInstruments.find((instrument) =>
+      (instrument.symbol.toUpperCase() === normalized || instrument.tradingSymbol.toUpperCase() === normalized) &&
+      (!category || classifyInstrument(instrument) === category)
+    );
+  }, [allInstruments]);
 
   const symbols = useCallback((category: InstrumentCategory) => {
     const seen = new Set<string>();
