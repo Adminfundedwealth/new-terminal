@@ -63,7 +63,7 @@ describe("central market quotes", () => {
   });
 
   it("surfaces missing central instruments and rejected quote requests explicitly", async () => {
-    vi.mocked(fetchCashQuotes).mockRejectedValue(new Error("provider unavailable"));
+    vi.mocked(fetchCashQuotes).mockRejectedValue(new Error("Dhan proxy error 503: provider unavailable"));
 
     const result = await fetchCentralMarketQuotes([
       { key: "UNKNOWN" },
@@ -73,7 +73,38 @@ describe("central market quotes", () => {
     expect(result.quotes).toEqual({});
     expect(result.errors).toEqual([
       "Central Dhan instrument data is unavailable for UNKNOWN.",
-      "Central Dhan quote request failed for RELIANCE: provider unavailable",
+      "Central Dhan quote request failed for RELIANCE: Dhan proxy error 503: provider unavailable",
     ]);
+  });
+
+  it("serializes segment requests and retries an index quote once after rate limiting", async () => {
+    vi.mocked(fetchCashQuotes)
+      .mockResolvedValueOnce({
+        "2885": {
+          ltp: 1207.7, open: 1200, high: 1210, low: 1198, previousClose: 1190,
+          change: 17.7, changePercent: 1.49, volume: 1000, openInterest: null, timestamp: "2026-10-09T08:40:00.000Z",
+        },
+      })
+      .mockRejectedValueOnce(new Error("Dhan proxy error 429: rate limited"))
+      .mockResolvedValueOnce({
+        "13": {
+          ltp: 25000, open: 24900, high: 25100, low: 24800, previousClose: 24900,
+          change: 100, changePercent: 0.4, volume: null, openInterest: null, timestamp: "2026-10-09T08:40:00.000Z",
+        },
+      });
+
+    const result = await fetchCentralMarketQuotes([
+      { key: "RELIANCE", instrument: instrument() },
+      { key: "NIFTY", instrument: instrument({
+        securityId: "13",
+        symbol: "NIFTY",
+        tradingSymbol: "NIFTY",
+        exchangeSegment: "IDX_I",
+      }) },
+    ]);
+
+    expect(fetchCashQuotes.mock.calls.map(([segment]) => segment)).toEqual(["NSE_EQ", "IDX_I", "IDX_I"]);
+    expect(result.quotes).toMatchObject({ RELIANCE: { ltp: 1207.7 }, NIFTY: { ltp: 25000 } });
+    expect(result.errors).toEqual([]);
   });
 });

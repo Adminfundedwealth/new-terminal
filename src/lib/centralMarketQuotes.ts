@@ -7,6 +7,12 @@ export interface CentralMarketQuoteTarget {
   instrument?: Instrument;
 }
 
+const RATE_LIMIT_RETRY_DELAY_MS = 1_000;
+
+function isRateLimitError(error: unknown): boolean {
+  return error instanceof Error && /\b429\b/.test(error.message);
+}
+
 export async function fetchCentralMarketQuotes(targets: CentralMarketQuoteTarget[]): Promise<{
   quotes: Record<string, TerminalMarketDataQuote>;
   errors: string[];
@@ -26,19 +32,26 @@ export async function fetchCentralMarketQuotes(targets: CentralMarketQuoteTarget
   }
 
   const quoteGroupEntries = [...instrumentsBySegment.entries()];
-  const quoteGroups = quoteGroupEntries.map(async ([segment, instruments]) => ({
-    segment,
-    quotes: await fetchCashQuotes(segment, [...instruments.keys()]),
-  }));
-  const quoteResults = await Promise.allSettled(quoteGroups);
   const quotesBySegment = new Map<string, Awaited<ReturnType<typeof fetchCashQuotes>>>();
   const failedSegments = new Map<string, string>();
 
-  quoteResults.forEach((result, index) => {
-    const segment = quoteGroupEntries[index][0];
-    if (result.status === "fulfilled") quotesBySegment.set(segment, result.value.quotes);
-    else failedSegments.set(segment, result.reason instanceof Error ? result.reason.message : "A central Dhan quote request failed.");
-  });
+  for (const [segment, instruments] of quoteGroupEntries) {
+    try {
+      quotesBySegment.set(segment, await fetchCashQuotes(segment, [...instruments.keys()]));
+    } catch (error) {
+      if (!isRateLimitError(error)) {
+        failedSegments.set(segment, error instanceof Error ? error.message : "A central Dhan quote request failed.");
+        continue;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_RETRY_DELAY_MS));
+      try {
+        quotesBySegment.set(segment, await fetchCashQuotes(segment, [...instruments.keys()]));
+      } catch (retryError) {
+        failedSegments.set(segment, retryError instanceof Error ? retryError.message : "A central Dhan quote retry failed.");
+      }
+    }
+  }
 
   const quotes: Record<string, TerminalMarketDataQuote> = {};
   for (const target of targets) {
