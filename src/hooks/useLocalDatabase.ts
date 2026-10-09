@@ -220,14 +220,17 @@ export function useInstrumentLookup() {
 
   const centralMasterQuery = useQuery({
     queryKey: ["central-dhan-instrument-master"],
-    enabled: localLoaded && !isAccountLoading && !activeAccountId,
+    enabled: !isAccountLoading && !activeAccountId,
     queryFn: async () => {
       const response = await fetchInstrumentMaster();
       const report = normalizeInstrumentMaster(normalizeInstrumentMasterResponse(response), "dhan");
       if (report.instruments.length === 0) throw new Error("The central Dhan instrument master contained no valid instruments.");
       return report.instruments;
     },
-    retry: false,
+    retry: (failureCount, error) => failureCount < 2 &&
+      error instanceof Error &&
+      (/\b(?:429|5\d{2})\b/.test(error.message) || /failed to fetch|network/i.test(error.message)),
+    retryDelay: (attempt) => Math.min(250 * (2 ** attempt), 1000),
     staleTime: 6 * 60 * 60 * 1000,
   });
 

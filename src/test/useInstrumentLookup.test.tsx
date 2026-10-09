@@ -61,6 +61,56 @@ describe("useInstrumentLookup central Dhan fallback", () => {
     expect(result.current.loadError).toBeNull();
   });
 
+  it("starts central instrument resolution while the local cache is still loading", async () => {
+    let finishLocalLoad: ((instruments: Awaited<ReturnType<typeof getAllInstruments>>) => void) | undefined;
+    vi.mocked(getAllInstruments).mockImplementationOnce(() => new Promise((resolve) => {
+      finishLocalLoad = resolve;
+    }));
+    vi.mocked(fetchInstrumentMaster).mockResolvedValue({
+      count: 1,
+      instruments: [{
+        securityId: "3456",
+        symbol: "TATA MOTORS PASS VEH LTD",
+        tradingSymbol: "TMPV",
+        exchangeSegment: "NSE_EQ",
+        instrumentType: "EQUITY",
+        lotSize: 1,
+        tickSize: 0.05,
+      }],
+    });
+
+    const { result } = renderLookup();
+
+    await waitFor(() => expect(fetchInstrumentMaster).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.instruments).toMatchObject([{ securityId: "3456", tradingSymbol: "TMPV" }]));
+    expect(result.current.isLoaded).toBe(false);
+
+    finishLocalLoad?.([]);
+    await waitFor(() => expect(result.current.isLoaded).toBe(true));
+  });
+
+  it("retries the central instrument master a bounded number of times after transient errors", async () => {
+    vi.mocked(fetchInstrumentMaster)
+      .mockRejectedValueOnce(new Error("Dhan proxy error 429: rate limited"))
+      .mockResolvedValueOnce({
+        count: 1,
+        instruments: [{
+          securityId: "3456",
+          symbol: "TATA MOTORS PASS VEH LTD",
+          tradingSymbol: "TMPV",
+          exchangeSegment: "NSE_EQ",
+          instrumentType: "EQUITY",
+          lotSize: 1,
+          tickSize: 0.05,
+        }],
+      });
+
+    const { result } = renderLookup();
+
+    await waitFor(() => expect(result.current.instruments).toMatchObject([{ securityId: "3456", tradingSymbol: "TMPV" }]));
+    expect(fetchInstrumentMaster).toHaveBeenCalledTimes(2);
+  });
+
   it("surfaces a central instrument-master failure instead of requesting a personal broker account", async () => {
     vi.mocked(getAllInstruments).mockResolvedValue([]);
     vi.mocked(fetchInstrumentMaster).mockRejectedValue(new Error("Central Dhan master unavailable"));
