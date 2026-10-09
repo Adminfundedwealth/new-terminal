@@ -13,8 +13,8 @@ import { MiniChart } from "@/components/MiniChart";
 import { useAccountContext } from "@/hooks/useAccountContext";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { canonicalIndexSymbol, classifyInstrument, isCashEquityListing } from "@/lib/instrumentClassification";
-import type { Instrument } from "@/lib/localDatabase";
 import { fetchCentralMarketQuotes } from "@/lib/centralMarketQuotes";
+import { findWatchlistInstrument } from "@/lib/watchlistInstrument";
 import {
   requestTerminalMarketData,
   resolveTerminalMarketDataProvider,
@@ -28,20 +28,6 @@ import { useQuery } from "@tanstack/react-query";
 const STORAGE_KEY = "optionsdesk_watchlist";
 const DEFAULT_WATCHLIST = ["NIFTY", "BANKNIFTY", "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN", "TATAMOTORS", "BAJFINANCE", "ADANIENT", "LT", "KOTAKBANK", "ITC", "HINDUNILVR"];
 const INDEX_SYMBOLS = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX", "NIFTY_MIDCAP_50", "SENSEX"]);
-
-function findSupportedInstrument(instruments: Instrument[], symbol: string): Instrument | undefined {
-  const canonicalSymbol = canonicalIndexSymbol(symbol).toUpperCase();
-  const category = INDEX_SYMBOLS.has(canonicalSymbol) ? "indices" : "stocks";
-  const normalizedSymbol = canonicalSymbol.replace(/[^A-Z0-9]/g, "");
-  return instruments.find((instrument) => {
-    const actualCategory = classifyInstrument(instrument);
-    if (actualCategory !== category) return false;
-    if (category === "stocks" && !isCashEquityListing(instrument)) return false;
-    return [instrument.symbol, instrument.tradingSymbol].some((value) =>
-      (category === "indices" ? canonicalIndexSymbol(value) : value).toUpperCase().replace(/[^A-Z0-9]/g, "") === normalizedSymbol
-    );
-  });
-}
 
 function getSavedWatchlist(): string[] {
   try {
@@ -80,12 +66,12 @@ export default function Watchlist() {
       if (!activeAccountId && hasNoAccount) {
         return fetchCentralMarketQuotes(watchedSymbols.map((symbol) => ({
           key: symbol,
-          instrument: findSupportedInstrument(supportedInstruments, symbol),
+          instrument: findWatchlistInstrument(supportedInstruments, symbol),
         })));
       }
       if (!activeAccountId || !provider) throw new Error("An active account and market-data provider are required for account-scoped watchlist quotes.");
       const results = await Promise.allSettled(watchedSymbols.map(async (symbol) => {
-        let instrument = findSupportedInstrument(supportedInstruments, symbol);
+        let instrument = findWatchlistInstrument(supportedInstruments, symbol);
 
         if (!instrument) {
           const searchResults = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(
@@ -98,13 +84,19 @@ export default function Watchlist() {
               candidate.providerInstrumentId && candidate.symbol && candidate.tradingSymbol
             )
             .map(toLocalMarketDataInstrument);
-          instrument = findSupportedInstrument(localSearchResults, symbol);
+          instrument = findWatchlistInstrument(localSearchResults, symbol);
         }
         if (!instrument) throw new Error(`Terminal OS could not resolve ${symbol} as a supported cash-equity or index instrument.`);
         const quote = await requestTerminalMarketData<TerminalMarketDataQuote>(
           activeAccountId,
           provider,
-          { operation: "getQuote", instrument: toTerminalMarketDataInstrument(instrument, provider) },
+          {
+            operation: "getQuote",
+            instrument: toTerminalMarketDataInstrument({
+              ...instrument,
+              exchange: instrument.exchange ?? (instrument.exchangeSegment.startsWith("BSE") ? "BSE" : "NSE"),
+            }, provider),
+          },
         );
         return [symbol, quote] as const;
       }));
@@ -148,7 +140,7 @@ export default function Watchlist() {
   const watchlistRows = useMemo(() => {
     return watchedSymbols
       .map((sym) => {
-        if (!findSupportedInstrument(supportedInstruments, sym)) return null;
+        if (!findWatchlistInstrument(supportedInstruments, sym)) return null;
         const quote = quotes[sym];
         if (quote) {
           return {
@@ -216,7 +208,7 @@ export default function Watchlist() {
       setAddSymbolError("Wait for the cash-equity instrument list to load before adding a symbol.");
       return;
     }
-    if (!findSupportedInstrument(supportedInstruments, sym)) {
+    if (!findWatchlistInstrument(supportedInstruments, sym)) {
       setAddSymbolError("Only supported cash-equity stocks and indices can be added.");
       return;
     }
