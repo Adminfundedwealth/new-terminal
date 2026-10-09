@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { InstrumentExplorer } from "@/components/InstrumentExplorer";
 import { useLiveOptionChain } from "@/hooks/useMarketData";
 import { createTerminalOrder, fetchTerminalExecutions, fetchTerminalOrders, fetchTerminalPositions, modifyTerminalPositionProtection } from "@/lib/terminalApi";
@@ -11,6 +11,7 @@ vi.mock("@/hooks/useLocalDatabase", () => ({
     instruments: [
       { securityId: "500002", symbol: "ABB", tradingSymbol: "ABB", displayName: "ABB Ltd", exchange: "BSE", exchangeSegment: "BSE_EQ", instrumentType: "EQUITY", lotSize: 1, tickSize: 0.05, provider: "test", providerInstrumentId: "500002" },
       { securityId: "500490", symbol: "ABB", tradingSymbol: "ABB", displayName: "ABB Ltd", exchange: "NSE", exchangeSegment: "NSE_EQ", instrumentType: "EQUITY", lotSize: 1, tickSize: 0.05, provider: "test", providerInstrumentId: "500490" },
+      { securityId: "3456", symbol: "TATA MOTORS PASS VEH LTD", tradingSymbol: "TMPV", displayName: "Tata Motors Passenger Vehicles", exchange: "NSE", exchangeSegment: "NSE_EQ", instrumentType: "EQUITY", series: "EQ", lotSize: 1, tickSize: 0.05, provider: "dhan", providerInstrumentId: "3456" },
       { securityId: "18920450", symbol: "NIFTY", tradingSymbol: "NIFTY26SEP23150CE", displayName: "NIFTY 23150 CE", exchange: "NSE", exchangeSegment: "NSE_FNO", instrumentType: "OPTIDX", lotSize: 65, tickSize: 0.05, expiryDate: "2026-09-29", strikePrice: 23150, optionType: "CE", provider: "zerodha", providerInstrumentId: "18920450" },
     ],
     isLoaded: true,
@@ -104,6 +105,10 @@ vi.mock("@/components/StockChart", () => ({
 }));
 
 describe("InstrumentExplorer stock workspace", () => {
+  afterEach(() => {
+    vi.mocked(fetchCashQuotes).mockReset().mockResolvedValue({});
+  });
+
   it("opens the existing chart workspace for a stock row using the same shared layout", async () => {
     vi.mocked(fetchCashQuotes).mockResolvedValueOnce({
       "500490": {
@@ -217,6 +222,7 @@ describe("InstrumentExplorer stock workspace", () => {
       data: [{ id: "index-position-1", account_id: "account-1", trading_account_id: "account-1", symbol: "NIFTY", side: "LONG", qty: 1, avg_price: 23140, is_open: true, position_status: "open" }],
       meta: { total: 1, page: 1, page_size: 1, has_more: false },
     });
+
     await waitFor(() => expect(screen.getByTestId("bottom-trading-workspace")).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("button", { name: /back to indices/i }));
@@ -227,6 +233,54 @@ describe("InstrumentExplorer stock workspace", () => {
     expect(screen.getByTestId("stock-chart")).toHaveTextContent("NIFTY_MIDCAP_50 chart mock");
     fireEvent.click(screen.getByRole("button", { name: /MIDCPNIFTY NSE · IDX_I/i }));
     expect(screen.getByTestId("stock-chart")).toHaveTextContent("NIFTY_MIDCAP_50 chart mock");
+  });
+
+  it("loads a central quote for a no-account deep-linked legacy stock symbol", async () => {
+    vi.mocked(fetchCashQuotes).mockImplementation(async (_segment, securityIds) => securityIds.includes("3456")
+      ? {
+          "3456": {
+            ltp: 279.9, open: 275.8, high: 280.95, low: 274.6, previousClose: 273,
+            change: 6.9, changePercent: 2.53, volume: 6360894, openInterest: null,
+            timestamp: "2026-10-09T15:59:51.000Z",
+          },
+        }
+      : {});
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InstrumentExplorer
+          title="Stocks"
+          subtitle="NSE-listed equity quotes."
+          asset="stocks"
+          rows={[{
+            symbol: "ABB",
+            chartSymbol: "ABB",
+            label: "ABB",
+            ltp: null,
+            change: null,
+            changePercent: null,
+            open: null,
+            high: null,
+            low: null,
+            volume: null,
+            instrument: { securityId: "500490", symbol: "ABB", tradingSymbol: "ABB", exchange: "NSE", exchangeSegment: "NSE_EQ", instrumentType: "EQUITY", lotSize: 1, provider: "dhan" },
+          }]}
+          isLoading={false}
+          watchedSymbols={[]}
+          onToggleWatchlist={() => {}}
+          hasNoAccount
+          initialChartSymbol="TATAMOTORS"
+        />
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => expect(queryClient.getQueryState(["terminal-central-chart-quote", "TATAMOTORS"])?.status).toBe("success"));
+    expect(fetchCashQuotes).toHaveBeenCalledWith("NSE_EQ", ["3456"]);
+    expect(screen.getByText("₹279.90")).toBeInTheDocument();
+    expect(screen.getByText("+2.53%")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /back to stocks/i })).toBeInTheDocument();
+    expect(screen.queryByText(/link .*account/i)).not.toBeInTheDocument();
   });
 
   it("routes one-lot Kite futures BUY and SELL through the simulated existing ticket", async () => {

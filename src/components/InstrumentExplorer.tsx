@@ -13,6 +13,7 @@ import { useLiveOptionChain } from "@/hooks/useMarketData";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { classifyInstrument, isProductionInstrument } from "@/lib/instrumentClassification";
 import { fetchCentralMarketQuotes } from "@/lib/centralMarketQuotes";
+import { findWatchlistInstrument } from "@/lib/watchlistInstrument";
 import { getPreferredMarketAdapter } from "@/lib/brokerRouter";
 import {
   createClientOrderId,
@@ -274,6 +275,27 @@ export function InstrumentExplorer({
     retry: false,
   });
 
+  const centralChartQuoteQuery = useQuery({
+    queryKey: ["terminal-central-chart-quote", chartSymbol],
+    queryFn: async () => {
+      if (!chartSymbol) return null;
+      const instrument = findWatchlistInstrument(instruments, chartSymbol);
+      if (!instrument) return null;
+      const result = await fetchCentralMarketQuotes([{ key: chartSymbol, instrument }]);
+      return result.quotes[chartSymbol] ?? null;
+    },
+    enabled: Boolean(
+      !activeAccountId &&
+      hasNoAccount &&
+      chartSymbol &&
+      workspaceContext !== "options" &&
+      !visibleRows.some((row) => (row.chartSymbol ?? row.symbol).toUpperCase() === chartSymbol.toUpperCase())
+    ),
+    staleTime: 5_000,
+    refetchInterval: 15_000,
+    retry: false,
+  });
+
   const { data: optionChainData, isLoading: isOptionChainLoading } = useLiveOptionChain(
     contextUnderlying,
     contextExpiry,
@@ -314,6 +336,21 @@ export function InstrumentExplorer({
         instrument: ticketInstrument,
       };
     }
+    if (centralChartQuoteQuery.data && Number.isFinite(centralChartQuoteQuery.data.ltp) && centralChartQuoteQuery.data.ltp > 0) {
+      return {
+        symbol: centralChartQuoteQuery.data.symbol,
+        chartSymbol: centralChartQuoteQuery.data.tradingSymbol,
+        label: centralChartQuoteQuery.data.tradingSymbol,
+        ltp: centralChartQuoteQuery.data.ltp,
+        change: centralChartQuoteQuery.data.change,
+        changePercent: centralChartQuoteQuery.data.changePercent,
+        open: centralChartQuoteQuery.data.open,
+        high: centralChartQuoteQuery.data.high,
+        low: centralChartQuoteQuery.data.low,
+        volume: centralChartQuoteQuery.data.volume,
+        instrument: findWatchlistInstrument(instruments, chartSymbol ?? ""),
+      };
+    }
     if (rowQuote || workspaceContext !== "options" || !ticketInstrument?.strikePrice || !ticketInstrument.optionType) {
       return rowQuote ?? null;
     }
@@ -349,13 +386,17 @@ export function InstrumentExplorer({
       volume: leg.volume,
       instrument: ticketInstrument,
     };
-  }, [chartSymbol, derivativeQuote, filteredRows, optionChainData, rows, selectedRowQuote, selectedTerminalQuote, ticketInstrument, workspaceContext]);
+  }, [centralChartQuoteQuery.data, chartSymbol, derivativeQuote, filteredRows, instruments, optionChainData, rows, selectedRowQuote, selectedTerminalQuote, ticketInstrument, workspaceContext]);
   const selectedQuoteIsAvailable = Boolean(
     selectedQuote && Number.isFinite(selectedQuote.ltp) && selectedQuote.ltp > 0
   );
   const selectedQuoteIsLive = Boolean(
     selectedQuoteIsAvailable && (
       selectedRowQuote?.isLive ||
+      (centralChartQuoteQuery.data != null &&
+        Number.isFinite(Date.parse(centralChartQuoteQuery.data.timestamp)) &&
+        Date.now() - Date.parse(centralChartQuoteQuery.data.timestamp) >= 0 &&
+        Date.now() - Date.parse(centralChartQuoteQuery.data.timestamp) <= 60_000) ||
       (selectedTerminalQuote != null &&
         Number.isFinite(Date.parse(selectedTerminalQuote.timestamp)) &&
         Date.now() - Date.parse(selectedTerminalQuote.timestamp) >= 0 &&
