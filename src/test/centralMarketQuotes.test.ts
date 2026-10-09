@@ -105,7 +105,7 @@ describe("central market quotes", () => {
       }) },
     ]);
 
-    expect(fetchCashQuotes.mock.calls.map(([segment]) => segment)).toEqual(["NSE_EQ", "IDX_I", "IDX_I"]);
+    expect(vi.mocked(fetchCashQuotes).mock.calls.map(([segment]) => segment)).toEqual(["NSE_EQ", "IDX_I", "IDX_I"]);
     expect(result.quotes).toMatchObject({ RELIANCE: { ltp: 1207.7 }, NIFTY: { ltp: 25000 } });
     expect(result.errors).toEqual([]);
   });
