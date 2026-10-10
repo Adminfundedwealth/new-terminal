@@ -15,6 +15,7 @@ import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { canonicalIndexSymbol, classifyInstrument, isCashEquityListing } from "@/lib/instrumentClassification";
 import { fetchCentralMarketQuotes } from "@/lib/centralMarketQuotes";
 import { findWatchlistInstrument } from "@/lib/watchlistInstrument";
+import { DEFAULT_WATCHLIST_SYMBOLS } from "@/lib/defaultWatchlist";
 import {
   requestTerminalMarketData,
   resolveTerminalMarketDataProvider,
@@ -26,7 +27,10 @@ import {
 import { useQuery } from "@tanstack/react-query";
 
 const STORAGE_KEY = "optionsdesk_watchlist";
-const DEFAULT_WATCHLIST = ["NIFTY", "BANKNIFTY", "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN", "TATAMOTORS", "BAJFINANCE", "ADANIENT", "LT", "KOTAKBANK", "ITC", "HINDUNILVR"];
+const DEFAULT_WATCHLIST = [...new Set([
+  "NIFTY", "BANKNIFTY", "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN", "TATAMOTORS", "BAJFINANCE", "ADANIENT", "LT", "KOTAKBANK", "ITC", "HINDUNILVR",
+  ...DEFAULT_WATCHLIST_SYMBOLS,
+])];
 const INDEX_SYMBOLS = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX", "NIFTY_MIDCAP_50", "SENSEX"]);
 
 function getSavedWatchlist(): string[] {
@@ -58,6 +62,10 @@ export default function Watchlist() {
       classifyInstrument(instrument) === "indices" || isCashEquityListing(instrument)
     ),
     [instruments],
+  );
+  const unresolvedSymbols = useMemo(
+    () => watchedSymbols.filter((symbol) => !findWatchlistInstrument(supportedInstruments, symbol)),
+    [watchedSymbols, supportedInstruments],
   );
   const quoteQuery = useQuery({
     queryKey: ["terminal-watchlist-quotes", activeAccountId ?? "central-dhan", provider, watchedSymbols, instrumentsLoaded],
@@ -264,6 +272,11 @@ export default function Watchlist() {
         </div>
       </div>
       {addSymbolError && <p className="text-xs text-destructive" role="alert">{addSymbolError}</p>}
+      {instrumentsLoaded && supportedInstruments.length > 0 && unresolvedSymbols.length > 0 && (
+        <p className="text-xs text-amber-500" role="status">
+          No supported cash-equity or index instrument found for {unresolvedSymbols.length} watchlist symbol{unresolvedSymbols.length === 1 ? "" : "s"}: {unresolvedSymbols.join(", ")}
+        </p>
+      )}
 
       <Card>
         <CardContent className="p-0 overflow-auto">

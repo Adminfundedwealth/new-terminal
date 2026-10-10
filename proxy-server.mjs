@@ -501,7 +501,7 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
         "BSE:C": "BSE_CUR",
         "MCX:M": "MCX_COMM",
       };
-      const ALLOWED_SEGMENTS = new Set(["NSE_EQ", "NSE_FNO", "IDX_I"]);
+      const ALLOWED_SEGMENTS = new Set(["NSE_EQ", "BSE_EQ", "NSE_FNO", "IDX_I"]);
 
       const lines = csvText.split(/\r?\n/).filter(Boolean);
       const header = parseCsvLine(lines[0]).map(h => h.trim());

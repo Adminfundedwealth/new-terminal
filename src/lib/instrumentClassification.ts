@@ -4,7 +4,8 @@ export type InstrumentCategory = "stocks" | "indices" | "futures" | "options";
 
 const EQUITY_SEGMENTS = new Set(["NSE_EQ", "BSE_EQ"]);
 const INDEX_SEGMENTS = new Set(["IDX_I", "BSE_IDX"]);
-const NSE_EQUITY_SERIES = new Set(["EQ", "BE", "BZ", "SM", "ST", "X", "XT"]);
+const NSE_EQUITY_SERIES = new Set(["EQ", "BE", "BZ", "IV", "RR", "SM", "ST", "X", "XT"]);
+const BSE_EQUITY_SERIES = new Set(["A", "B", "IF", "NS", "NT", "T", "X", "XT", "Z"]);
 const INDEX_SYMBOL_ALIASES: Record<string, string> = {
   NIFTY: "NIFTY",
   NIFTY50: "NIFTY",
@@ -63,7 +64,12 @@ export function isCashEquityListing(instrument: Instrument): boolean {
   const symbol = instrument.symbol || instrument.tradingSymbol || "";
   if (!isCashEquitySymbol(symbol)) return false;
   const series = normalized(instrument.series);
-  if (series) return NSE_EQUITY_SERIES.has(series);
+  if (series) {
+    const exchange = normalized(instrument.exchange);
+    return exchange === "BSE" || instrument.exchangeSegment === "BSE_EQ"
+      ? BSE_EQUITY_SERIES.has(series)
+      : NSE_EQUITY_SERIES.has(series);
+  }
   return true;
 }
 

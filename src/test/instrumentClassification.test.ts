@@ -40,8 +40,13 @@ describe("instrument classification", () => {
 
   it("keeps cash shares while excluding debt securities from the stock directory", () => {
     expect(isCashEquityListing(instrument({ series: "EQ" }))).toBe(true);
+    expect(isCashEquityListing(instrument({ exchange: "NSE", series: "IV" }))).toBe(true);
+    expect(isCashEquityListing(instrument({ exchange: "NSE", series: "RR" }))).toBe(true);
+    expect(isCashEquityListing(instrument({ exchange: "BSE", exchangeSegment: "BSE_EQ", series: "B" }))).toBe(true);
+    expect(isCashEquityListing(instrument({ exchange: "BSE", exchangeSegment: "BSE_EQ", series: "IF" }))).toBe(true);
     expect(isCashEquityListing(instrument({ symbol: "ABCL 0% 2031 SR C2", tradingSymbol: "0ABCL31" }))).toBe(false);
     expect(isCashEquityListing(instrument({ symbol: "RELIANCE INDUSTRIES LTD", series: "N1" }))).toBe(false);
+    expect(isCashEquityListing(instrument({ symbol: "ELECTROSTEEL CASTINGS LTD", tradingSymbol: "ELECTCAST", series: "W1" }))).toBe(false);
     expect(isCashEquityListing(instrument({ symbol: "3M INDIA LTD", tradingSymbol: "3MINDIA" }))).toBe(true);
     expect(isCashEquityListing(instrument({ symbol: "GOI T-BILL 182D-01/04/27", tradingSymbol: "GOITBILL182D" }))).toBe(false);
     expect(isCashEquityListing(instrument({ symbol: "GOI T-BILL 182D-01/04/27", tradingSymbol: "GOITBILL182D", series: "EQ" }))).toBe(false);
