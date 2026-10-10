@@ -75,7 +75,7 @@ export function isCashEquityListing(instrument: Instrument): boolean {
 
 export function isCashEquitySymbol(symbol: string | undefined): boolean {
   if (!symbol) return false;
-  return !/(?:\b(?:GOI|GOVT(?:\.?\s+OF\s+INDIA)?|GOVERNMENT\s+OF\s+INDIA|TBILL|T[- ]?BILL|TREASURY\s+(?:BILL|NOTE)|GILT|GSEC|SOVEREIGN|BOND|NCD|DEB(?:ENTURE)?|STRPP|SR\.?\s*[A-Z0-9]+|ZERO\s+COUPON)\b|\d+(?:\.\d+)?%)/i.test(symbol);
+  return !/(?:\b(?:GOI|GOVT(?:\.?\s+OF\s+INDIA)?|GOVERNMENT\s+OF\s+INDIA|TBILL|T[- ]?BILL|TREASURY\s+(?:BILL|NOTE)|GILT|GSEC|SOVEREIGN|BOND|NCD|DEB(?:ENTURE)?|STRPP|SR(?:\d+|(?:\.\s*|\s+)[A-Z0-9]+)|ZERO\s+COUPON)\b|\d+(?:\.\d+)?%)/i.test(symbol);
 }
 
 export function isTradableContract(instrument: Instrument, category?: InstrumentCategory): boolean {

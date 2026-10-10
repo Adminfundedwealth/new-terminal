@@ -46,6 +46,11 @@ describe("instrument classification", () => {
     expect(isCashEquityListing(instrument({ exchange: "BSE", exchangeSegment: "BSE_EQ", series: "IF" }))).toBe(true);
     expect(isCashEquityListing(instrument({ symbol: "ABCL 0% 2031 SR C2", tradingSymbol: "0ABCL31" }))).toBe(false);
     expect(isCashEquityListing(instrument({ symbol: "RELIANCE INDUSTRIES LTD", series: "N1" }))).toBe(false);
+    expect(isCashEquityListing(instrument({ symbol: "Sri Lotus Developers and", tradingSymbol: "LOTUSDEV", series: "BE" }))).toBe(true);
+    expect(isCashEquityListing(instrument({ symbol: "SRF LTD.", tradingSymbol: "SRF", series: "EQ" }))).toBe(true);
+    expect(isCashEquityListing(instrument({ symbol: "SRM CONTRACTORS LIMITED", tradingSymbol: "SRM", series: "EQ" }))).toBe(true);
+    expect(isCashEquityListing(instrument({ symbol: "TVS SRICHAKRA LIMITED", tradingSymbol: "TVSSRICHAK", series: "EQ" }))).toBe(true);
+    expect(isCashEquityListing(instrument({ symbol: "RELIANCE 2030 SR C2", tradingSymbol: "REL30SR", series: "EQ" }))).toBe(false);
     expect(isCashEquityListing(instrument({ symbol: "ELECTROSTEEL CASTINGS LTD", tradingSymbol: "ELECTCAST", series: "W1" }))).toBe(false);
     expect(isCashEquityListing(instrument({ symbol: "3M INDIA LTD", tradingSymbol: "3MINDIA" }))).toBe(true);
     expect(isCashEquityListing(instrument({ symbol: "GOI T-BILL 182D-01/04/27", tradingSymbol: "GOITBILL182D" }))).toBe(false);
