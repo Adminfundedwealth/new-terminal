@@ -20,6 +20,7 @@ import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import { formatDhanChartDateTime } from "./dhan-chart-date-time.mjs";
+import { createTerminalSsoHandlers } from "./terminal-sso.mjs";
 
 // ── Load .env manually (no external deps needed) ──
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1312,6 +1313,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, x-dhan-client-id, x-dhan-access-token",
 };
+const terminalSso = createTerminalSsoHandlers();
 
 // ══════════════════════════════════════════════
 // ── Helper: Read JSON Body from Request ──
@@ -1367,6 +1369,25 @@ const server = http.createServer(async (req, res) => {
   Object.entries(CORS_HEADERS).forEach(([k, v]) => res.setHeader(k, v));
 
   try {
+    if (url.pathname === "/auth/sso/generate" && req.method === "POST") {
+      const result = await terminalSso.generate(req);
+      res.writeHead(result.status, result.headers);
+      res.end(result.body);
+      return;
+    }
+    if (url.pathname === "/auth/sso" && req.method === "POST") {
+      const result = await terminalSso.callback(req);
+      res.writeHead(result.status, result.headers);
+      res.end(result.body);
+      return;
+    }
+    if (url.pathname === "/auth/sso/exchange" && req.method === "GET") {
+      const result = await terminalSso.exchange(req);
+      res.writeHead(result.status, result.headers);
+      res.end(result.body);
+      return;
+    }
+
     // ──────────────────────────────────────────────
     // ── Broker Backend Endpoints ──
     // ──────────────────────────────────────────────

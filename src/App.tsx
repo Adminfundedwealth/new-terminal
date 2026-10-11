@@ -28,6 +28,7 @@ const MyStats = lazy(() => import("./pages/MyStats"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const Login = lazy(() => import("./pages/Login"));
 const RealtimeMockE2E = lazy(() => import("./pages/RealtimeMockE2E"));
+const TerminalSsoComplete = lazy(() => import("./pages/TerminalSsoComplete"));
 
 const queryClient = new QueryClient();
 
@@ -64,6 +65,7 @@ const App = () => (
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<Suspense fallback={<BrandSplash />}><Login /></Suspense>} />
+            <Route path="/auth/sso/complete" element={<Suspense fallback={<BrandSplash />}><TerminalSsoComplete /></Suspense>} />
             <Route element={<ProtectedRoute><DashboardLayout /></ProtectedRoute>}>
               <Route path="/" element={<PageSuspense><Index /></PageSuspense>} />
               <Route path="/stocks" element={<PageSuspense><Stocks /></PageSuspense>} />
