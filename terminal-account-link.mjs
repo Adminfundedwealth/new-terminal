@@ -83,6 +83,13 @@ function validateSource(source) {
   };
 }
 
+export function canonicalFundedWealthProductCode(plan) {
+  const normalizedPlan = plan.trim().toUpperCase();
+  const stepMatch = normalizedPlan.match(/(?:^|[^A-Z0-9])([12])[-_\s]*STEP(?:$|[^A-Z0-9])/);
+  if (stepMatch) return `${stepMatch[1]}-STEP`;
+  return normalizedPlan.replace(/\s+/g, "");
+}
+
 export function isCompatibleFundedWealthRuleVersion(ruleVersion, source, phaseCode) {
   const ruleSetKey = phaseCode === "FUNDED" ? "funded_rules" : "evaluation_rules";
   const planRules = ruleVersion?.rules?.[ruleSetKey];
@@ -238,8 +245,7 @@ function makeSupabaseStore({ fetchImpl, env }) {
   }
 
   async function ensureCatalog(source) {
-    const plan = source.challenge.plan.trim().toUpperCase().replace(/\s+/g, "");
-    const productCode = plan === "1-STEP" ? "1-STEP" : plan === "2-STEP" ? "2-STEP" : plan;
+    const productCode = canonicalFundedWealthProductCode(source.challenge.plan);
     const phaseCode = source.challenge.type === "funded" ? "FUNDED" : "CHALLENGE";
 
     const products = await rows("products", new URLSearchParams({

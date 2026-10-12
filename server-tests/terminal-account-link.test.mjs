@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import test from "node:test";
 import {
+  canonicalFundedWealthProductCode,
   createTerminalAccountLinkHandlers,
   createTerminalAccountLinkWorkflow,
   isCompatibleFundedWealthRuleVersion,
@@ -81,6 +82,13 @@ function makeStore({ identity = null, account = null, conflict = false } = {}) {
     },
   };
 }
+
+test("maps account-size-prefixed FundedWealth step plans to canonical terminal products", () => {
+  assert.equal(canonicalFundedWealthProductCode("100k-1step"), "1-STEP");
+  assert.equal(canonicalFundedWealthProductCode("50K 2 Step Evaluation"), "2-STEP");
+  assert.equal(canonicalFundedWealthProductCode("1-Step"), "1-STEP");
+  assert.equal(canonicalFundedWealthProductCode("FLASH"), "FLASH");
+});
 
 test("matches canonical nested 1-Step rules and rejects versions with different challenge limits", () => {
   const activeVersion = {
