@@ -144,6 +144,35 @@ test("invites the existing customer and creates the terminal mapping after confi
   assert.equal(calls.audits, 2);
 });
 
+test("preserves sanitized database failure details when the audit preflight fails", async () => {
+  const database = { endpoint: "/rest/v1/terminal_activity", status: 403, code: "42501" };
+  const workflow = createTerminalAccountLinkWorkflow({
+    async inspect() {
+      return {
+        identity: { id: "55555555-5555-4555-8555-555555555555", email: source.customer.email },
+        account: null,
+        identityAction: "reuse_existing_identity",
+        accountAction: "create_terminal_mapping",
+      };
+    },
+    async writeAudit() {
+      throw Object.assign(new Error("Database request failed."), { database });
+    },
+    async createAccount() {
+      assert.fail("The account mapping must not be created when the audit preflight fails.");
+    },
+  });
+
+  await assert.rejects(
+    workflow.link(source, { id: "admin-1", email: "founder@example.test" }),
+    (error) => {
+      assert.equal(error.status, 500);
+      assert.deepEqual(error.database, database);
+      return true;
+    },
+  );
+});
+
 test("a duplicate confirmation is idempotent and does not create a second identity or account", async () => {
   const { store, calls } = makeStore();
   const workflow = createTerminalAccountLinkWorkflow(store);

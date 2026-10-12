@@ -445,8 +445,11 @@ export function createTerminalAccountLinkWorkflow(store) {
 
     try {
       await store.writeAudit(validated, identity, null, actor, "link_started");
-    } catch {
-      throw Object.assign(new Error("The existing customer identity was verified, but the terminal audit preflight could not be recorded; no account mapping was created."), { status: 500 });
+    } catch (error) {
+      throw Object.assign(
+        new Error("The existing customer identity was verified, but the terminal audit preflight could not be recorded; no account mapping was created."),
+        { status: 500, ...(error?.database ? { database: error.database } : {}) },
+      );
     }
 
     let account;
