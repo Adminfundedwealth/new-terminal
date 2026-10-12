@@ -159,6 +159,9 @@ export function createTerminalSsoHandlers({ fetchImpl = fetch, env = process.env
       });
       const accounts = await callSupabase(fetchImpl, config, `/rest/v1/trading_accounts?${accountQuery}`);
       if (!Array.isArray(accounts) || accounts.length !== 1) {
+        console.warn("[Terminal SSO] Active account lookup did not return exactly one mapping", {
+          matchCount: Array.isArray(accounts) ? accounts.length : null,
+        });
         return jsonResponse(403, { error: "No unique active terminal account matches this launch." });
       }
 
@@ -170,6 +173,11 @@ export function createTerminalSsoHandlers({ fetchImpl = fetch, env = process.env
       );
       const user = userResponse?.user ?? userResponse?.data?.user ?? userResponse;
       if (!user || user.id !== account.owner_user_id || typeof user.email !== "string" || !user.email) {
+        console.warn("[Terminal SSO] Mapped account owner identity lookup failed", {
+          userFound: Boolean(user),
+          ownerIdMatches: user?.id === account.owner_user_id,
+          emailPresent: typeof user?.email === "string" && Boolean(user.email),
+        });
         return jsonResponse(403, { error: "The mapped terminal account has no existing sign-in identity." });
       }
 

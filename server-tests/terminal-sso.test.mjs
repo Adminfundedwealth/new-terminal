@@ -63,6 +63,28 @@ test("creates a one-time handoff only for the authenticated server caller", asyn
   assert.ok(calls.some(({ url, init }) => url.includes("/auth/v1/admin/generate_link") && init.method === "POST"));
 });
 
+test("rejects a mapping whose owner identity cannot be resolved", async () => {
+  let generatedLink = false;
+  const fetchImpl = async (url) => {
+    const path = new URL(url).pathname;
+    if (path.endsWith("/trading_accounts")) return Response.json([account]);
+    if (path.endsWith("/admin/users/terminal-user-1")) return Response.json({ id: "different-user", email: user.email });
+    if (path.endsWith("/admin/generate_link")) generatedLink = true;
+    throw new Error(`Unexpected mocked request: ${path}`);
+  };
+  const handlers = createTerminalSsoHandlers({
+    fetchImpl,
+    env: { SSO_API_KEY: secret, SUPABASE_URL: "https://db.example.test", SUPABASE_SECRET_KEY: "service-key" },
+  });
+
+  const result = await handlers.generate(request(JSON.stringify({ accountId: "external-account-1" }), {
+    "x-sso-api-key": secret,
+  }));
+
+  assert.equal(result.status, 403);
+  assert.equal(generatedLink, false);
+});
+
 test("validates the signed handoff and exchanges it for an existing-user Supabase OTP", async () => {
   const { fetchImpl } = makeFetch();
   const handlers = createTerminalSsoHandlers({
