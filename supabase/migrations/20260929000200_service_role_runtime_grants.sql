@@ -24,17 +24,3 @@ grant all on table public.account_permissions to service_role;
 grant all on table public.rule_audit_log to service_role;
 grant all on table public.terminal_activity to service_role;
 grant all on table public.terminal_settings to service_role;
-
-grant all on sequence public.trading_accounts_id_seq to service_role;
-grant all on sequence public.orders_id_seq to service_role;
-grant all on sequence public.executions_id_seq to service_role;
-grant all on sequence public.positions_id_seq to service_role;
-grant all on sequence public.daily_performance_id_seq to service_role;
-grant all on sequence public.risk_events_id_seq to service_role;
-grant all on sequence public.account_metric_snapshots_id_seq to service_role;
-grant all on sequence public.products_id_seq to service_role;
-grant all on sequence public.account_phases_id_seq to service_role;
-grant all on sequence public.rule_versions_id_seq to service_role;
-grant all on sequence public.account_rule_assignments_id_seq to service_role;
-grant all on sequence public.account_permissions_id_seq to service_role;
-grant all on sequence public.rule_audit_log_id_seq to service_role;
