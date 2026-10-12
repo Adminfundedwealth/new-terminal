@@ -137,6 +137,11 @@ function makeSupabaseStore({ fetchImpl, env }) {
     if (!response.ok) {
       const error = new Error("Terminal account-link database request failed.");
       error.status = response.status === 409 ? 409 : 502;
+      error.database = {
+        endpoint: path.split("?")[0],
+        status: response.status,
+        code: typeof body?.code === "string" && /^[A-Z0-9]{5}$/.test(body.code) ? body.code : undefined,
+      };
       throw error;
     }
     return body;
@@ -490,6 +495,9 @@ export function createTerminalAccountLinkHandlers({ fetchImpl = fetch, env = pro
       return jsonResponse(200, { success: true, result });
     } catch (error) {
       const status = Number.isInteger(error?.status) ? error.status : 500;
+      if (error?.database) {
+        console.error("[terminal-account-link] Supabase request failed", error.database);
+      }
       return jsonResponse(status, {
         error: status < 500 ? error.message : "Terminal account linking failed.",
       });
