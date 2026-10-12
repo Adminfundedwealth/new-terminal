@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 const CHART_ORIGIN = "https://charts.fundedwealth.com";
 const HANDOFF_TTL_SECONDS = 60;
@@ -18,6 +18,10 @@ function equalSecret(actual, expected) {
   const actualBuffer = Buffer.from(actual);
   const expectedBuffer = Buffer.from(expected);
   return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+function fingerprint(value) {
+  return createHash("sha256").update(value).digest("hex").slice(0, 12);
 }
 
 function readBody(req) {
@@ -161,6 +165,7 @@ export function createTerminalSsoHandlers({ fetchImpl = fetch, env = process.env
       if (!Array.isArray(accounts) || accounts.length !== 1) {
         console.warn("[Terminal SSO] Active account lookup did not return exactly one mapping", {
           matchCount: Array.isArray(accounts) ? accounts.length : null,
+          accountFingerprint: fingerprint(externalAccountId),
         });
         return jsonResponse(403, { error: "No unique active terminal account matches this launch." });
       }
