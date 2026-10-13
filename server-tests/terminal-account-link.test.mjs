@@ -88,6 +88,9 @@ test("maps account-size-prefixed FundedWealth step plans to canonical terminal p
   assert.equal(canonicalFundedWealthProductCode("50K 2 Step Evaluation"), "2-STEP");
   assert.equal(canonicalFundedWealthProductCode("1-Step"), "1-STEP");
   assert.equal(canonicalFundedWealthProductCode("FLASH"), "FLASH");
+  assert.equal(canonicalFundedWealthProductCode("250k-flash"), "FLASH");
+  assert.equal(canonicalFundedWealthProductCode("50k-flash"), "FLASH");
+  assert.equal(canonicalFundedWealthProductCode("500k-instant"), "INSTANT");
 });
 
 test("matches canonical nested 1-Step rules and rejects versions with different challenge limits", () => {
@@ -115,6 +118,54 @@ test("matches canonical nested 1-Step rules and rejects versions with different 
     },
   }, source, "CHALLENGE"), false);
   assert.equal(isCompatibleFundedWealthRuleVersion(activeVersion, source, "FUNDED"), false);
+});
+
+test("matches funded Flash and Instant rules without relaxing any challenge limit", () => {
+  const fundedSource = (plan, { profitTargetPct, dailyLossLimitPct, maxDrawdownPct, minTradingDays }) => ({
+    challenge: {
+      ...source.challenge,
+      plan,
+      type: "funded",
+      profitTargetPct,
+      dailyLossLimitPct,
+      maxDrawdownPct,
+      minTradingDays,
+    },
+  });
+  const flashRules = {
+    funded_rules: {
+      max_drawdown_percent: 4,
+      daily_drawdown_percent: 2,
+      profit_target_percent: 0,
+      max_risk_per_trade_percent: 2,
+      minimum_trading_days: 0,
+    },
+  };
+  const instantRules = {
+    funded_rules: {
+      max_drawdown_percent: 5,
+      daily_drawdown_percent: 3,
+      profit_target_percent: 0,
+      max_risk_per_trade_percent: 1,
+      minimum_trading_days: 7,
+    },
+  };
+
+  assert.equal(isCompatibleFundedWealthRuleVersion(
+    { rules: flashRules },
+    fundedSource("250k-flash", { profitTargetPct: 0, dailyLossLimitPct: 2, maxDrawdownPct: 4, minTradingDays: 0 }),
+    "FUNDED",
+  ), true);
+  assert.equal(isCompatibleFundedWealthRuleVersion(
+    { rules: instantRules },
+    fundedSource("500k-instant", { profitTargetPct: 0, dailyLossLimitPct: 3, maxDrawdownPct: 5, minTradingDays: 7 }),
+    "FUNDED",
+  ), true);
+  assert.equal(isCompatibleFundedWealthRuleVersion(
+    { rules: flashRules },
+    fundedSource("flash", { profitTargetPct: 0, dailyLossLimitPct: 3, maxDrawdownPct: 4, minTradingDays: 0 }),
+    "FUNDED",
+  ), false);
 });
 
 test("previews an existing customer identity and already-linked account without writes", async () => {
@@ -184,6 +235,16 @@ test("a duplicate confirmation is idempotent and does not create a second identi
   assert.equal(calls.creates, 1);
 });
 
+test("trusted provisioning ensure preflights and audits idempotent mapping creation", async () => {
+  const { store, calls } = makeStore();
+  const result = await createTerminalAccountLinkWorkflow(store).ensure(source);
+
+  assert.equal(result.created, true);
+  assert.equal(calls.invites, 1);
+  assert.equal(calls.creates, 1);
+  assert.equal(calls.audits, 2);
+});
+
 test("rejects an account already owned by a different terminal identity", async () => {
   const { store, calls } = makeStore({ conflict: true });
   await assert.rejects(
@@ -218,6 +279,17 @@ test("rejects unauthorized callers and requires explicit account-code confirmati
   assert.equal(calls.invites, 0);
   assert.equal(calls.creates, 0);
 
+  const deniedEnsure = await handlers.handle(request({ mode: "ensure", source }, { "x-sso-api-key": "wrong" }));
+  assert.equal(deniedEnsure.status, 401);
+  assert.equal(calls.invites, 0);
+  assert.equal(calls.creates, 0);
+
+  const ensured = await handlers.handle(request({ mode: "ensure", source }, { "x-sso-api-key": secret }));
+  assert.equal(ensured.status, 200);
+  assert.equal(JSON.parse(ensured.body).success, true);
+  assert.equal(calls.invites, 1);
+  assert.equal(calls.creates, 1);
+
   const noConfirmation = await handlers.handle(request({
     mode: "confirm",
     source,
@@ -225,6 +297,6 @@ test("rejects unauthorized callers and requires explicit account-code confirmati
     confirmation: "yes",
   }, { "x-sso-api-key": secret }));
   assert.equal(noConfirmation.status, 400);
-  assert.equal(calls.invites, 0);
-  assert.equal(calls.creates, 0);
+  assert.equal(calls.invites, 1);
+  assert.equal(calls.creates, 1);
 });

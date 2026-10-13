@@ -87,6 +87,8 @@ export function canonicalFundedWealthProductCode(plan) {
   const normalizedPlan = plan.trim().toUpperCase();
   const stepMatch = normalizedPlan.match(/(?:^|[^A-Z0-9])([12])[-_\s]*STEP(?:$|[^A-Z0-9])/);
   if (stepMatch) return `${stepMatch[1]}-STEP`;
+  const fundedPlanMatch = normalizedPlan.match(/(?:^|[^A-Z0-9])(FLASH|INSTANT)(?:$|[^A-Z0-9])/);
+  if (fundedPlanMatch) return fundedPlanMatch[1];
   return normalizedPlan.replace(/\s+/g, "");
 }
 
@@ -463,7 +465,15 @@ export function createTerminalAccountLinkWorkflow(store) {
     return { created: true, accountId: account.id, identityId: identity.id };
   }
 
-  return { preview, link };
+  async function ensure(source) {
+    await preview(source);
+    return link(source, {
+      id: "fundedwealth-provisioning-service",
+      email: "account-linker@fundedwealth.com",
+    });
+  }
+
+  return { preview, link, ensure };
 }
 
 export function createTerminalAccountLinkHandlers({ fetchImpl = fetch, env = process.env, store } = {}) {
@@ -476,12 +486,15 @@ export function createTerminalAccountLinkHandlers({ fetchImpl = fetch, env = pro
 
     try {
       const body = await readBody(req);
-      if (body.mode !== "preview" && body.mode !== "confirm") {
-        return jsonResponse(400, { error: "mode must be preview or confirm." });
+      if (body.mode !== "preview" && body.mode !== "confirm" && body.mode !== "ensure") {
+        return jsonResponse(400, { error: "mode must be preview, confirm, or ensure." });
       }
       const source = validateSource(body.source);
       if (body.mode === "preview") {
         return jsonResponse(200, { success: true, preview: await workflow.preview(source) });
+      }
+      if (body.mode === "ensure") {
+        return jsonResponse(200, { success: true, result: await workflow.ensure(source) });
       }
 
       if (body.confirmation !== `LINK ${source.account.accountCode}`) {
