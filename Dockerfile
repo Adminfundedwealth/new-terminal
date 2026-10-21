@@ -1,12 +1,10 @@
-FROM node:18-bullseye
+FROM node:22-slim
 
 WORKDIR /app
 
 COPY package*.json ./
 
-# 🔥 FIX for rollup bug
-RUN rm -rf node_modules package-lock.json \
-    && npm install --force
+RUN npm ci
 
 COPY . .
 
