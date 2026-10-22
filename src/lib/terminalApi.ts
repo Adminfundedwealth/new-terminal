@@ -342,8 +342,8 @@ export interface TerminalPerformanceRow {
   id: string;
   trading_account_id: string;
   date: string;
-  opening_balance: number;
-  closing_balance: number;
+  opening_balance: number | null;
+  closing_balance: number | null;
   daily_pnl: number;
   total_trades: number;
   winning_trades: number;
@@ -356,6 +356,12 @@ export interface TerminalWatchlist {
   name: string;
   items: unknown;
   is_default: boolean;
+}
+
+async function getAuthenticatedCustomerId(): Promise<string> {
+  const { data: { user }, error } = await supabase.auth.getUser();
+  if (error || !user) throw new Error("Authentication required to load terminal account data.");
+  return user.id;
 }
 
 async function fetchTerminalJson<T>(path: string): Promise<T> {
@@ -1053,15 +1059,88 @@ export function fetchTerminalExecutions(accountId?: string) {
 }
 
 export function fetchTerminalRisk(accountId?: string) {
-  return fetchTerminalJson<{ data: TerminalRiskSummary }>(`/api/terminal/risk${accountId ? `?account_id=${encodeURIComponent(accountId)}` : ""}`);
+  return (async (): Promise<{ data: TerminalRiskSummary }> => {
+    if (!accountId) throw new Error("A trading account is required to load risk data.");
+    const ownerUserId = await getAuthenticatedCustomerId();
+    const { data, error } = await supabase
+      .from("risk_events")
+      .select("id, account_id, event_type, severity, metric_name, metric_value, limit_value, breach_status, occurred_at")
+      .eq("owner_user_id", ownerUserId)
+      .eq("account_id", accountId)
+      .order("occurred_at", { ascending: false })
+      .limit(100);
+    if (error) throw new Error(`Risk events request failed: ${error.message}`);
+
+    const recentEvents = data ?? [];
+    const openEvents = recentEvents.filter((event) => event.breach_status === "open");
+    return {
+      data: {
+        accounts_at_risk: openEvents.length > 0 ? 1 : 0,
+        breached: openEvents.length,
+        critical: openEvents.filter((event) => event.severity.toLowerCase() === "critical").length,
+        warning: openEvents.filter((event) => event.severity.toLowerCase() === "warning").length,
+        recent_events: recentEvents,
+      },
+    };
+  })();
 }
 
 export function fetchTerminalPerformance(accountId?: string) {
-  return fetchTerminalJson<PaginatedResponse<TerminalPerformanceRow>>(`/api/terminal/performance?page_size=100${accountQuery(accountId)}`);
+  return (async (): Promise<PaginatedResponse<TerminalPerformanceRow>> => {
+    if (!accountId) throw new Error("A trading account is required to load performance data.");
+    const ownerUserId = await getAuthenticatedCustomerId();
+    const { data, error } = await supabase
+      .from("daily_performance")
+      .select("id, account_id, trading_date, opening_balance, closing_balance, realized_pnl, trade_count, winning_trades, losing_trades")
+      .eq("owner_user_id", ownerUserId)
+      .eq("account_id", accountId)
+      .order("trading_date", { ascending: true })
+      .limit(100);
+    if (error) throw new Error(`Daily performance request failed: ${error.message}`);
+
+    const rows: TerminalPerformanceRow[] = (data ?? []).map((row) => ({
+      id: row.id,
+      trading_account_id: row.account_id,
+      date: row.trading_date,
+      opening_balance: row.opening_balance == null ? null : Number(row.opening_balance),
+      closing_balance: row.closing_balance == null ? null : Number(row.closing_balance),
+      daily_pnl: Number(row.realized_pnl),
+      total_trades: row.trade_count,
+      winning_trades: row.winning_trades,
+      losing_trades: row.losing_trades,
+    }));
+    return {
+      data: rows,
+      meta: { total: rows.length, page: 1, page_size: 100, has_more: rows.length === 100 },
+    };
+  })();
 }
 
 export function fetchTerminalWatchlists() {
-  return fetchTerminalJson<PaginatedResponse<TerminalWatchlist>>("/api/terminal/watchlists?page_size=100");
+  return (async (): Promise<PaginatedResponse<TerminalWatchlist>> => {
+    const ownerUserId = await getAuthenticatedCustomerId();
+    const { data, error } = await supabase
+      .from("watchlists")
+      .select("id, owner_user_id, name, watchlist_items(symbol, display_order)")
+      .eq("owner_user_id", ownerUserId)
+      .order("created_at", { ascending: false })
+      .limit(100);
+    if (error) throw new Error(`Watchlists request failed: ${error.message}`);
+
+    const rows: TerminalWatchlist[] = (data ?? []).map((row) => ({
+      id: row.id,
+      trader_id: row.owner_user_id,
+      name: row.name,
+      items: [...(row.watchlist_items ?? [])]
+        .sort((left, right) => left.display_order - right.display_order)
+        .map((item) => item.symbol),
+      is_default: false,
+    }));
+    return {
+      data: rows,
+      meta: { total: rows.length, page: 1, page_size: 100, has_more: rows.length === 100 },
+    };
+  })();
 }
 
 export { TERMINAL_OS_BASE };

@@ -12,8 +12,6 @@ import { isWatchlisted } from "@/lib/watchlist";
 import { useLiveOptionChain } from "@/hooks/useMarketData";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { classifyInstrument, isProductionInstrument } from "@/lib/instrumentClassification";
-import { fetchCentralMarketQuotes } from "@/lib/centralMarketQuotes";
-import { findWatchlistInstrument } from "@/lib/watchlistInstrument";
 import { getPreferredMarketAdapter } from "@/lib/brokerRouter";
 import {
   createClientOrderId,
@@ -163,19 +161,12 @@ export function InstrumentExplorer({
       visibleRows.map((row) => row.instrument?.providerInstrumentId ?? row.instrument?.securityId ?? row.chartSymbol ?? row.symbol),
     ],
     enabled: Boolean(visibleRows.length > 0 && (
-      (activeAccountId && marketDataProvider) ||
-      (!activeAccountId && !isAccountLoading)
+      activeAccountId && marketDataProvider
     )),
     queryFn: async () => {
       const quotes: Record<string, TerminalMarketDataQuote> = {};
-      if (!activeAccountId) {
-        return fetchCentralMarketQuotes(visibleRows.map((row) => ({
-          key: row.chartSymbol ?? row.symbol,
-          instrument: row.instrument,
-        })));
-      }
-
       const errors: string[] = [];
+      if (!activeAccountId) throw new Error("Select a FundedWealth trading account to load account-specific quotes.");
       if (!marketDataProvider) throw new Error("The selected account has no supported market-data provider.");
       for (let offset = 0; offset < visibleRows.length; offset += 10) {
         const batch = visibleRows.slice(offset, offset + 10);
@@ -206,12 +197,11 @@ export function InstrumentExplorer({
   });
   const marketDataNotice = !activeAccountId && isAccountLoading
     ? null
-    : activeAccountId && !marketDataProvider
+    : !activeAccountId
+      ? "Select a FundedWealth trading account to load account-specific market data."
+      : !marketDataProvider
       ? "Account-specific market data is unavailable for the selected account."
       : visibleQuotesQuery.data?.errors[0] ?? (visibleQuotesQuery.error instanceof Error ? visibleQuotesQuery.error.message : null);
-  const centralChartInstrument = chartSymbol
-    ? findWatchlistInstrument(instruments, chartSymbol)
-    : undefined;
 
   const displayedRows = useMemo(() => visibleRows.map((row) => {
     const quote = visibleQuotesQuery.data?.quotes[row.chartSymbol ?? row.symbol];
@@ -277,30 +267,6 @@ export function InstrumentExplorer({
     retry: false,
   });
 
-  const centralChartQuoteQuery = useQuery({
-    queryKey: ["terminal-central-chart-quote", chartSymbol, centralChartInstrument?.exchangeSegment, centralChartInstrument?.securityId],
-    queryFn: async () => {
-      if (!chartSymbol || !centralChartInstrument) return null;
-      const result = await fetchCentralMarketQuotes([{ key: chartSymbol, instrument: centralChartInstrument }]);
-      return result.quotes[chartSymbol] ?? null;
-    },
-    enabled: Boolean(
-      !activeAccountId &&
-      !isAccountLoading &&
-      centralChartInstrument?.provider === "dhan" &&
-      chartSymbol &&
-      workspaceContext !== "options" &&
-      (visibleRows.length === 0 ? !isLoading : visibleQuotesQuery.isFetched) &&
-      (
-        !visibleRows.some((row) => (row.chartSymbol ?? row.symbol).toUpperCase() === chartSymbol.toUpperCase()) ||
-        (visibleQuotesQuery.isFetched && !visibleQuotesQuery.data?.quotes[chartSymbol])
-      )
-    ),
-    staleTime: 5_000,
-    refetchInterval: 15_000,
-    retry: false,
-  });
-
   const { data: optionChainData, isLoading: isOptionChainLoading } = useLiveOptionChain(
     contextUnderlying,
     contextExpiry,
@@ -341,21 +307,6 @@ export function InstrumentExplorer({
         instrument: ticketInstrument,
       };
     }
-    if (centralChartQuoteQuery.data && Number.isFinite(centralChartQuoteQuery.data.ltp) && centralChartQuoteQuery.data.ltp > 0) {
-      return {
-        symbol: centralChartQuoteQuery.data.symbol,
-        chartSymbol: centralChartQuoteQuery.data.tradingSymbol,
-        label: centralChartQuoteQuery.data.tradingSymbol,
-        ltp: centralChartQuoteQuery.data.ltp,
-        change: centralChartQuoteQuery.data.change,
-        changePercent: centralChartQuoteQuery.data.changePercent,
-        open: centralChartQuoteQuery.data.open,
-        high: centralChartQuoteQuery.data.high,
-        low: centralChartQuoteQuery.data.low,
-        volume: centralChartQuoteQuery.data.volume,
-        instrument: centralChartInstrument,
-      };
-    }
     if (rowQuote || workspaceContext !== "options" || !ticketInstrument?.strikePrice || !ticketInstrument.optionType) {
       return rowQuote ?? null;
     }
@@ -391,17 +342,13 @@ export function InstrumentExplorer({
       volume: leg.volume,
       instrument: ticketInstrument,
     };
-  }, [centralChartInstrument, centralChartQuoteQuery.data, chartSymbol, derivativeQuote, filteredRows, optionChainData, rows, selectedRowQuote, selectedTerminalQuote, ticketInstrument, workspaceContext]);
+  }, [chartSymbol, derivativeQuote, filteredRows, optionChainData, rows, selectedRowQuote, selectedTerminalQuote, ticketInstrument, workspaceContext]);
   const selectedQuoteIsAvailable = Boolean(
     selectedQuote && Number.isFinite(selectedQuote.ltp) && selectedQuote.ltp > 0
   );
   const selectedQuoteIsLive = Boolean(
     selectedQuoteIsAvailable && (
       selectedRowQuote?.isLive ||
-      (centralChartQuoteQuery.data != null &&
-        Number.isFinite(Date.parse(centralChartQuoteQuery.data.timestamp)) &&
-        Date.now() - Date.parse(centralChartQuoteQuery.data.timestamp) >= 0 &&
-        Date.now() - Date.parse(centralChartQuoteQuery.data.timestamp) <= 60_000) ||
       (selectedTerminalQuote != null &&
         Number.isFinite(Date.parse(selectedTerminalQuote.timestamp)) &&
         Date.now() - Date.parse(selectedTerminalQuote.timestamp) >= 0 &&

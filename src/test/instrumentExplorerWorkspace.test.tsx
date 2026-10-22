@@ -111,20 +111,6 @@ describe("InstrumentExplorer stock workspace", () => {
   });
 
   it("opens the existing chart workspace for a stock row using the same shared layout", async () => {
-    vi.mocked(fetchCashQuotes).mockResolvedValueOnce({
-      "500490": {
-        ltp: 7060,
-        open: 7020,
-        high: 7070,
-        low: 7010,
-        previousClose: 7050,
-        change: 10,
-        changePercent: 10 / 7050 * 100,
-        volume: 10000,
-        openInterest: null,
-        timestamp: new Date().toISOString(),
-      },
-    });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     render(
@@ -162,14 +148,9 @@ describe("InstrumentExplorer stock workspace", () => {
     expect(screen.queryByText("NSE_EQ")).not.toBeInTheDocument();
     expect(screen.queryByText("500490")).not.toBeInTheDocument();
     const quoteQueryKey = ["terminal-explorer-quotes", "stocks", undefined, null, ["500490"]];
-    await waitFor(() => {
-      expect(fetchCashQuotes).toHaveBeenCalledWith("NSE_EQ", ["500490"]);
-      expect(queryClient.getQueryState(quoteQueryKey)?.status).toBe("success");
-    });
-    expect(queryClient.getQueryData(quoteQueryKey)).toMatchObject({
-      quotes: { ABB: { ltp: 7060 } },
-    });
-    expect(screen.getByText("₹7,060.00")).toBeInTheDocument();
+    expect(fetchCashQuotes).not.toHaveBeenCalled();
+    expect(queryClient.getQueryState(quoteQueryKey)?.fetchStatus).toBe("idle");
+    expect(screen.getByText("₹7,051.50")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open ABB stock chart" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open ABB stock chart" }));
 
@@ -179,7 +160,7 @@ describe("InstrumentExplorer stock workspace", () => {
     expect(screen.getByTestId("stock-chart")).toHaveTextContent("ABB chart mock");
     expect(screen.getByTestId("stock-chart")).toHaveAttribute("data-unavailable-message", "Historical market data is currently unavailable for this chart.");
     expect(screen.queryByText(/Dhan|broker|link .*account/i)).not.toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getByText("STALE")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Option Chain" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Futures" })).not.toBeInTheDocument();
   });
@@ -236,16 +217,7 @@ describe("InstrumentExplorer stock workspace", () => {
     expect(screen.getByTestId("stock-chart")).toHaveTextContent("NIFTY_MIDCAP_50 chart mock");
   });
 
-  it("loads a central quote for a no-account deep-linked legacy stock symbol", async () => {
-    vi.mocked(fetchCashQuotes).mockImplementation(async (_segment, securityIds) => securityIds.includes("3456")
-      ? {
-          "3456": {
-            ltp: 279.9, open: 275.8, high: 280.95, low: 274.6, previousClose: 273,
-            change: 6.9, changePercent: 2.53, volume: 6360894, openInterest: null,
-            timestamp: "2026-10-09T15:59:51.000Z",
-          },
-        }
-      : {});
+  it("does not request central quotes for a no-account deep-linked stock symbol", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     render(
@@ -275,33 +247,14 @@ describe("InstrumentExplorer stock workspace", () => {
       </QueryClientProvider>
     );
 
-    await waitFor(() => expect(queryClient.getQueryState(["terminal-central-chart-quote", "TATAMOTORS", "NSE_EQ", "3456"])?.status).toBe("success"));
-    expect(fetchCashQuotes).toHaveBeenCalledWith("NSE_EQ", ["3456"]);
-    expect(screen.getByText("₹279.90")).toBeInTheDocument();
-    expect(screen.getByText("+2.53%")).toBeInTheDocument();
+    expect(fetchCashQuotes).not.toHaveBeenCalled();
+    expect(queryClient.getQueryState(["terminal-central-chart-quote", "TATAMOTORS", "NSE_EQ", "3456"])).toBeUndefined();
+    expect(screen.queryByText("₹279.90")).not.toBeInTheDocument();
+    expect(screen.getByText("Select a FundedWealth trading account to load account-specific market data.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /back to stocks/i })).toBeInTheDocument();
-    expect(screen.queryByText(/link .*account/i)).not.toBeInTheDocument();
   });
 
-  it("waits for visible batch quotes before requesting a missing deep-linked symbol", async () => {
-    let releaseVisibleBatch: (() => void) | undefined;
-    const visibleBatch = new Promise<void>((resolve) => { releaseVisibleBatch = resolve; });
-    vi.mocked(fetchCashQuotes).mockImplementation(async (_segment, securityIds) => {
-      if (securityIds.includes("500490")) {
-        await visibleBatch;
-        return {};
-      }
-      if (securityIds.includes("3456")) {
-        return {
-          "3456": {
-            ltp: 279.9, open: 275.8, high: 280.95, low: 274.6, previousClose: 273,
-            change: 6.9, changePercent: 2.53, volume: 6360894, openInterest: null,
-            timestamp: "2026-10-09T15:59:51.000Z",
-          },
-        };
-      }
-      return {};
-    });
+  it("does not request quotes while the account context is unavailable", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     render(
@@ -331,28 +284,12 @@ describe("InstrumentExplorer stock workspace", () => {
       </QueryClientProvider>
     );
 
-    await waitFor(() => expect(fetchCashQuotes).toHaveBeenCalledTimes(1));
-    expect(fetchCashQuotes).toHaveBeenCalledWith("NSE_EQ", ["500490"]);
-    releaseVisibleBatch?.();
-    await waitFor(() => expect(fetchCashQuotes).toHaveBeenCalledWith("NSE_EQ", ["3456"]));
-    await waitFor(() => expect(screen.getByText("₹279.90")).toBeInTheDocument());
-    expect(fetchCashQuotes).toHaveBeenCalledTimes(2);
+    expect(fetchCashQuotes).not.toHaveBeenCalled();
+    expect(screen.queryByText("₹279.90")).not.toBeInTheDocument();
+    expect(screen.getByText("Select a FundedWealth trading account to load account-specific market data.")).toBeInTheDocument();
   });
 
-  it("falls back to a single-symbol central quote when the visible quote batch has no result", async () => {
-    let quoteRequests = 0;
-    vi.mocked(fetchCashQuotes).mockImplementation(async (_segment, securityIds) => {
-      if (!securityIds.includes("3456")) return {};
-      quoteRequests += 1;
-      if (quoteRequests === 1) return {};
-      return {
-        "3456": {
-          ltp: 279.9, open: 275.8, high: 280.95, low: 274.6, previousClose: 273,
-          change: 6.9, changePercent: 2.53, volume: 6360894, openInterest: null,
-          timestamp: "2026-10-09T15:59:51.000Z",
-        },
-      };
-    });
+  it("does not fall back to a central quote when no account is selected", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const tmpvInstrument: Instrument = {
       securityId: "3456",
@@ -393,9 +330,9 @@ describe("InstrumentExplorer stock workspace", () => {
       </QueryClientProvider>
     );
 
-    await waitFor(() => expect(screen.getByText("₹279.90")).toBeInTheDocument());
-    expect(fetchCashQuotes).toHaveBeenCalledTimes(2);
-    expect(screen.getByText("+2.53%")).toBeInTheDocument();
+    expect(fetchCashQuotes).not.toHaveBeenCalled();
+    expect(screen.queryByText("₹279.90")).not.toBeInTheDocument();
+    expect(screen.getByText("Select a FundedWealth trading account to load account-specific market data.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /back to stocks/i })).toBeInTheDocument();
   });
 

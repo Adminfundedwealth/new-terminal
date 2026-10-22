@@ -13,16 +13,8 @@ import { useAccountContext } from "@/hooks/useAccountContext";
 import { useLiveIndices, useMarketStatus, useAllIndices } from "@/hooks/useMarketData";
 import { useWebSocketStatus } from "@/hooks/useWebSocket";
 import { marketWS } from "@/lib/terminalRealtimeClient";
+import { useQueryClient } from "@tanstack/react-query";
 import { resolveTerminalMarketDataProvider } from "@/lib/terminalApi";
-import { useQueries, useQueryClient } from "@tanstack/react-query";
-import {
-  fetchTerminalDashboard,
-  fetchTerminalExecutions,
-  fetchTerminalPerformance,
-  fetchTerminalPositions,
-  fetchTerminalRisk,
-  fetchTerminalWatchlists,
-} from "@/lib/terminalApi";
 import { Search, Bell, Timer, RefreshCw, Wifi, WifiOff, Plane, LogOut } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -49,17 +41,6 @@ export default function DashboardLayout() {
     marketWS.start({ accountId: activeAccountId, provider: activeAccountProvider });
     return () => marketWS.stop();
   }, [activeAccountId, activeAccountProvider]);
-
-  useQueries({
-    queries: [
-      { queryKey: ["terminal-os", user?.id ?? "anonymous", "dashboard", activeAccountId], queryFn: () => fetchTerminalDashboard(activeAccountId ?? undefined), retry: false, staleTime: 30_000, enabled: Boolean(activeAccountId) },
-      { queryKey: ["terminal-os", user?.id ?? "anonymous", "positions", activeAccountId], queryFn: () => fetchTerminalPositions(activeAccountId ?? undefined), retry: false, staleTime: 30_000, enabled: Boolean(activeAccountId) },
-      { queryKey: ["terminal-os", user?.id ?? "anonymous", "executions", activeAccountId], queryFn: () => fetchTerminalExecutions(activeAccountId ?? undefined), retry: false, staleTime: 30_000, enabled: Boolean(activeAccountId) },
-      { queryKey: ["terminal-os", user?.id ?? "anonymous", "risk", activeAccountId], queryFn: () => fetchTerminalRisk(activeAccountId ?? undefined), retry: false, staleTime: 30_000, enabled: Boolean(activeAccountId) },
-      { queryKey: ["terminal-os", user?.id ?? "anonymous", "performance", activeAccountId], queryFn: () => fetchTerminalPerformance(activeAccountId ?? undefined), retry: false, staleTime: 30_000, enabled: Boolean(activeAccountId) },
-      { queryKey: ["terminal-os", user?.id ?? "anonymous", "watchlists", activeAccountId], queryFn: fetchTerminalWatchlists, retry: false, staleTime: 30_000, enabled: Boolean(user?.id) },
-    ],
-  });
 
   const handleSignOut = async () => {
     await signOut();
