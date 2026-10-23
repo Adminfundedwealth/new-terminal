@@ -447,11 +447,8 @@ export interface TerminalMarketDataOptionChain {
   cachedAt?: string | number | null;
 }
 
-export function resolveTerminalMarketDataProvider(value: string | null | undefined): TerminalMarketDataProvider | null {
-  const provider = value?.trim().toLowerCase();
-  if (provider === "dhan") return "dhan";
-  if (provider === "kite" || provider === "zerodha") return "kite";
-  return null;
+export function resolveTerminalMarketDataProvider(_accountBrokerProvider: string | null | undefined): TerminalMarketDataProvider {
+  return "dhan";
 }
 
 function resolveInstrumentExchange(instrument: Instrument): string {

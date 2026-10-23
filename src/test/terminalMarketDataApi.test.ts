@@ -12,6 +12,7 @@ import {
   requestTerminalMarketData,
   requestTerminalRealtimeTicket,
   subscribeToTerminalMarketDataStream,
+  resolveTerminalMarketDataProvider,
   toLocalMarketDataInstrument,
   TerminalMarketDataError,
 } from "@/lib/terminalApi";
@@ -33,6 +34,14 @@ afterEach(() => {
 });
 
 describe("Main Terminal market-data contract", () => {
+  it("uses the global Founder Dhan provider regardless of the customer's trading broker mapping", () => {
+    expect(resolveTerminalMarketDataProvider(null)).toBe("dhan");
+    expect(resolveTerminalMarketDataProvider("paper")).toBe("dhan");
+    expect(resolveTerminalMarketDataProvider("zerodha")).toBe("dhan");
+    expect(resolveTerminalMarketDataProvider("kite")).toBe("dhan");
+    expect(resolveTerminalMarketDataProvider("dhan")).toBe("dhan");
+  });
+
   it("preserves provider instrument identity and cash-equity classification fields in the local master", () => {
     expect(toLocalMarketDataInstrument({
       provider: "dhan",
