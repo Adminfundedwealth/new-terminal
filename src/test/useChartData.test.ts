@@ -98,7 +98,7 @@ describe("parseColumnarCandles", () => {
   });
 });
 
-describe("account-scoped chart history gateway", () => {
+describe("global market-data chart history gateway", () => {
   const accountId = "11111111-1111-4111-8111-111111111111";
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) =>
@@ -116,13 +116,13 @@ describe("account-scoped chart history gateway", () => {
 
   it.each([
     ["dhan", "dhan", "13", "15m"],
-    ["kite", "kite", "256265", "15minute"],
-  ] as const)("routes %s chart candles through Terminal OS with account and provider context", async (accountProvider, gatewayProvider, providerInstrumentId, expectedInterval) => {
+    ["kite", "dhan", "13", "15m"],
+  ] as const)("routes %s account chart candles through global %s market data", async (accountProvider, gatewayProvider, providerInstrumentId, expectedInterval) => {
     const instrument = {
       provider: gatewayProvider,
       providerInstrumentId,
       symbol: "NIFTY 50",
-      tradingSymbol: gatewayProvider === "kite" ? "NIFTY 50" : "NIFTY",
+      tradingSymbol: "NIFTY",
       exchange: "NSE",
       exchangeSegment: "IDX_I",
       instrumentType: "INDEX",
