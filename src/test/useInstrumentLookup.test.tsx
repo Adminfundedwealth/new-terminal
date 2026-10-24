@@ -5,10 +5,6 @@ import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { fetchInstrumentMaster } from "@/lib/marketApi";
 import { getAllInstruments, saveInstruments } from "@/lib/localDatabase";
 
-vi.mock("@/hooks/useAccountContext", () => ({
-  useAccountContext: () => ({ activeAccountId: null, accounts: [], isLoading: false }),
-}));
-
 vi.mock("@/lib/localDatabase", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/localDatabase")>();
   return {

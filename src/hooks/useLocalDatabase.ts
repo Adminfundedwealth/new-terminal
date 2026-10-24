@@ -20,7 +20,6 @@ import {
   getDatabaseStats,
   getFnOStockList,
   getAllInstruments,
-  saveInstruments,
   type PriceSnapshot,
   type CandleHistory,
   type CandleData,
@@ -28,15 +27,8 @@ import {
   type Instrument,
 } from "@/lib/localDatabase";
 import { classifyInstrument, type InstrumentCategory } from "@/lib/instrumentClassification";
-import { useAccountContext } from "@/hooks/useAccountContext";
 import { fetchInstrumentMaster, normalizeInstrumentMasterResponse } from "@/lib/marketApi";
 import { normalizeInstrumentMaster } from "@/lib/instrumentMaster";
-import {
-  requestTerminalMarketData,
-  resolveTerminalMarketDataProvider,
-  type TerminalMarketDataInstrument,
-  toLocalMarketDataInstrument,
-} from "@/lib/terminalApi";
 
 // ── Hook: Database readiness check ──
 
@@ -175,10 +167,6 @@ export function useLocalFnOStocks() {
 export function useInstrumentLookup() {
   const [localInstruments, setLocalInstruments] = useState<Instrument[]>([]);
   const [localLoaded, setLocalLoaded] = useState(false);
-  const { activeAccountId, accounts, isLoading: isAccountLoading } = useAccountContext();
-  const provider = resolveTerminalMarketDataProvider(
-    accounts.find((account) => account.id === activeAccountId)?.broker_provider,
-  );
 
   useEffect(() => {
     let cancelled = false;
@@ -194,33 +182,8 @@ export function useInstrumentLookup() {
     return () => { cancelled = true; };
   }, []);
 
-  const gatewayQuery = useQuery({
-    queryKey: ["terminal-instrument-master", activeAccountId, provider],
-    enabled: Boolean(activeAccountId && provider),
-    queryFn: async () => {
-      if (!activeAccountId || !provider) throw new Error("Select an active Dhan or Kite account to load instruments from Terminal OS.");
-      const remote = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(
-        activeAccountId,
-        provider,
-        { operation: "searchInstruments", query: "" },
-      );
-      const instruments = remote
-        .filter((instrument) => instrument.providerInstrumentId && instrument.symbol && instrument.tradingSymbol)
-        .map(toLocalMarketDataInstrument);
-      if (instruments.length === 0) throw new Error("Terminal OS returned an empty instrument master.");
-      const BATCH_SIZE = 2000;
-      for (let i = 0; i < instruments.length; i += BATCH_SIZE) {
-        await saveInstruments(instruments.slice(i, i + BATCH_SIZE));
-      }
-      return instruments;
-    },
-    retry: false,
-    staleTime: 6 * 60 * 60 * 1000,
-  });
-
   const centralMasterQuery = useQuery({
     queryKey: ["central-dhan-instrument-master"],
-    enabled: !isAccountLoading && !activeAccountId,
     queryFn: async () => {
       const response = await fetchInstrumentMaster();
       const report = normalizeInstrumentMaster(normalizeInstrumentMasterResponse(response), "dhan");
@@ -234,25 +197,9 @@ export function useInstrumentLookup() {
     staleTime: 6 * 60 * 60 * 1000,
   });
 
-  const accountMasterRequired = Boolean(activeAccountId && provider);
-  const allInstruments = accountMasterRequired
-    ? gatewayQuery.data ?? localInstruments
-    : !activeAccountId
-      ? centralMasterQuery.data ?? []
-      : localInstruments;
-  const isLoaded = localLoaded && (
-    accountMasterRequired
-      ? gatewayQuery.isFetched
-      : !isAccountLoading && (
-        Boolean(activeAccountId) ||
-        centralMasterQuery.isFetched
-      )
-  );
-  const loadError = gatewayQuery.error instanceof Error
-    ? gatewayQuery.error.message
-    : centralMasterQuery.error instanceof Error
-      ? centralMasterQuery.error.message
-      : null;
+  const allInstruments = centralMasterQuery.data ?? localInstruments;
+  const isLoaded = localLoaded && centralMasterQuery.isFetched;
+  const loadError = centralMasterQuery.error instanceof Error ? centralMasterQuery.error.message : null;
 
   const search = useCallback((query: string, category?: InstrumentCategory, limit = 20) => {
     if (!query || query.length < 1) return [];
