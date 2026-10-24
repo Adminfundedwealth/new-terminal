@@ -46,8 +46,8 @@ function request(body, headers = {}) {
   return stream;
 }
 
-function makeStore({ identity = null, account = null, conflict = false } = {}) {
-  const calls = { invites: 0, creates: 0, audits: 0 };
+function makeStore({ identity = null, account = null, conflict = false, accountAction } = {}) {
+  const calls = { invites: 0, creates: 0, reconciles: 0, audits: 0 };
   let currentIdentity = identity;
   let currentAccount = account;
   return {
@@ -59,7 +59,7 @@ function makeStore({ identity = null, account = null, conflict = false } = {}) {
           identity: currentIdentity,
           account: currentAccount,
           identityAction: currentIdentity ? "reuse_existing_identity" : "invite_existing_customer",
-          accountAction: currentAccount ? "already_linked" : "create_terminal_mapping",
+          accountAction: accountAction ?? (currentAccount ? "already_linked" : "create_terminal_mapping"),
           ruleSet: {},
         };
       },
@@ -74,6 +74,11 @@ function makeStore({ identity = null, account = null, conflict = false } = {}) {
           id: "66666666-6666-4666-8666-666666666666",
           owner_user_id: owner.id,
         };
+        return currentAccount;
+      },
+      async reconcileExternalAccountId(_source, _owner, existingAccount) {
+        calls.reconciles += 1;
+        currentAccount = existingAccount;
         return currentAccount;
       },
       async writeAudit() {
@@ -242,6 +247,142 @@ test("trusted provisioning ensure preflights and audits idempotent mapping creat
   assert.equal(result.created, true);
   assert.equal(calls.invites, 1);
   assert.equal(calls.creates, 1);
+  assert.equal(calls.audits, 2);
+});
+
+test("accepts legacy accounts only with the trusted ownership-verified marker", async () => {
+  const { store } = makeStore();
+  const workflow = createTerminalAccountLinkWorkflow(store);
+  const legacySource = {
+    ...source,
+    provisioning: { ...source.provisioning, status: "ownership_verified" },
+  };
+
+  const preview = await workflow.preview(legacySource);
+  assert.equal(preview.account.id, source.account.id);
+
+  await assert.rejects(
+    workflow.preview({
+      ...legacySource,
+      provisioning: { ...legacySource.provisioning, status: "processing" },
+    }),
+    { status: 409 },
+  );
+});
+
+test("reconciles a legacy external account identifier in place for the verified owner", async () => {
+  const identity = { id: "55555555-5555-4555-8555-555555555555", email: source.customer.email };
+  const account = { id: "66666666-6666-4666-8666-666666666666", owner_user_id: identity.id };
+  const { store, calls } = makeStore({ identity, account, accountAction: "reconcile_external_account_id" });
+
+  const result = await createTerminalAccountLinkWorkflow(store).ensure(source);
+
+  assert.equal(result.created, false);
+  assert.equal(result.reconciled, true);
+  assert.equal(result.accountId, account.id);
+  assert.equal(calls.creates, 0);
+  assert.equal(calls.reconciles, 1);
+});
+
+test("database reconciliation updates the existing same-owner account instead of inserting a duplicate", async () => {
+  const identity = { id: "55555555-5555-4555-8555-555555555555", email: source.customer.email };
+  const product = { id: "77777777-7777-4777-8777-777777777777", code: "1-STEP", status: "active" };
+  const phase = { id: "88888888-8888-4888-8888-888888888888", code: "CHALLENGE", status: "active" };
+  const ruleVersion = {
+    id: "99999999-9999-4999-8999-999999999999",
+    status: "active",
+    rules: {
+      evaluation_rules: {
+        max_drawdown_percent: 6,
+        daily_drawdown_percent: 3,
+        profit_target_percent: 10,
+        max_risk_per_trade_percent: 1.5,
+        minimum_trading_days: 5,
+      },
+    },
+  };
+  const existing = {
+    id: "66666666-6666-4666-8666-666666666666",
+    owner_user_id: identity.id,
+    external_account_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    account_code: source.account.accountCode,
+    account_type: source.challenge.plan,
+    status: "active",
+    is_active: true,
+    starting_balance: 100000,
+    current_balance: 100000,
+    equity: 100000,
+    peak_equity: 100000,
+    daily_loss_limit: 3000,
+    maximum_drawdown: 6000,
+    drawdown_percentage: 6,
+    profit_target: 10000,
+    product_id: product.id,
+    phase_id: phase.id,
+    rule_version_id: ruleVersion.id,
+  };
+  const calls = { accountInserts: 0, accountPatches: 0, audits: 0 };
+
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url);
+    const params = parsed.searchParams;
+    const method = init.method ?? "GET";
+    let body = [];
+
+    if (parsed.pathname === "/auth/v1/admin/users") {
+      body = [identity];
+    } else if (parsed.pathname === "/rest/v1/trading_accounts") {
+      if (method === "PATCH") {
+        calls.accountPatches += 1;
+        assert.equal(params.get("id"), `eq.${existing.id}`);
+        assert.equal(params.get("owner_user_id"), `eq.${identity.id}`);
+        assert.equal(params.get("external_account_id"), `eq.${existing.external_account_id}`);
+        const patch = JSON.parse(init.body);
+        assert.equal(patch.external_account_id, source.account.id);
+        existing.external_account_id = patch.external_account_id;
+        body = [existing];
+      } else if (method === "POST") {
+        calls.accountInserts += 1;
+      } else if (params.has("external_account_id")) {
+        body = params.get("external_account_id") === `eq.${existing.external_account_id}` ? [existing] : [];
+      } else if (params.has("account_code")) {
+        body = [existing];
+      }
+    } else if (parsed.pathname === "/rest/v1/products") {
+      body = params.has("id") ? [product] : [product];
+    } else if (parsed.pathname === "/rest/v1/account_phases") {
+      body = [phase];
+    } else if (parsed.pathname === "/rest/v1/rule_versions") {
+      body = [ruleVersion];
+    } else if (parsed.pathname === "/rest/v1/terminal_activity" && method === "POST") {
+      calls.audits += 1;
+      body = null;
+    }
+
+    return new Response(body === null ? "" : JSON.stringify(body), { status: 200 });
+  };
+  const handlers = createTerminalAccountLinkHandlers({
+    env: {
+      SSO_API_KEY: secret,
+      SUPABASE_URL: "https://terminal.example.test",
+      SUPABASE_SECRET_KEY: "service-role-test-key",
+    },
+    fetchImpl,
+  });
+
+  const response = await handlers.handle(request(
+    { mode: "ensure", source },
+    { "x-sso-api-key": secret },
+  ));
+  const result = JSON.parse(response.body);
+
+  assert.equal(response.status, 200);
+  assert.equal(result.success, true);
+  assert.equal(result.result.reconciled, true);
+  assert.equal(result.result.accountId, existing.id);
+  assert.equal(existing.external_account_id, source.account.id);
+  assert.equal(calls.accountPatches, 1);
+  assert.equal(calls.accountInserts, 0);
   assert.equal(calls.audits, 2);
 });
 

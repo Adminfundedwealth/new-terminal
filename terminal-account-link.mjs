@@ -46,16 +46,18 @@ function readBody(req) {
 function validateSource(source) {
   if (!source || typeof source !== "object") throw Object.assign(new Error("Verified source account data is required."), { status: 400 });
   const { account, challenge, customer, provisioning } = source;
+  const hasVerifiedProvisioning = provisioning?.status === "completed" ||
+    provisioning?.status === "ownership_verified";
   if (!UUID_PATTERN.test(account?.id ?? "") || !account?.accountCode ||
       !UUID_PATTERN.test(challenge?.id ?? "") || !UUID_PATTERN.test(customer?.id ?? "") ||
       !EMAIL_PATTERN.test(customer?.email ?? "") || !account?.accountCode ||
       typeof account.balance !== "number" || !Number.isFinite(account.balance) ||
-      provisioning?.status !== "completed" ||
+      !hasVerifiedProvisioning ||
       provisioning?.tradingAccountId !== account.id || provisioning?.challengeAccountId !== challenge.id ||
       (provisioning?.traderId && provisioning.traderId !== account.traderId) ||
       account.traderId !== challenge.traderId || account.status !== "active" ||
       challenge.status !== "active") {
-    throw Object.assign(new Error("The FundedWealth account, owner, active challenge, and completed provisioning record do not agree."), { status: 409 });
+    throw Object.assign(new Error("The verified FundedWealth account, owner, active challenge, and provisioning or ownership record do not agree."), { status: 409 });
   }
 
   for (const value of [
@@ -197,14 +199,16 @@ function makeSupabaseStore({ fetchImpl, env }) {
       throw Object.assign(new Error("Multiple terminal accounts already use this account code."), { status: 409 });
     }
 
-    const existing = accounts.byExternalId[0] ?? null;
+    const existing = accounts.byExternalId[0] ?? accounts.byCode[0] ?? null;
+    const accountAction = !existing
+      ? "create_terminal_mapping"
+      : existing.external_account_id === source.account.id
+        ? "already_linked"
+        : "reconcile_external_account_id";
     if (existing && (!identity || existing.owner_user_id !== identity.id ||
         existing.account_code !== source.account.accountCode ||
         existing.status !== "active" || existing.is_active !== true)) {
       throw Object.assign(new Error("An existing terminal account conflicts with the verified customer or account state."), { status: 409 });
-    }
-    if (!existing && accounts.byCode.length > 0) {
-      throw Object.assign(new Error("This account code is already linked to another terminal record; no mapping was changed."), { status: 409 });
     }
 
     const catalog = await ensureCatalog(source);
@@ -229,8 +233,7 @@ function makeSupabaseStore({ fetchImpl, env }) {
           limit: "2",
         }));
       }
-      if (!identity || existing.external_account_id !== source.account.id ||
-          existing.product_id !== catalog.product.id || existing.phase_id !== catalog.phase.id ||
+      if (!identity || existing.product_id !== catalog.product.id || existing.phase_id !== catalog.phase.id ||
           (existing.rule_version_id ?? null) !== (catalog.ruleVersion?.id ?? null) ||
           existing.account_type !== source.challenge.plan ||
           product?.status !== "active" || phase?.status !== "active" ||
@@ -246,7 +249,7 @@ function makeSupabaseStore({ fetchImpl, env }) {
       product: catalog.product,
       phase: catalog.phase,
       identityAction: identity ? "reuse_existing_identity" : "invite_existing_customer",
-      accountAction: existing ? "already_linked" : "create_terminal_mapping",
+      accountAction,
       ruleVersion,
     };
   }
@@ -380,6 +383,39 @@ function makeSupabaseStore({ fetchImpl, env }) {
 
       return account;
     },
+    async reconcileExternalAccountId(source, identity, account) {
+      const query = new URLSearchParams({
+        select: "id,owner_user_id,external_account_id,account_code,status,is_active",
+        id: `eq.${account.id}`,
+        owner_user_id: `eq.${identity.id}`,
+        external_account_id: `eq.${account.external_account_id}`,
+      });
+      const patchResult = await request(`/rest/v1/trading_accounts?${query}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Prefer: "return=representation",
+        },
+        body: JSON.stringify({ external_account_id: source.account.id }),
+      });
+      let [updated] = Array.isArray(patchResult) ? patchResult : [];
+      if (!updated) {
+        [updated] = await rows("trading_accounts", new URLSearchParams({
+          select: "id,owner_user_id,external_account_id,account_code,status,is_active",
+          id: `eq.${account.id}`,
+          owner_user_id: `eq.${identity.id}`,
+          external_account_id: `eq.${source.account.id}`,
+          limit: "2",
+        }));
+      }
+      if (!updated || updated.id !== account.id || updated.owner_user_id !== identity.id ||
+          updated.external_account_id !== source.account.id ||
+          updated.account_code !== source.account.accountCode ||
+          updated.status !== "active" || updated.is_active !== true) {
+        throw Object.assign(new Error("The existing terminal account could not be safely reconciled with the verified FundedWealth account."), { status: 409 });
+      }
+      return updated;
+    },
     async writeAudit(source, identity, account, actor, outcome) {
       await request("/rest/v1/terminal_activity", {
         method: "POST",
@@ -454,15 +490,17 @@ export function createTerminalAccountLinkWorkflow(store) {
       );
     }
 
-    let account;
-    account = await store.createAccount(validated, identity);
+    const reconciled = plan.accountAction === "reconcile_external_account_id";
+    const account = reconciled
+      ? await store.reconcileExternalAccountId(validated, identity, plan.account)
+      : await store.createAccount(validated, identity);
 
     try {
-      await store.writeAudit(validated, identity, account, actor, "linked");
+      await store.writeAudit(validated, identity, account, actor, reconciled ? "external_account_id_reconciled" : "linked");
     } catch {
-      return { created: true, accountId: account.id, identityId: identity.id, auditPending: true };
+      return { created: !reconciled, reconciled, accountId: account.id, identityId: identity.id, auditPending: true };
     }
-    return { created: true, accountId: account.id, identityId: identity.id };
+    return { created: !reconciled, reconciled, accountId: account.id, identityId: identity.id };
   }
 
   async function ensure(source) {
