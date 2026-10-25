@@ -129,7 +129,9 @@ export function InstrumentExplorer({
   const { instruments } = useInstrumentLookup();
   const rowInstruments = rows.flatMap((row) => row.instrument ? [row.instrument] : []);
   const workspaceInstruments = rowInstruments.length > 0 ? rowInstruments : instruments;
-  const marketDataProvider = resolveTerminalMarketDataProvider(activeAccountProvider);
+  const marketDataProvider = resolveTerminalMarketDataProvider(activeAccountProvider) ?? "dhan";
+  const marketDataAccountId = marketDataProvider === "dhan" ? null : activeAccountId;
+  const canLoadMarketData = marketDataProvider === "dhan" || Boolean(activeAccountId);
   const chartInstrument = workspaceInstruments.find((instrument) => instrument.tradingSymbol.toUpperCase() === (chartSymbol ?? "").toUpperCase());
   const chartInstrumentToken = chartInstrument?.provider === "zerodha"
     ? chartInstrument.providerInstrumentId || chartInstrument.securityId
@@ -156,18 +158,15 @@ export function InstrumentExplorer({
     queryKey: [
       "terminal-explorer-quotes",
       asset,
-      activeAccountId,
+      marketDataAccountId,
       marketDataProvider,
       visibleRows.map((row) => row.instrument?.providerInstrumentId ?? row.instrument?.securityId ?? row.chartSymbol ?? row.symbol),
     ],
-    enabled: Boolean(visibleRows.length > 0 && (
-      activeAccountId && marketDataProvider
-    )),
+    enabled: Boolean(visibleRows.length > 0 && canLoadMarketData),
     queryFn: async () => {
       const quotes: Record<string, TerminalMarketDataQuote> = {};
       const errors: string[] = [];
-      if (!activeAccountId) throw new Error("Select a FundedWealth trading account to load account-specific quotes.");
-      if (!marketDataProvider) throw new Error("The selected account has no supported market-data provider.");
+      if (!marketDataAccountId && marketDataProvider !== "dhan") throw new Error("Select a FundedWealth trading account to load account-specific quotes.");
       for (let offset = 0; offset < visibleRows.length; offset += 10) {
         const batch = visibleRows.slice(offset, offset + 10);
         const results = await Promise.allSettled(batch.map(async (row) => {
@@ -178,7 +177,7 @@ export function InstrumentExplorer({
           );
           if (!instrument) throw new Error(`Terminal OS could not resolve ${chartSymbol}.`);
           const quote = await requestTerminalMarketData<TerminalMarketDataQuote>(
-            activeAccountId,
+            marketDataAccountId,
             marketDataProvider,
             { operation: "getQuote", instrument: toTerminalMarketDataInstrument(instrument, marketDataProvider) },
           );
@@ -195,12 +194,10 @@ export function InstrumentExplorer({
     refetchInterval: 30_000,
     retry: false,
   });
-  const marketDataNotice = !activeAccountId && isAccountLoading
+  const marketDataNotice = !activeAccountId && isAccountLoading && marketDataProvider !== "dhan"
     ? null
-    : !activeAccountId
+    : !activeAccountId && marketDataProvider !== "dhan"
       ? "Select a FundedWealth trading account to load account-specific market data."
-      : !marketDataProvider
-      ? "Account-specific market data is unavailable for the selected account."
       : visibleQuotesQuery.data?.errors[0] ?? (visibleQuotesQuery.error instanceof Error ? visibleQuotesQuery.error.message : null);
 
   const displayedRows = useMemo(() => visibleRows.map((row) => {
@@ -239,15 +236,15 @@ export function InstrumentExplorer({
   }, [workspaceInstruments, chartSymbol, workspaceContext]);
 
   const { data: selectedTerminalQuote } = useQuery({
-    queryKey: ["terminal-selected-quote", activeAccountId, marketDataProvider, chartSymbol],
+    queryKey: ["terminal-selected-quote", marketDataAccountId, marketDataProvider, chartSymbol],
     queryFn: async () => {
-      if (!activeAccountId || !marketDataProvider || !chartSymbol) return null;
+      if ((!marketDataAccountId && marketDataProvider !== "dhan") || !chartSymbol) return null;
       const instrument = rows.find((row) => (row.chartSymbol ?? row.symbol) === chartSymbol)?.instrument
         ?? workspaceInstruments.find((candidate) =>
         candidate.tradingSymbol.toUpperCase() === chartSymbol.toUpperCase() ||
         candidate.symbol.toUpperCase() === chartSymbol.toUpperCase()
       ) ?? (await requestTerminalMarketData<Instrument[]>(
-        activeAccountId,
+        marketDataAccountId,
         marketDataProvider,
         { operation: "searchInstruments", query: chartSymbol },
       )).find((candidate) =>
@@ -256,12 +253,12 @@ export function InstrumentExplorer({
       );
       if (!instrument) throw new Error(`Terminal OS could not resolve ${chartSymbol}.`);
       return requestTerminalMarketData<TerminalMarketDataQuote>(
-        activeAccountId,
+        marketDataAccountId,
         marketDataProvider,
         { operation: "getQuote", instrument: toTerminalMarketDataInstrument(instrument, marketDataProvider) },
       );
     },
-    enabled: Boolean(activeAccountId && marketDataProvider && chartSymbol && workspaceContext !== "options"),
+    enabled: Boolean(canLoadMarketData && chartSymbol && workspaceContext !== "options"),
     staleTime: 5_000,
     refetchInterval: 15_000,
     retry: false,

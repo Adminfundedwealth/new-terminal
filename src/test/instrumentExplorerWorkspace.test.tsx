@@ -4,8 +4,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { InstrumentExplorer } from "@/components/InstrumentExplorer";
 import { useLiveOptionChain } from "@/hooks/useMarketData";
 import { createTerminalOrder, fetchTerminalExecutions, fetchTerminalOrders, fetchTerminalPositions, modifyTerminalPositionProtection } from "@/lib/terminalApi";
-import { fetchCashQuotes } from "@/lib/marketApi";
 import type { Instrument } from "@/lib/localDatabase";
+
+const { requestTerminalMarketDataMock } = vi.hoisted(() => ({
+  requestTerminalMarketDataMock: vi.fn(),
+}));
 
 vi.mock("@/hooks/useLocalDatabase", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/hooks/useLocalDatabase")>();
@@ -33,7 +36,6 @@ vi.mock("@/lib/marketApi", async (importOriginal) => {
   return {
     ...actual,
     fetchInstrumentMaster: vi.fn().mockResolvedValue({ instruments: [] }),
-    fetchCashQuotes: vi.fn().mockResolvedValue({}),
   };
 });
 
@@ -45,6 +47,7 @@ vi.mock("@/lib/terminalApi", async (importOriginal) => {
     resolveTerminalMarketDataProvider: vi.fn((provider?: string) =>
       provider === "dhan" ? "dhan" : provider === "kite" || provider === "zerodha" ? "kite" : null
     ),
+    requestTerminalMarketData: requestTerminalMarketDataMock,
     createTerminalOrder: vi.fn().mockResolvedValue({ ok: true, order: { id: "mock-order" } }),
     modifyTerminalPositionProtection: vi.fn().mockResolvedValue({}),
     fetchTerminalPositions: vi.fn().mockResolvedValue({
@@ -124,11 +127,46 @@ vi.mock("@/components/StockChart", async (importOriginal) => {
 
 describe("InstrumentExplorer stock workspace", () => {
   afterEach(() => {
-    vi.mocked(fetchCashQuotes).mockReset().mockResolvedValue({});
+    requestTerminalMarketDataMock.mockReset();
   });
 
+  const globalTmpvInstrument: Instrument = {
+    securityId: "3456",
+    providerInstrumentId: "3456",
+    provider: "dhan",
+    symbol: "TATA MOTORS PASS VEH LTD",
+    tradingSymbol: "TMPV",
+    exchange: "NSE",
+    exchangeSegment: "NSE_EQ",
+    instrumentType: "EQUITY",
+    lotSize: 1,
+  };
+  const globalTmpvQuote = {
+    ltp: 279.9,
+    open: 275.8,
+    high: 280.95,
+    low: 274.6,
+    previousClose: 273,
+    change: 6.9,
+    changePercent: 2.53,
+    volume: 6360894,
+    openInterest: null,
+    timestamp: "2026-10-09T15:59:51.000Z",
+  };
+  function mockGlobalDhanQuotes(quotesByInstrument: Record<string, typeof globalTmpvQuote> = {
+    "3456": globalTmpvQuote,
+  }) {
+    requestTerminalMarketDataMock.mockImplementation(async (_accountId, _provider, operation) => {
+      if (operation.operation === "searchInstruments") return [globalTmpvInstrument];
+      if (operation.operation === "getQuote") {
+        return quotesByInstrument[operation.instrument.providerInstrumentId] ?? null;
+      }
+      return null;
+    });
+  }
+
   it("opens the existing chart workspace for a stock row using the same shared layout", async () => {
-    vi.mocked(fetchCashQuotes).mockResolvedValueOnce({
+    mockGlobalDhanQuotes({
       "500490": {
         ltp: 7060,
         open: 7020,
@@ -178,9 +216,12 @@ describe("InstrumentExplorer stock workspace", () => {
     ]);
     expect(screen.queryByText("NSE_EQ")).not.toBeInTheDocument();
     expect(screen.queryByText("500490")).not.toBeInTheDocument();
-    const quoteQueryKey = ["terminal-explorer-quotes", "stocks", undefined, null, ["500490"]];
+    const quoteQueryKey = ["terminal-explorer-quotes", "stocks", null, "dhan", ["500490"]];
     await waitFor(() => {
-      expect(fetchCashQuotes).toHaveBeenCalledWith("NSE_EQ", ["500490"]);
+      expect(requestTerminalMarketDataMock).toHaveBeenCalledWith(null, "dhan", expect.objectContaining({
+        operation: "getQuote",
+        instrument: expect.objectContaining({ providerInstrumentId: "500490" }),
+      }));
       expect(queryClient.getQueryState(quoteQueryKey)?.status).toBe("success");
     });
     expect(queryClient.getQueryData(quoteQueryKey)).toMatchObject({
@@ -253,16 +294,8 @@ describe("InstrumentExplorer stock workspace", () => {
     expect(screen.getByTestId("stock-chart")).toHaveTextContent("NIFTY_MIDCAP_50 chart mock");
   });
 
-  it("loads a central quote for a no-account deep-linked legacy stock symbol", async () => {
-    vi.mocked(fetchCashQuotes).mockImplementation(async (_segment, securityIds) => securityIds.includes("3456")
-      ? {
-          "3456": {
-            ltp: 279.9, open: 275.8, high: 280.95, low: 274.6, previousClose: 273,
-            change: 6.9, changePercent: 2.53, volume: 6360894, openInterest: null,
-            timestamp: "2026-10-09T15:59:51.000Z",
-          },
-        }
-      : {});
+  it("loads a global Dhan quote for a no-account deep-linked stock symbol", async () => {
+    mockGlobalDhanQuotes();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     render(
@@ -292,33 +325,19 @@ describe("InstrumentExplorer stock workspace", () => {
       </QueryClientProvider>
     );
 
-    await waitFor(() => expect(queryClient.getQueryState(["terminal-central-chart-quote", "TATAMOTORS", "NSE_EQ", "3456"])?.status).toBe("success"));
-    expect(fetchCashQuotes).toHaveBeenCalledWith("NSE_EQ", ["3456"]);
-    expect(screen.getByText("₹279.90")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("₹279.90")).toBeInTheDocument());
+    expect(requestTerminalMarketDataMock).toHaveBeenCalledWith(null, "dhan", expect.objectContaining({
+      operation: "searchInstruments",
+      query: "TATAMOTORS",
+    }));
+    expect(screen.queryByText(/select a fundedwealth trading account/i)).not.toBeInTheDocument();
     expect(screen.getByText("+2.53%")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /back to stocks/i })).toBeInTheDocument();
     expect(screen.queryByText(/link .*account/i)).not.toBeInTheDocument();
   });
 
-  it("waits for visible batch quotes before requesting a missing deep-linked symbol", async () => {
-    let releaseVisibleBatch: (() => void) | undefined;
-    const visibleBatch = new Promise<void>((resolve) => { releaseVisibleBatch = resolve; });
-    vi.mocked(fetchCashQuotes).mockImplementation(async (_segment, securityIds) => {
-      if (securityIds.includes("500490")) {
-        await visibleBatch;
-        return {};
-      }
-      if (securityIds.includes("3456")) {
-        return {
-          "3456": {
-            ltp: 279.9, open: 275.8, high: 280.95, low: 274.6, previousClose: 273,
-            change: 6.9, changePercent: 2.53, volume: 6360894, openInterest: null,
-            timestamp: "2026-10-09T15:59:51.000Z",
-          },
-        };
-      }
-      return {};
-    });
+  it("loads global Dhan quotes for visible rows and deep-linked symbols without account context", async () => {
+    mockGlobalDhanQuotes();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     render(
@@ -348,28 +367,14 @@ describe("InstrumentExplorer stock workspace", () => {
       </QueryClientProvider>
     );
 
-    await waitFor(() => expect(fetchCashQuotes).toHaveBeenCalledTimes(1));
-    expect(fetchCashQuotes).toHaveBeenCalledWith("NSE_EQ", ["500490"]);
-    releaseVisibleBatch?.();
-    await waitFor(() => expect(fetchCashQuotes).toHaveBeenCalledWith("NSE_EQ", ["3456"]));
     await waitFor(() => expect(screen.getByText("₹279.90")).toBeInTheDocument());
-    expect(fetchCashQuotes).toHaveBeenCalledTimes(2);
+    expect(requestTerminalMarketDataMock).toHaveBeenCalledWith(null, "dhan", expect.objectContaining({
+      operation: "getQuote",
+    }));
   });
 
-  it("falls back to a single-symbol central quote when the visible quote batch has no result", async () => {
-    let quoteRequests = 0;
-    vi.mocked(fetchCashQuotes).mockImplementation(async (_segment, securityIds) => {
-      if (!securityIds.includes("3456")) return {};
-      quoteRequests += 1;
-      if (quoteRequests === 1) return {};
-      return {
-        "3456": {
-          ltp: 279.9, open: 275.8, high: 280.95, low: 274.6, previousClose: 273,
-          change: 6.9, changePercent: 2.53, volume: 6360894, openInterest: null,
-          timestamp: "2026-10-09T15:59:51.000Z",
-        },
-      };
-    });
+  it("loads the selected stock quote directly from global Dhan", async () => {
+    mockGlobalDhanQuotes();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const tmpvInstrument: Instrument = {
       securityId: "3456",
@@ -411,7 +416,10 @@ describe("InstrumentExplorer stock workspace", () => {
     );
 
     await waitFor(() => expect(screen.getByText("₹279.90")).toBeInTheDocument());
-    expect(fetchCashQuotes).toHaveBeenCalledTimes(2);
+    expect(requestTerminalMarketDataMock).toHaveBeenCalledWith(null, "dhan", expect.objectContaining({
+      operation: "getQuote",
+      instrument: expect.objectContaining({ providerInstrumentId: "3456" }),
+    }));
     expect(screen.getByText("+2.53%")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /back to stocks/i })).toBeInTheDocument();
   });
