@@ -95,11 +95,11 @@ export default function InstrumentDirectory({ category }: { category: "stocks" |
         <CardContent>
           {!isLoaded ? (
             <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
-              <RefreshCw className="h-4 w-4 animate-spin" /> Loading instrument master...
+              <RefreshCw className="h-4 w-4 animate-spin" /> Loading instrument catalog...
             </div>
           ) : filteredRows.length === 0 ? (
             <p className="py-12 text-center text-sm text-muted-foreground">
-              No {label.toLowerCase()} instruments found in the instrument master.
+              No {label.toLowerCase()} instruments found in the instrument catalog.
             </p>
           ) : (
             <>

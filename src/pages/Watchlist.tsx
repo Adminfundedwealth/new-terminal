@@ -144,7 +144,7 @@ export default function Watchlist() {
       : statusLabel === "HISTORICAL"
         ? "Latest available central Dhan quotes · market data is independent of trading account status."
         : instrumentLoadError
-          ? `Using cached instruments. Central Dhan master refresh failed: ${instrumentLoadError}`
+          ? `Using cached instruments. Central Dhan catalog refresh failed: ${instrumentLoadError}`
           : "No current central Dhan watchlist quotes are available."
     : statusLabel === "LIVE"
       ? "Account-scoped Terminal OS quotes"

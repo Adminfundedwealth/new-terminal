@@ -26,7 +26,7 @@ vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ user: null }),
 }));
 
-describe("useInstrumentLookup Founder-global Dhan master", () => {
+describe("useInstrumentLookup Founder-global Dhan catalog", () => {
   beforeEach(() => {
     requestTerminalMarketDataMock.mockReset();
   });
@@ -41,7 +41,7 @@ describe("useInstrumentLookup Founder-global Dhan master", () => {
     return renderHook(() => useInstrumentLookup(), { wrapper });
   }
 
-  it("loads and caches the global instrument master without a linked account", async () => {
+  it("loads and caches the bounded global instrument catalog without a linked account", async () => {
     requestTerminalMarketDataMock.mockResolvedValue([{
       provider: "dhan",
       providerInstrumentId: "2885",
@@ -64,8 +64,7 @@ describe("useInstrumentLookup Founder-global Dhan master", () => {
       expect.objectContaining({ securityId: "2885", tradingSymbol: "RELIANCE", provider: "dhan" }),
     ]);
     expect(requestTerminalMarketDataMock).toHaveBeenCalledWith(null, "dhan", {
-      operation: "searchInstruments",
-      query: "",
+      operation: "listInstruments",
     });
     expect(result.current.loadError).toBeNull();
   });
@@ -99,11 +98,11 @@ describe("useInstrumentLookup Founder-global Dhan master", () => {
 
   it("surfaces a global instrument-master failure instead of requiring an account", async () => {
     vi.mocked(getAllInstruments).mockResolvedValue([]);
-    requestTerminalMarketDataMock.mockRejectedValue(new Error("Founder Dhan master unavailable"));
+    requestTerminalMarketDataMock.mockRejectedValue(new Error("Founder Dhan catalog unavailable"));
 
     const { result } = renderLookup();
 
-    await waitFor(() => expect(result.current.loadError).toBe("Founder Dhan master unavailable"));
+    await waitFor(() => expect(result.current.loadError).toBe("Founder Dhan catalog unavailable"));
     expect(result.current.isLoaded).toBe(true);
     expect(result.current.instruments).toEqual([]);
   });
@@ -121,13 +120,13 @@ describe("useInstrumentLookup Founder-global Dhan master", () => {
       providerInstrumentId: "2885",
     };
     vi.mocked(getAllInstruments).mockResolvedValue([cachedInstrument]);
-    requestTerminalMarketDataMock.mockRejectedValue(new Error("Founder Dhan master unavailable"));
+    requestTerminalMarketDataMock.mockRejectedValue(new Error("Founder Dhan catalog unavailable"));
 
     const { result } = renderLookup();
 
     await waitFor(() => expect(result.current.isLoaded).toBe(true));
     expect(result.current.instruments).toEqual([cachedInstrument]);
-    expect(result.current.loadError).toBe("Founder Dhan master unavailable");
+    expect(result.current.loadError).toBe("Founder Dhan catalog unavailable");
   });
 
   it("loads the same Founder-global master regardless of the selected trading account", async () => {
@@ -159,8 +158,7 @@ describe("useInstrumentLookup Founder-global Dhan master", () => {
       lotSize: 1,
     }]));
     expect(requestTerminalMarketDataMock).toHaveBeenCalledWith(null, "dhan", {
-      operation: "searchInstruments",
-      query: "",
+      operation: "listInstruments",
     });
   });
 

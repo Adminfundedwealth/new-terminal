@@ -210,6 +210,7 @@ export interface TerminalMarketDataInstrument {
     exchange: string;
     exchangeSegment: string;
     instrumentType: string;
+    series?: string;
     lotSize?: number;
     tickSize?: number;
     expiryDate?: string;
@@ -276,6 +277,8 @@ export declare function toTerminalMarketDataInstrument(instrument: {
 }, provider: TerminalMarketDataProvider): TerminalMarketDataInstrument;
 export type TerminalMarketDataOperation = {
     operation: "authenticate";
+} | {
+    operation: "listInstruments";
 } | {
     operation: "searchInstruments";
     query: string;

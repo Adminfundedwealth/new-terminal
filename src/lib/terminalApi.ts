@@ -504,6 +504,7 @@ export function toLocalMarketDataInstrument(instrument: TerminalMarketDataInstru
 
 export type TerminalMarketDataOperation =
   | { operation: "authenticate" }
+  | { operation: "listInstruments" }
   | { operation: "searchInstruments"; query: string }
   | { operation: "getQuote"; instrument: TerminalMarketDataInstrument }
   | { operation: "getQuotes"; instruments: TerminalMarketDataInstrument[] }

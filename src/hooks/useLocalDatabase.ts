@@ -187,17 +187,17 @@ export function useInstrumentLookup() {
   }, []);
 
   const gatewayQuery = useQuery({
-    queryKey: ["terminal-instrument-master", "founder-dhan"],
+    queryKey: ["terminal-instrument-catalog", "founder-dhan"],
     queryFn: async () => {
       const remote = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(
         null,
         "dhan",
-        { operation: "searchInstruments", query: "" },
+        { operation: "listInstruments" },
       );
       const instruments = remote
         .filter((instrument) => instrument.providerInstrumentId && instrument.symbol && instrument.tradingSymbol)
         .map(toLocalMarketDataInstrument);
-      if (instruments.length === 0) throw new Error("Terminal OS returned an empty instrument master.");
+      if (instruments.length === 0) throw new Error("Terminal OS returned an empty Dhan instrument catalog.");
       const BATCH_SIZE = 2000;
       try {
         for (let i = 0; i < instruments.length; i += BATCH_SIZE) {
