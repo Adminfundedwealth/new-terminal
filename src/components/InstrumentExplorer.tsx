@@ -239,18 +239,20 @@ export function InstrumentExplorer({
     queryKey: ["terminal-selected-quote", marketDataAccountId, marketDataProvider, chartSymbol],
     queryFn: async () => {
       if ((!marketDataAccountId && marketDataProvider !== "dhan") || !chartSymbol) return null;
-      const instrument = rows.find((row) => (row.chartSymbol ?? row.symbol) === chartSymbol)?.instrument
+      const existingInstrument = rows.find((row) => (row.chartSymbol ?? row.symbol) === chartSymbol)?.instrument
         ?? workspaceInstruments.find((candidate) =>
         candidate.tradingSymbol.toUpperCase() === chartSymbol.toUpperCase() ||
         candidate.symbol.toUpperCase() === chartSymbol.toUpperCase()
-      ) ?? (await requestTerminalMarketData<Instrument[]>(
+      );
+      const searchResults = existingInstrument ? [] : await requestTerminalMarketData<Instrument[]>(
         marketDataAccountId,
         marketDataProvider,
         { operation: "searchInstruments", query: chartSymbol },
-      )).find((candidate) =>
+      );
+      const instrument = existingInstrument ?? searchResults.find((candidate) =>
         candidate.tradingSymbol.toUpperCase() === chartSymbol.toUpperCase() ||
         candidate.symbol.toUpperCase() === chartSymbol.toUpperCase()
-      );
+      ) ?? (searchResults.length === 1 ? searchResults[0] : undefined);
       if (!instrument) throw new Error(`Terminal OS could not resolve ${chartSymbol}.`);
       return requestTerminalMarketData<TerminalMarketDataQuote>(
         marketDataAccountId,
