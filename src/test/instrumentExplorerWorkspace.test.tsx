@@ -7,103 +7,120 @@ import { createTerminalOrder, fetchTerminalExecutions, fetchTerminalOrders, fetc
 import { fetchCashQuotes } from "@/lib/marketApi";
 import type { Instrument } from "@/lib/localDatabase";
 
-vi.mock("@/hooks/useLocalDatabase", () => ({
-  useInstrumentLookup: () => ({
-    instruments: [
-      { securityId: "500002", symbol: "ABB", tradingSymbol: "ABB", displayName: "ABB Ltd", exchange: "BSE", exchangeSegment: "BSE_EQ", instrumentType: "EQUITY", lotSize: 1, tickSize: 0.05, provider: "test", providerInstrumentId: "500002" },
-      { securityId: "500490", symbol: "ABB", tradingSymbol: "ABB", displayName: "ABB Ltd", exchange: "NSE", exchangeSegment: "NSE_EQ", instrumentType: "EQUITY", lotSize: 1, tickSize: 0.05, provider: "test", providerInstrumentId: "500490" },
-      { securityId: "3456", symbol: "TATA MOTORS PASS VEH LTD", tradingSymbol: "TMPV", displayName: "Tata Motors Passenger Vehicles", exchange: "NSE", exchangeSegment: "NSE_EQ", instrumentType: "EQUITY", series: "EQ", lotSize: 1, tickSize: 0.05, provider: "dhan", providerInstrumentId: "3456" },
-      { securityId: "18920450", symbol: "NIFTY", tradingSymbol: "NIFTY26SEP23150CE", displayName: "NIFTY 23150 CE", exchange: "NSE", exchangeSegment: "NSE_FNO", instrumentType: "OPTIDX", lotSize: 65, tickSize: 0.05, expiryDate: "2026-09-29", strikePrice: 23150, optionType: "CE", provider: "zerodha", providerInstrumentId: "18920450" },
-    ],
-    isLoaded: true,
-  }),
-}));
+vi.mock("@/hooks/useLocalDatabase", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/useLocalDatabase")>();
+  return {
+    ...actual,
+    useInstrumentLookup: () => ({
+      instruments: [
+        { securityId: "500002", symbol: "ABB", tradingSymbol: "ABB", displayName: "ABB Ltd", exchange: "BSE", exchangeSegment: "BSE_EQ", instrumentType: "EQUITY", lotSize: 1, tickSize: 0.05, provider: "test", providerInstrumentId: "500002" },
+        { securityId: "500490", symbol: "ABB", tradingSymbol: "ABB", displayName: "ABB Ltd", exchange: "NSE", exchangeSegment: "NSE_EQ", instrumentType: "EQUITY", lotSize: 1, tickSize: 0.05, provider: "test", providerInstrumentId: "500490" },
+        { securityId: "3456", symbol: "TATA MOTORS PASS VEH LTD", tradingSymbol: "TMPV", displayName: "Tata Motors Passenger Vehicles", exchange: "NSE", exchangeSegment: "NSE_EQ", instrumentType: "EQUITY", series: "EQ", lotSize: 1, tickSize: 0.05, provider: "dhan", providerInstrumentId: "3456" },
+        { securityId: "18920450", symbol: "NIFTY", tradingSymbol: "NIFTY26SEP23150CE", displayName: "NIFTY 23150 CE", exchange: "NSE", exchangeSegment: "NSE_FNO", instrumentType: "OPTIDX", lotSize: 65, tickSize: 0.05, expiryDate: "2026-09-29", strikePrice: 23150, optionType: "CE", provider: "zerodha", providerInstrumentId: "18920450" },
+      ],
+      isLoaded: true,
+    }),
+  };
+});
 
-vi.mock("@/hooks/useMarketData", () => ({
-  useLiveOptionChain: vi.fn().mockReturnValue({ data: null, isLoading: false }),
-}));
+vi.mock("@/hooks/useMarketData", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/useMarketData")>();
+  return { ...actual, useLiveOptionChain: vi.fn().mockReturnValue({ data: null, isLoading: false }) };
+});
 
-vi.mock("@/lib/marketApi", () => ({
-  fetchInstrumentMaster: vi.fn().mockResolvedValue({ instruments: [] }),
-  fetchCashQuotes: vi.fn().mockResolvedValue({}),
-}));
+vi.mock("@/lib/marketApi", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/marketApi")>();
+  return {
+    ...actual,
+    fetchInstrumentMaster: vi.fn().mockResolvedValue({ instruments: [] }),
+    fetchCashQuotes: vi.fn().mockResolvedValue({}),
+  };
+});
 
-vi.mock("@/lib/terminalApi", () => ({
-  createClientOrderId: vi.fn(() => "mock-client-order-id"),
-  resolveTerminalMarketDataProvider: vi.fn((provider?: string) =>
-    provider === "dhan" ? "dhan" : provider === "kite" || provider === "zerodha" ? "kite" : null
-  ),
-  createTerminalOrder: vi.fn().mockResolvedValue({ ok: true, order: { id: "mock-order" } }),
-  modifyTerminalPositionProtection: vi.fn().mockResolvedValue({}),
-  fetchTerminalPositions: vi.fn().mockResolvedValue({
-    data: [{
-      id: "pos-001",
-      trading_account_id: "account-1",
-      account_id: "account-1",
-      symbol: "BANKNIFTY",
-      side: "LONG",
-      qty: 1,
-      quantity: 1,
-      avg_price: 51000,
-      average_price: 51000,
-      current_price: 51250,
-      last_price: 51250,
-      stop_loss: 50750,
-      take_profit: 51600,
-      is_open: true,
-      position_status: "open",
-      updated_at: "2026-09-26T04:00:00.000Z",
-    }],
-    meta: { total: 1, page: 1, page_size: 1, has_more: false },
-  }),
-  fetchTerminalOrders: vi.fn().mockResolvedValue({
-    data: [{
-      id: "ord-001",
-      account_id: "account-1",
-      user_id: "user-1",
-      symbol: "BANKNIFTY",
-      side: "BUY",
-      quantity: 1,
-      filled_quantity: 1,
-      status: "filled",
-      order_type: "MARKET",
-      price: 51000,
-      stop_loss: 50750,
-      take_profit: 51600,
-      created_at: "2026-09-26T03:55:00.000Z",
-      updated_at: "2026-09-26T03:55:00.000Z",
-      order_id: "ord-001",
-      client_order_id: "client-ord-001",
-      exchange: "NSE",
-      segment: "NSE_EQ",
-      is_overnight: false,
-      product: "CNC",
-      time_in_force: "DAY",
-      broker_order_id: null,
-      rejection_reason: null,
-      cancellation_reason: null,
-    }],
-    meta: { total: 1, page: 1, page_size: 1, has_more: false },
-  }),
-  fetchTerminalExecutions: vi.fn().mockResolvedValue({
-    data: [{
-      id: "exec-001",
-      trading_account_id: "account-1",
-      order_id: "ord-001",
-      position_id: "pos-001",
-      symbol: "BANKNIFTY",
-      qty: 1,
-      price: 51000,
-      executed_at: "2026-09-26T03:55:30.000Z",
-    }],
-    meta: { total: 1, page: 1, page_size: 1, has_more: false },
-  }),
-  fetchTerminalRisk: vi.fn().mockResolvedValue({ data: { accounts_at_risk: 0, breached: 0, critical: 0, warning: 0, recent_events: [] } }),
-}));
+vi.mock("@/lib/terminalApi", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/terminalApi")>();
+  return {
+    ...actual,
+    createClientOrderId: vi.fn(() => "mock-client-order-id"),
+    resolveTerminalMarketDataProvider: vi.fn((provider?: string) =>
+      provider === "dhan" ? "dhan" : provider === "kite" || provider === "zerodha" ? "kite" : null
+    ),
+    createTerminalOrder: vi.fn().mockResolvedValue({ ok: true, order: { id: "mock-order" } }),
+    modifyTerminalPositionProtection: vi.fn().mockResolvedValue({}),
+    fetchTerminalPositions: vi.fn().mockResolvedValue({
+      data: [{
+        id: "pos-001",
+        trading_account_id: "account-1",
+        account_id: "account-1",
+        symbol: "BANKNIFTY",
+        side: "LONG",
+        qty: 1,
+        quantity: 1,
+        avg_price: 51000,
+        average_price: 51000,
+        current_price: 51250,
+        last_price: 51250,
+        stop_loss: 50750,
+        take_profit: 51600,
+        is_open: true,
+        position_status: "open",
+        updated_at: "2026-09-26T04:00:00.000Z",
+      }],
+      meta: { total: 1, page: 1, page_size: 1, has_more: false },
+    }),
+    fetchTerminalOrders: vi.fn().mockResolvedValue({
+      data: [{
+        id: "ord-001",
+        account_id: "account-1",
+        user_id: "user-1",
+        symbol: "BANKNIFTY",
+        side: "BUY",
+        quantity: 1,
+        filled_quantity: 1,
+        status: "filled",
+        order_type: "MARKET",
+        price: 51000,
+        stop_loss: 50750,
+        take_profit: 51600,
+        created_at: "2026-09-26T03:55:00.000Z",
+        updated_at: "2026-09-26T03:55:00.000Z",
+        order_id: "ord-001",
+        client_order_id: "client-ord-001",
+        exchange: "NSE",
+        segment: "NSE_EQ",
+        is_overnight: false,
+        product: "CNC",
+        time_in_force: "DAY",
+        broker_order_id: null,
+        rejection_reason: null,
+        cancellation_reason: null,
+      }],
+      meta: { total: 1, page: 1, page_size: 1, has_more: false },
+    }),
+    fetchTerminalExecutions: vi.fn().mockResolvedValue({
+      data: [{
+        id: "exec-001",
+        trading_account_id: "account-1",
+        order_id: "ord-001",
+        position_id: "pos-001",
+        symbol: "BANKNIFTY",
+        qty: 1,
+        price: 51000,
+        executed_at: "2026-09-26T03:55:30.000Z",
+      }],
+      meta: { total: 1, page: 1, page_size: 1, has_more: false },
+    }),
+    fetchTerminalRisk: vi.fn().mockResolvedValue({ data: { accounts_at_risk: 0, breached: 0, critical: 0, warning: 0, recent_events: [] } }),
+  };
+});
 
-vi.mock("@/components/StockChart", () => ({
-  StockChart: ({ symbol, instrumentToken, unavailableMessage }: { symbol: string; instrumentToken?: string; unavailableMessage?: string }) => <div data-testid="stock-chart" data-instrument-token={instrumentToken} data-unavailable-message={unavailableMessage}>{symbol} chart mock</div>,
-}));
+vi.mock("@/components/StockChart", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/components/StockChart")>();
+  return {
+    ...actual,
+    StockChart: ({ symbol, instrumentToken, unavailableMessage }: { symbol: string; instrumentToken?: string; unavailableMessage?: string }) => <div data-testid="stock-chart" data-instrument-token={instrumentToken} data-unavailable-message={unavailableMessage}>{symbol} chart mock</div>,
+  };
+});
 
 describe("InstrumentExplorer stock workspace", () => {
   afterEach(() => {
@@ -111,6 +128,20 @@ describe("InstrumentExplorer stock workspace", () => {
   });
 
   it("opens the existing chart workspace for a stock row using the same shared layout", async () => {
+    vi.mocked(fetchCashQuotes).mockResolvedValueOnce({
+      "500490": {
+        ltp: 7060,
+        open: 7020,
+        high: 7070,
+        low: 7010,
+        previousClose: 7050,
+        change: 10,
+        changePercent: 10 / 7050 * 100,
+        volume: 10000,
+        openInterest: null,
+        timestamp: new Date().toISOString(),
+      },
+    });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     render(
@@ -148,9 +179,14 @@ describe("InstrumentExplorer stock workspace", () => {
     expect(screen.queryByText("NSE_EQ")).not.toBeInTheDocument();
     expect(screen.queryByText("500490")).not.toBeInTheDocument();
     const quoteQueryKey = ["terminal-explorer-quotes", "stocks", undefined, null, ["500490"]];
-    expect(fetchCashQuotes).not.toHaveBeenCalled();
-    expect(queryClient.getQueryState(quoteQueryKey)?.fetchStatus).toBe("idle");
-    expect(screen.getByText("₹7,051.50")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetchCashQuotes).toHaveBeenCalledWith("NSE_EQ", ["500490"]);
+      expect(queryClient.getQueryState(quoteQueryKey)?.status).toBe("success");
+    });
+    expect(queryClient.getQueryData(quoteQueryKey)).toMatchObject({
+      quotes: { ABB: { ltp: 7060 } },
+    });
+    expect(screen.getByText("₹7,060.00")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open ABB stock chart" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open ABB stock chart" }));
 
@@ -160,7 +196,7 @@ describe("InstrumentExplorer stock workspace", () => {
     expect(screen.getByTestId("stock-chart")).toHaveTextContent("ABB chart mock");
     expect(screen.getByTestId("stock-chart")).toHaveAttribute("data-unavailable-message", "Historical market data is currently unavailable for this chart.");
     expect(screen.queryByText(/Dhan|broker|link .*account/i)).not.toBeInTheDocument();
-    expect(screen.getByText("STALE")).toBeInTheDocument();
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Option Chain" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Futures" })).not.toBeInTheDocument();
   });
@@ -217,7 +253,16 @@ describe("InstrumentExplorer stock workspace", () => {
     expect(screen.getByTestId("stock-chart")).toHaveTextContent("NIFTY_MIDCAP_50 chart mock");
   });
 
-  it("does not request central quotes for a no-account deep-linked stock symbol", async () => {
+  it("loads a central quote for a no-account deep-linked legacy stock symbol", async () => {
+    vi.mocked(fetchCashQuotes).mockImplementation(async (_segment, securityIds) => securityIds.includes("3456")
+      ? {
+          "3456": {
+            ltp: 279.9, open: 275.8, high: 280.95, low: 274.6, previousClose: 273,
+            change: 6.9, changePercent: 2.53, volume: 6360894, openInterest: null,
+            timestamp: "2026-10-09T15:59:51.000Z",
+          },
+        }
+      : {});
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     render(
@@ -247,14 +292,33 @@ describe("InstrumentExplorer stock workspace", () => {
       </QueryClientProvider>
     );
 
-    expect(fetchCashQuotes).not.toHaveBeenCalled();
-    expect(queryClient.getQueryState(["terminal-central-chart-quote", "TATAMOTORS", "NSE_EQ", "3456"])).toBeUndefined();
-    expect(screen.queryByText("₹279.90")).not.toBeInTheDocument();
-    expect(screen.getByText("Select a FundedWealth trading account to load account-specific market data.")).toBeInTheDocument();
+    await waitFor(() => expect(queryClient.getQueryState(["terminal-central-chart-quote", "TATAMOTORS", "NSE_EQ", "3456"])?.status).toBe("success"));
+    expect(fetchCashQuotes).toHaveBeenCalledWith("NSE_EQ", ["3456"]);
+    expect(screen.getByText("₹279.90")).toBeInTheDocument();
+    expect(screen.getByText("+2.53%")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /back to stocks/i })).toBeInTheDocument();
+    expect(screen.queryByText(/link .*account/i)).not.toBeInTheDocument();
   });
 
-  it("does not request quotes while the account context is unavailable", async () => {
+  it("waits for visible batch quotes before requesting a missing deep-linked symbol", async () => {
+    let releaseVisibleBatch: (() => void) | undefined;
+    const visibleBatch = new Promise<void>((resolve) => { releaseVisibleBatch = resolve; });
+    vi.mocked(fetchCashQuotes).mockImplementation(async (_segment, securityIds) => {
+      if (securityIds.includes("500490")) {
+        await visibleBatch;
+        return {};
+      }
+      if (securityIds.includes("3456")) {
+        return {
+          "3456": {
+            ltp: 279.9, open: 275.8, high: 280.95, low: 274.6, previousClose: 273,
+            change: 6.9, changePercent: 2.53, volume: 6360894, openInterest: null,
+            timestamp: "2026-10-09T15:59:51.000Z",
+          },
+        };
+      }
+      return {};
+    });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     render(
@@ -284,12 +348,28 @@ describe("InstrumentExplorer stock workspace", () => {
       </QueryClientProvider>
     );
 
-    expect(fetchCashQuotes).not.toHaveBeenCalled();
-    expect(screen.queryByText("₹279.90")).not.toBeInTheDocument();
-    expect(screen.getByText("Select a FundedWealth trading account to load account-specific market data.")).toBeInTheDocument();
+    await waitFor(() => expect(fetchCashQuotes).toHaveBeenCalledTimes(1));
+    expect(fetchCashQuotes).toHaveBeenCalledWith("NSE_EQ", ["500490"]);
+    releaseVisibleBatch?.();
+    await waitFor(() => expect(fetchCashQuotes).toHaveBeenCalledWith("NSE_EQ", ["3456"]));
+    await waitFor(() => expect(screen.getByText("₹279.90")).toBeInTheDocument());
+    expect(fetchCashQuotes).toHaveBeenCalledTimes(2);
   });
 
-  it("does not fall back to a central quote when no account is selected", async () => {
+  it("falls back to a single-symbol central quote when the visible quote batch has no result", async () => {
+    let quoteRequests = 0;
+    vi.mocked(fetchCashQuotes).mockImplementation(async (_segment, securityIds) => {
+      if (!securityIds.includes("3456")) return {};
+      quoteRequests += 1;
+      if (quoteRequests === 1) return {};
+      return {
+        "3456": {
+          ltp: 279.9, open: 275.8, high: 280.95, low: 274.6, previousClose: 273,
+          change: 6.9, changePercent: 2.53, volume: 6360894, openInterest: null,
+          timestamp: "2026-10-09T15:59:51.000Z",
+        },
+      };
+    });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const tmpvInstrument: Instrument = {
       securityId: "3456",
@@ -330,9 +410,9 @@ describe("InstrumentExplorer stock workspace", () => {
       </QueryClientProvider>
     );
 
-    expect(fetchCashQuotes).not.toHaveBeenCalled();
-    expect(screen.queryByText("₹279.90")).not.toBeInTheDocument();
-    expect(screen.getByText("Select a FundedWealth trading account to load account-specific market data.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("₹279.90")).toBeInTheDocument());
+    expect(fetchCashQuotes).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("+2.53%")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /back to stocks/i })).toBeInTheDocument();
   });
 

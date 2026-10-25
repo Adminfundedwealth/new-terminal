@@ -33,7 +33,7 @@ export type NormalizedTickListener = (tick: NormalizedTick) => void;
 export type ConnectionState = "CONNECTED" | "CONNECTING" | "DISCONNECTED" | "RECONNECTING" | "DEGRADED" | "STALE";
 export type ConnectionStateListener = (state: ConnectionState) => void;
 export interface RealtimeScope {
-  accountId: string;
+  accountId: string | null;
   provider: TerminalMarketDataProvider;
   environment?: "production" | "paper" | "sandbox";
 }

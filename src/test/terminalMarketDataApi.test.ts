@@ -1,3 +1,4 @@
+import { ReadableStream } from "node:stream/web";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { getSession } = vi.hoisted(() => ({ getSession: vi.fn() }));
@@ -11,8 +12,8 @@ import {
   fetchTerminalMarketDataStatus,
   requestTerminalMarketData,
   requestTerminalRealtimeTicket,
-  subscribeToTerminalMarketDataStream,
   resolveTerminalMarketDataProvider,
+  subscribeToTerminalMarketDataStream,
   toLocalMarketDataInstrument,
   TerminalMarketDataError,
 } from "@/lib/terminalApi";
@@ -34,12 +35,13 @@ afterEach(() => {
 });
 
 describe("Main Terminal market-data contract", () => {
-  it("uses the global Founder Dhan provider regardless of the customer's trading broker mapping", () => {
+  it("uses Founder-global Dhan regardless of customer broker mapping", () => {
     expect(resolveTerminalMarketDataProvider(null)).toBe("dhan");
+    expect(resolveTerminalMarketDataProvider("")).toBe("dhan");
     expect(resolveTerminalMarketDataProvider("paper")).toBe("dhan");
     expect(resolveTerminalMarketDataProvider("zerodha")).toBe("dhan");
     expect(resolveTerminalMarketDataProvider("kite")).toBe("dhan");
-    expect(resolveTerminalMarketDataProvider("dhan")).toBe("dhan");
+    expect(resolveTerminalMarketDataProvider("unknown-provider")).toBe("dhan");
   });
 
   it("preserves provider instrument identity and cash-equity classification fields in the local master", () => {
@@ -79,7 +81,7 @@ describe("Main Terminal market-data contract", () => {
     expect(init.cache).toBe("no-store");
   });
 
-  it("sends Supabase identity proof with explicit account and provider context", async () => {
+  it("uses authenticated Founder-global Dhan without a trading-account identifier", async () => {
     await requestTerminalMarketData(accountId, "dhan", { operation: "authenticate" });
 
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
@@ -88,7 +90,35 @@ describe("Main Terminal market-data contract", () => {
     expect(headers.get("Authorization")).toBe(`Bearer ${accessToken}`);
     expect(init.credentials).toBe("omit");
     expect(JSON.parse(String(init.body))).toEqual({
-      account_id: accountId,
+      provider: "dhan",
+      environment: "production",
+      operation: "authenticate",
+    });
+  });
+
+  it("keeps account identifiers for account-scoped providers", async () => {
+    const instrument = {
+      provider: "kite" as const,
+      providerInstrumentId: "256265",
+      symbol: "NIFTY 50",
+      tradingSymbol: "NIFTY 50",
+      exchange: "NSE",
+      exchangeSegment: "INDICES",
+      instrumentType: "INDEX",
+    };
+    await requestTerminalMarketData(accountId, "kite", { operation: "getQuotes", instruments: [instrument] });
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toMatchObject({ account_id: accountId, provider: "kite" });
+  });
+
+  it("requests Founder-global Dhan data without sending a trading-account identifier", async () => {
+    await requestTerminalMarketData(null, "dhan", { operation: "authenticate" });
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(new URL(url, "https://main.test").pathname).toBe("/api/terminal/market-data");
+    expect(new Headers(init.headers).get("Authorization")).toBe(`Bearer ${accessToken}`);
+    expect(JSON.parse(String(init.body))).toEqual({
       provider: "dhan",
       environment: "production",
       operation: "authenticate",
@@ -105,10 +135,16 @@ describe("Main Terminal market-data contract", () => {
       exchangeSegment: "INDICES",
       instrumentType: "INDEX",
     };
-    await requestTerminalMarketData(accountId, "kite", { operation: "getQuote", instrument });
+    await requestTerminalMarketData(accountId, "kite", { operation: "getQuotes", instruments: [instrument] });
 
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     const serialized = JSON.stringify(JSON.parse(String(init.body)));
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      account_id: accountId,
+      provider: "kite",
+      operation: "getQuotes",
+      instruments: [instrument],
+    });
     expect(serialized).not.toContain(accessToken);
     expect(serialized).not.toContain("access_token");
     expect(serialized).not.toContain("api_secret");
@@ -130,7 +166,7 @@ describe("Main Terminal market-data contract", () => {
     }), { status: 200, headers: { "Content-Type": "text/event-stream" } }));
 
     const quoteReceived = new Promise<typeof quoteEvent>((resolve) => {
-      const unsubscribe = subscribeToTerminalMarketDataStream(accountId, "dhan", ["NIFTY"], (event) => {
+      const unsubscribe = subscribeToTerminalMarketDataStream(null, "dhan", ["NIFTY"], (event) => {
         unsubscribe();
         resolve(event);
       });
@@ -140,7 +176,7 @@ describe("Main Terminal market-data contract", () => {
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     const parsedUrl = new URL(url, "https://main.test");
     expect(parsedUrl.pathname).toBe("/api/terminal/market-data/stream");
-    expect(parsedUrl.searchParams.get("account_id")).toBe(accountId);
+    expect(parsedUrl.searchParams.has("account_id")).toBe(false);
     expect(parsedUrl.searchParams.get("provider")).toBe("dhan");
     expect(parsedUrl.searchParams.get("symbols")).toBe("NIFTY");
     expect(parsedUrl.searchParams.has("access_token")).toBe(false);
@@ -167,6 +203,24 @@ describe("Main Terminal market-data contract", () => {
     expect(status.is_connected).toBe(true);
   });
 
+  it("requests Founder-global Dhan status without a trading-account identifier", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: {
+      account_id: null,
+      provider: "dhan",
+      configured: true,
+      is_connected: true,
+      last_tested_at: null,
+      last_test_result: null,
+    } }), { status: 200 }));
+
+    await fetchTerminalMarketDataStatus(null, "dhan");
+
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    const query = new URL(url, "https://main.test").searchParams;
+    expect(query.has("account_id")).toBe(false);
+    expect(query.get("provider")).toBe("dhan");
+  });
+
   it("requests a short-lived realtime ticket without sending credentials in the body", async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: {
       ticket: "signed-scope-only-ticket",
@@ -179,7 +233,7 @@ describe("Main Terminal market-data contract", () => {
     expect(new URL(url, "http://main.test").pathname).toBe("/api/terminal/realtime-ticket");
     expect(headers.get("Authorization")).toBe(`Bearer ${accessToken}`);
     expect(init.credentials).toBe("omit");
-    expect(JSON.parse(String(init.body))).toEqual({ account_id: accountId, provider: "dhan", environment: "paper" });
+    expect(JSON.parse(String(init.body))).toEqual({ provider: "dhan", environment: "paper" });
     expect(JSON.stringify(init.body)).not.toContain(accessToken);
     expect(ticket.ticket).toBe("signed-scope-only-ticket");
   });

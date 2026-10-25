@@ -283,6 +283,9 @@ export type TerminalMarketDataOperation = {
     operation: "getQuote";
     instrument: TerminalMarketDataInstrument;
 } | {
+    operation: "getQuotes";
+    instruments: TerminalMarketDataInstrument[];
+} | {
     operation: "getOptionChain";
     underlying: string;
     expiry?: string;
@@ -294,14 +297,14 @@ export type TerminalMarketDataOperation = {
     toDate: string;
 };
 export interface TerminalMarketDataStatus {
-    account_id: string;
+    account_id?: string | null;
     provider: TerminalMarketDataProvider;
     configured: boolean;
     is_connected: boolean;
     last_tested_at: string | null;
     last_test_result: string | null;
 }
-export declare function requestTerminalRealtimeTicket(accountId: string, provider: TerminalMarketDataProvider, environment?: "production" | "paper" | "sandbox"): Promise<{
+export declare function requestTerminalRealtimeTicket(accountId: string | null, provider: TerminalMarketDataProvider, environment?: "production" | "paper" | "sandbox"): Promise<{
     ticket: string;
     expires_at: string;
 }>;
@@ -311,17 +314,17 @@ export declare class TerminalMarketDataError extends Error {
     readonly status: number;
     constructor(code: TerminalMarketDataErrorCode, status: number);
 }
-export declare function requestTerminalMarketData<T>(accountId: string, provider: TerminalMarketDataProvider, operation: TerminalMarketDataOperation, environment?: "production" | "paper" | "sandbox"): Promise<T>;
-export declare function fetchTerminalMarketDataStatus(accountId: string, provider: TerminalMarketDataProvider, environment?: "production" | "paper" | "sandbox"): Promise<TerminalMarketDataStatus>;
+export declare function requestTerminalMarketData<T>(accountId: string | null, provider: TerminalMarketDataProvider, operation: TerminalMarketDataOperation, environment?: "production" | "paper" | "sandbox"): Promise<T>;
+export declare function fetchTerminalMarketDataStatus(accountId: string | null, provider: TerminalMarketDataProvider, environment?: "production" | "paper" | "sandbox"): Promise<TerminalMarketDataStatus>;
 export interface TerminalRealtimeQuoteEvent {
-    account_id: string;
+    account_id?: string | null;
     provider: TerminalMarketDataProvider;
     environment: "production" | "paper" | "sandbox";
     symbol: string;
     quote: TerminalMarketDataQuote;
 }
 export type TerminalRealtimeStatus = "connecting" | "connected" | "reconnecting" | "error" | "disconnected";
-export declare function subscribeToTerminalMarketDataStream(accountId: string, provider: TerminalMarketDataProvider, symbols: string[], onQuote: (event: TerminalRealtimeQuoteEvent) => void, onStatus?: (status: TerminalRealtimeStatus) => void, environment?: "production" | "paper" | "sandbox"): () => void;
+export declare function subscribeToTerminalMarketDataStream(accountId: string | null, provider: TerminalMarketDataProvider, symbols: string[], onQuote: (event: TerminalRealtimeQuoteEvent) => void, onStatus?: (status: TerminalRealtimeStatus) => void, environment?: "production" | "paper" | "sandbox"): () => void;
 export declare function reconnectTerminalMarketDataStreams(): void;
 export declare function fetchTerminalAccounts(): Promise<AccountsResponse>;
 export interface RuleVersionRecord {

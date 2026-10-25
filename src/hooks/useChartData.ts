@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAccountContext } from "@/hooks/useAccountContext";
 import { normalizeCandlePayload } from "@/lib/historicalData";
-import { fetchYahooChart } from "@/lib/marketApi";
 import {
   requestTerminalMarketData,
   resolveTerminalMarketDataProvider,
@@ -22,6 +21,23 @@ const KITE_HISTORICAL_SYMBOL_ALIASES: Record<string, string[]> = {
   MIDCPNIFTY: ["NIFTY MID SELECT", "NIFTY MIDCAP 50"],
   NIFTY_MIDCAP_50: ["NIFTY MIDCAP 50"],
 };
+
+const MAX_CONCURRENT_SPARKLINE_REQUESTS = 3;
+let activeSparklineRequests = 0;
+const queuedSparklineRequests: Array<() => void> = [];
+
+async function withSparklineRequestSlot<T>(request: () => Promise<T>): Promise<T> {
+  if (activeSparklineRequests >= MAX_CONCURRENT_SPARKLINE_REQUESTS) {
+    await new Promise<void>((resolve) => queuedSparklineRequests.push(resolve));
+  }
+  activeSparklineRequests++;
+  try {
+    return await request();
+  } finally {
+    activeSparklineRequests--;
+    queuedSparklineRequests.shift()?.();
+  }
+}
 
 export interface OHLCVCandle {
   time: number; // Unix timestamp in seconds
@@ -157,7 +173,7 @@ function normalizeInstrumentName(value: string): string {
 }
 
 async function findGatewayInstrument(
-  accountId: string,
+  accountId: string | null,
   provider: "dhan" | "kite",
   symbol: string,
   instrumentToken?: string,
@@ -200,13 +216,14 @@ function toChartCandles(candles: TerminalMarketDataCandle[]): OHLCVCandle[] {
 }
 
 async function fetchGatewayHistorical(
-  accountId: string,
+  accountId: string | null,
   provider: "dhan" | "kite",
   symbol: string,
   range: string,
   instrumentToken?: string,
 ): Promise<OHLCVCandle[]> {
-  const instrument = await findGatewayInstrument(accountId, provider, symbol, instrumentToken);
+  const scopedAccountId = provider === "dhan" ? null : accountId;
+  const instrument = await findGatewayInstrument(scopedAccountId, provider, symbol, instrumentToken);
   if (!instrument) return [];
   const { interval, daysBack } = rangeToParams(range);
   const now = new Date();
@@ -217,7 +234,7 @@ async function fetchGatewayHistorical(
     : provider === "kite"
       ? interval === "15" ? "15minute" : "60minute"
       : `${interval}m`;
-  const result = await requestTerminalMarketData<TerminalMarketDataCandle[]>(accountId, provider, {
+  const result = await requestTerminalMarketData<TerminalMarketDataCandle[]>(scopedAccountId, provider, {
     operation: "getHistoricalCandles",
     instrument,
     interval: apiInterval,
@@ -227,7 +244,7 @@ async function fetchGatewayHistorical(
   return toChartCandles(result);
 }
 
-/** Fetch OHLCV candles only through the account-scoped Terminal OS gateway. */
+/** Fetch OHLCV candles through Terminal OS using Founder-global Dhan credentials. */
 async function fetchHistorical(
   symbol: string,
   range: string,
@@ -235,25 +252,13 @@ async function fetchHistorical(
   provider: "dhan" | "kite" | null,
   instrumentToken?: string,
 ): Promise<OHLCVCandle[]> {
-  if (accountId && provider) {
+  if (provider === "dhan" || (accountId && provider)) {
     try {
-      const candles = await fetchGatewayHistorical(accountId, provider, symbol, range, instrumentToken);
+      const candles = await fetchGatewayHistorical(accountId, provider ?? "dhan", symbol, range, instrumentToken);
       if (candles.length > 0) return candles;
     } catch (error) {
       if (!(error instanceof TerminalMarketDataError) || error.code !== "MISSING_CREDENTIALS") throw error;
     }
-  } else {
-    const { interval, daysBack } = rangeToParams(range);
-    const now = new Date();
-    const from = new Date(now);
-    from.setDate(from.getDate() - daysBack);
-    const response = await fetchYahooChart(
-      symbol,
-      interval,
-      from.toISOString().split("T")[0],
-      now.toISOString().split("T")[0],
-    );
-    return parseColumnarCandles(response.data);
   }
 
   return [];
@@ -288,7 +293,9 @@ export function useSparklineData(symbol: string, enabled: boolean = true) {
   return useQuery({
     queryKey: ["sparkline", activeAccountId, provider, symbol],
     queryFn: async (): Promise<number[]> => {
-      const candles = await fetchHistorical(symbol, "3M", activeAccountId, provider);
+      const candles = await withSparklineRequestSlot(
+        () => fetchHistorical(symbol, "3M", activeAccountId, provider),
+      );
       if (candles.length > 0) {
         return candles.map(c => c.close);
       }

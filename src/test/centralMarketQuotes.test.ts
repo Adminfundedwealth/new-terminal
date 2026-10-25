@@ -1,12 +1,33 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fetchCentralMarketQuotes } from "@/lib/centralMarketQuotes";
 import { normalizeProviderInstrument } from "@/lib/instrumentMaster";
-import { fetchCashQuotes } from "@/lib/marketApi";
+import { requestTerminalMarketData, TerminalMarketDataError } from "@/lib/terminalApi";
 import { findWatchlistInstrument } from "@/lib/watchlistInstrument";
 
-vi.mock("@/lib/marketApi", () => ({
-  fetchCashQuotes: vi.fn(),
+vi.mock("@/lib/terminalApi", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/terminalApi")>(),
+  requestTerminalMarketData: vi.fn(),
 }));
+
+function quote(instrumentId: string, ltp: number, tradingSymbol: string) {
+  return {
+    provider: "dhan" as const,
+    symbol: tradingSymbol,
+    tradingSymbol,
+    exchange: "NSE",
+    ltp,
+    open: ltp - 100,
+    high: ltp + 100,
+    low: ltp - 200,
+    previousClose: ltp - 100,
+    change: 100,
+    changePercent: 0.4,
+    volume: null,
+    openInterest: null,
+    timestamp: "2026-10-09T08:40:00.000Z",
+    instrumentId,
+  };
+}
 
 function instrument(overrides: Partial<{
   securityId: string;
@@ -31,20 +52,14 @@ function instrument(overrides: Partial<{
 describe("central market quotes", () => {
   afterEach(() => vi.clearAllMocks());
 
-  it("batches Dhan cash and index quotes by segment and returns customer-safe quote shapes", async () => {
-    vi.mocked(fetchCashQuotes).mockImplementation(async (segment) => segment === "NSE_EQ"
-      ? {
-          "2885": {
-            ltp: 1207.7, open: 1200, high: 1210, low: 1198, previousClose: 1190,
-            change: 17.7, changePercent: 1.49, volume: 1000, openInterest: null, timestamp: "2026-10-09T08:40:00.000Z",
-          },
-        }
-      : {
-          "13": {
-            ltp: 25000, open: 24900, high: 25100, low: 24800, previousClose: 24900,
-            change: 100, changePercent: 0.4, volume: null, openInterest: null, timestamp: "2026-10-09T08:40:00.000Z",
-          },
-        });
+  it("batches quotes through the global Dhan market-data route without account context", async () => {
+    vi.mocked(requestTerminalMarketData).mockImplementation(async (_accountId, _provider, request) => {
+      if (request.operation !== "getQuotes") return [];
+      return request.instruments.map((item) => ({
+        ...quote(item.providerInstrumentId, item.providerInstrumentId === "13" ? 25000 : 1207.7, item.tradingSymbol),
+        instrumentId: undefined,
+      })) as never;
+    });
 
     const result = await fetchCentralMarketQuotes([
       { key: "RELIANCE", instrument: instrument() },
@@ -56,16 +71,18 @@ describe("central market quotes", () => {
       }) },
     ]);
 
-    expect(fetchCashQuotes).toHaveBeenCalledTimes(2);
-    expect(fetchCashQuotes).toHaveBeenCalledWith("NSE_EQ", ["2885"]);
-    expect(fetchCashQuotes).toHaveBeenCalledWith("IDX_I", ["13"]);
+    expect(requestTerminalMarketData).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(requestTerminalMarketData).mock.calls.map(([accountId, provider]) => [accountId, provider])).toEqual([
+      [null, "dhan"],
+      [null, "dhan"],
+    ]);
     expect(result.errors).toEqual([]);
     expect(result.quotes.RELIANCE).toMatchObject({ provider: "dhan", ltp: 1207.7, tradingSymbol: "RELIANCE" });
     expect(result.quotes.NIFTY).toMatchObject({ provider: "dhan", ltp: 25000, exchange: "NSE" });
   });
 
   it("surfaces missing central instruments and rejected quote requests explicitly", async () => {
-    vi.mocked(fetchCashQuotes).mockRejectedValue(new Error("Dhan proxy error 503: provider unavailable"));
+    vi.mocked(requestTerminalMarketData).mockRejectedValue(new Error("global provider unavailable"));
 
     const result = await fetchCentralMarketQuotes([
       { key: "UNKNOWN" },
@@ -75,25 +92,15 @@ describe("central market quotes", () => {
     expect(result.quotes).toEqual({});
     expect(result.errors).toEqual([
       "Central Dhan instrument data is unavailable for UNKNOWN.",
-      "Central Dhan quote request failed for RELIANCE: Dhan proxy error 503: provider unavailable",
+      "Central Dhan quote request failed for RELIANCE: global provider unavailable",
     ]);
   });
 
-  it("serializes segment requests and retries an index quote once after rate limiting", async () => {
-    vi.mocked(fetchCashQuotes)
-      .mockResolvedValueOnce({
-        "2885": {
-          ltp: 1207.7, open: 1200, high: 1210, low: 1198, previousClose: 1190,
-          change: 17.7, changePercent: 1.49, volume: 1000, openInterest: null, timestamp: "2026-10-09T08:40:00.000Z",
-        },
-      })
-      .mockRejectedValueOnce(new Error("Dhan proxy error 429: rate limited"))
-      .mockResolvedValueOnce({
-        "13": {
-          ltp: 25000, open: 24900, high: 25100, low: 24800, previousClose: 24900,
-          change: 100, changePercent: 0.4, volume: null, openInterest: null, timestamp: "2026-10-09T08:40:00.000Z",
-        },
-      });
+  it("retries a global Dhan quote batch once after rate limiting", async () => {
+    vi.mocked(requestTerminalMarketData)
+      .mockResolvedValueOnce([quote("2885", 1207.7, "RELIANCE")] as never)
+      .mockRejectedValueOnce(new TerminalMarketDataError("RATE_LIMITED", 429))
+      .mockResolvedValueOnce([quote("13", 25000, "NIFTY")] as never);
 
     const result = await fetchCentralMarketQuotes([
       { key: "RELIANCE", instrument: instrument() },
@@ -105,7 +112,7 @@ describe("central market quotes", () => {
       }) },
     ]);
 
-    expect(vi.mocked(fetchCashQuotes).mock.calls.map(([segment]) => segment)).toEqual(["NSE_EQ", "IDX_I", "IDX_I"]);
+    expect(requestTerminalMarketData).toHaveBeenCalledTimes(3);
     expect(result.quotes).toMatchObject({ RELIANCE: { ltp: 1207.7 }, NIFTY: { ltp: 25000 } });
     expect(result.errors).toEqual([]);
   });
@@ -135,15 +142,10 @@ describe("central market quotes", () => {
     if (!normalized.instrument) throw new Error("Verified Dhan master row did not normalize to a supported instrument.");
     const instrumentMatch = findWatchlistInstrument([normalized.instrument], "TATAMOTORS");
     expect(instrumentMatch?.securityId).toBe("3456");
-    vi.mocked(fetchCashQuotes).mockResolvedValue({
-      "3456": {
-        ltp: 278.85, open: 275.8, high: 280.95, low: 274.6, previousClose: 273,
-        change: 5.85, changePercent: 2.14, volume: 6360894, openInterest: null, timestamp: "2026-10-09T09:45:00.000Z",
-      },
-    });
+    vi.mocked(requestTerminalMarketData).mockResolvedValue([quote("3456", 278.85, "TMPV")] as never);
 
     const result = await fetchCentralMarketQuotes([{ key: "TATAMOTORS", instrument: instrumentMatch }]);
-    expect(vi.mocked(fetchCashQuotes)).toHaveBeenCalledWith("NSE_EQ", ["3456"]);
+    expect(requestTerminalMarketData).toHaveBeenCalledWith(null, "dhan", expect.objectContaining({ operation: "getQuotes" }));
     expect(result.quotes).toMatchObject({
       TATAMOTORS: { ltp: 278.85, tradingSymbol: "TMPV", exchange: "NSE" },
     });

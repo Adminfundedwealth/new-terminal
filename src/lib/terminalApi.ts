@@ -342,12 +342,16 @@ export interface TerminalPerformanceRow {
   id: string;
   trading_account_id: string;
   date: string;
-  opening_balance: number | null;
-  closing_balance: number | null;
+  opening_balance: number;
+  closing_balance: number;
   daily_pnl: number;
   total_trades: number;
   winning_trades: number;
   losing_trades: number;
+  breakeven_trades?: number;
+  gross_profit?: number;
+  gross_loss?: number;
+  fees?: number;
 }
 
 export interface TerminalWatchlist {
@@ -356,12 +360,6 @@ export interface TerminalWatchlist {
   name: string;
   items: unknown;
   is_default: boolean;
-}
-
-async function getAuthenticatedCustomerId(): Promise<string> {
-  const { data: { user }, error } = await supabase.auth.getUser();
-  if (error || !user) throw new Error("Authentication required to load terminal account data.");
-  return user.id;
 }
 
 async function fetchTerminalJson<T>(path: string): Promise<T> {
@@ -505,6 +503,7 @@ export type TerminalMarketDataOperation =
   | { operation: "authenticate" }
   | { operation: "searchInstruments"; query: string }
   | { operation: "getQuote"; instrument: TerminalMarketDataInstrument }
+  | { operation: "getQuotes"; instruments: TerminalMarketDataInstrument[] }
   | { operation: "getOptionChain"; underlying: string; expiry?: string }
   | {
       operation: "getHistoricalCandles";
@@ -515,7 +514,7 @@ export type TerminalMarketDataOperation =
     };
 
 export interface TerminalMarketDataStatus {
-  account_id: string;
+  account_id?: string | null;
   provider: TerminalMarketDataProvider;
   configured: boolean;
   is_connected: boolean;
@@ -524,11 +523,14 @@ export interface TerminalMarketDataStatus {
 }
 
 export async function requestTerminalRealtimeTicket(
-  accountId: string,
+  accountId: string | null,
   provider: TerminalMarketDataProvider,
   environment: "production" | "paper" | "sandbox" = "production",
 ): Promise<{ ticket: string; expires_at: string }> {
-  if (!accountId) throw new Error("A trading account is required for realtime data.");
+  const scopedAccountId = provider === "dhan"
+    ? accountId === REALTIME_MOCK_TEST_ACCOUNT_ID && environment === "paper" ? accountId : null
+    : accountId;
+  if (!scopedAccountId && provider !== "dhan") throw new Error("A trading account is required for account-scoped realtime data.");
   const accessToken = await getCustomerAccessToken();
   const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/realtime-ticket`, {
     method: "POST",
@@ -540,7 +542,7 @@ export async function requestTerminalRealtimeTicket(
       Authorization: `Bearer ${accessToken}`,
     },
     body: JSON.stringify({
-      account_id: accountId,
+      ...(scopedAccountId ? { account_id: scopedAccountId } : {}),
       provider,
       environment,
       ...(accountId === REALTIME_MOCK_TEST_ACCOUNT_ID && provider === "dhan" && environment === "paper" ? { test_mode: true } : {}),
@@ -605,7 +607,7 @@ function normalizeMarketDataError(status: number, code?: string): TerminalMarket
 async function getCustomerAccessToken(): Promise<string> {
   const { data: { session }, error } = await supabase.auth.getSession();
   if (error || !session?.access_token) {
-    throw new Error("Authentication required to request account market data.");
+    throw new Error("Authentication required to request market data.");
   }
   return session.access_token;
 }
@@ -625,12 +627,13 @@ async function readMarketDataResponse<T>(response: Response): Promise<T> {
 }
 
 export async function requestTerminalMarketData<T>(
-  accountId: string,
+  accountId: string | null,
   provider: TerminalMarketDataProvider,
   operation: TerminalMarketDataOperation,
   environment: "production" | "paper" | "sandbox" = "production",
 ): Promise<T> {
-  if (!accountId) throw new Error("A trading account is required for market data.");
+  const scopedAccountId = provider === "dhan" ? null : accountId;
+  if (!scopedAccountId && provider !== "dhan") throw new Error("A trading account is required for account-scoped market data.");
   const accessToken = await getCustomerAccessToken();
   const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/market-data`, {
     method: "POST",
@@ -640,19 +643,20 @@ export async function requestTerminalMarketData<T>(
       "Content-Type": "application/json",
       Authorization: `Bearer ${accessToken}`,
     },
-    body: JSON.stringify({ account_id: accountId, provider, environment, ...operation }),
+    body: JSON.stringify({ ...(scopedAccountId ? { account_id: scopedAccountId } : {}), provider, environment, ...operation }),
   });
   return readMarketDataResponse<T>(response);
 }
 
 export async function fetchTerminalMarketDataStatus(
-  accountId: string,
+  accountId: string | null,
   provider: TerminalMarketDataProvider,
   environment: "production" | "paper" | "sandbox" = "production",
 ): Promise<TerminalMarketDataStatus> {
-  if (!accountId) throw new Error("A trading account is required for market-data status.");
+  const scopedAccountId = provider === "dhan" ? null : accountId;
+  if (!scopedAccountId && provider !== "dhan") throw new Error("A trading account is required for account-scoped market-data status.");
   const accessToken = await getCustomerAccessToken();
-  const query = new URLSearchParams({ account_id: accountId, provider, environment });
+  const query = new URLSearchParams({ ...(scopedAccountId ? { account_id: scopedAccountId } : {}), provider, environment });
   const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/market-data?${query}`, {
     credentials: "omit",
     headers: { Accept: "application/json", Authorization: `Bearer ${accessToken}` },
@@ -661,7 +665,7 @@ export async function fetchTerminalMarketDataStatus(
 }
 
 export interface TerminalRealtimeQuoteEvent {
-  account_id: string;
+  account_id?: string | null;
   provider: TerminalMarketDataProvider;
   environment: "production" | "paper" | "sandbox";
   symbol: string;
@@ -677,7 +681,7 @@ interface TerminalRealtimeSubscriber {
 }
 
 interface TerminalRealtimePool {
-  accountId: string;
+  accountId: string | null;
   provider: TerminalMarketDataProvider;
   environment: "production" | "paper" | "sandbox";
   symbols: Set<string>;
@@ -705,11 +709,11 @@ function parseSseFrame(frame: string): { event: string; data: string } | null {
 async function readRealtimeStream(pool: TerminalRealtimePool, generation: number, signal: AbortSignal): Promise<void> {
   const accessToken = await getCustomerAccessToken();
   const query = new URLSearchParams({
-    account_id: pool.accountId,
     provider: pool.provider,
     environment: pool.environment,
     symbols: [...pool.symbols].sort().join(","),
   });
+  if (pool.accountId) query.set("account_id", pool.accountId);
   const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/market-data/stream?${query}`, {
     credentials: "omit",
     headers: { Accept: "text/event-stream", Authorization: `Bearer ${accessToken}` },
@@ -782,7 +786,7 @@ function startRealtimePool(pool: TerminalRealtimePool): void {
 }
 
 export function subscribeToTerminalMarketDataStream(
-  accountId: string,
+  accountId: string | null,
   provider: TerminalMarketDataProvider,
   symbols: string[],
   onQuote: (event: TerminalRealtimeQuoteEvent) => void,
@@ -790,11 +794,12 @@ export function subscribeToTerminalMarketDataStream(
   environment: "production" | "paper" | "sandbox" = "production",
 ): () => void {
   const normalizedSymbols = [...new Set(symbols.map((symbol) => symbol.trim()).filter(Boolean))];
-  if (!accountId || normalizedSymbols.length === 0) return () => undefined;
-  const key = `${accountId}:${provider}:${environment}`;
+  const scopedAccountId = provider === "dhan" ? null : accountId;
+  if ((!scopedAccountId && provider !== "dhan") || normalizedSymbols.length === 0) return () => undefined;
+  const key = `${scopedAccountId ?? "platform"}:${provider}:${environment}`;
   let pool = terminalRealtimePools.get(key);
   if (!pool) {
-    pool = { accountId, provider, environment, symbols: new Set(), subscribers: new Set(), controller: null, generation: 0 };
+    pool = { accountId: scopedAccountId, provider, environment, symbols: new Set(), subscribers: new Set(), controller: null, generation: 0 };
     terminalRealtimePools.set(key, pool);
   }
   const subscriber: TerminalRealtimeSubscriber = { symbols: new Set(normalizedSymbols), onQuote, onStatus };
@@ -1056,88 +1061,15 @@ export function fetchTerminalExecutions(accountId?: string) {
 }
 
 export function fetchTerminalRisk(accountId?: string) {
-  return (async (): Promise<{ data: TerminalRiskSummary }> => {
-    if (!accountId) throw new Error("A trading account is required to load risk data.");
-    const ownerUserId = await getAuthenticatedCustomerId();
-    const { data, error } = await supabase
-      .from("risk_events")
-      .select("id, account_id, event_type, severity, metric_name, metric_value, limit_value, breach_status, occurred_at")
-      .eq("owner_user_id", ownerUserId)
-      .eq("account_id", accountId)
-      .order("occurred_at", { ascending: false })
-      .limit(100);
-    if (error) throw new Error(`Risk events request failed: ${error.message}`);
-
-    const recentEvents = data ?? [];
-    const openEvents = recentEvents.filter((event) => event.breach_status === "open");
-    return {
-      data: {
-        accounts_at_risk: openEvents.length > 0 ? 1 : 0,
-        breached: openEvents.length,
-        critical: openEvents.filter((event) => event.severity.toLowerCase() === "critical").length,
-        warning: openEvents.filter((event) => event.severity.toLowerCase() === "warning").length,
-        recent_events: recentEvents,
-      },
-    };
-  })();
+  return fetchTerminalJson<{ data: TerminalRiskSummary }>(`/api/terminal/risk${accountId ? `?account_id=${encodeURIComponent(accountId)}` : ""}`);
 }
 
 export function fetchTerminalPerformance(accountId?: string) {
-  return (async (): Promise<PaginatedResponse<TerminalPerformanceRow>> => {
-    if (!accountId) throw new Error("A trading account is required to load performance data.");
-    const ownerUserId = await getAuthenticatedCustomerId();
-    const { data, error } = await supabase
-      .from("daily_performance")
-      .select("id, account_id, trading_date, opening_balance, closing_balance, realized_pnl, trade_count, winning_trades, losing_trades")
-      .eq("owner_user_id", ownerUserId)
-      .eq("account_id", accountId)
-      .order("trading_date", { ascending: true })
-      .limit(100);
-    if (error) throw new Error(`Daily performance request failed: ${error.message}`);
-
-    const rows: TerminalPerformanceRow[] = (data ?? []).map((row) => ({
-      id: row.id,
-      trading_account_id: row.account_id,
-      date: row.trading_date,
-      opening_balance: row.opening_balance == null ? null : Number(row.opening_balance),
-      closing_balance: row.closing_balance == null ? null : Number(row.closing_balance),
-      daily_pnl: Number(row.realized_pnl),
-      total_trades: row.trade_count,
-      winning_trades: row.winning_trades,
-      losing_trades: row.losing_trades,
-    }));
-    return {
-      data: rows,
-      meta: { total: rows.length, page: 1, page_size: 100, has_more: rows.length === 100 },
-    };
-  })();
+  return fetchTerminalJson<PaginatedResponse<TerminalPerformanceRow>>(`/api/terminal/performance?page_size=100${accountQuery(accountId)}`);
 }
 
 export function fetchTerminalWatchlists() {
-  return (async (): Promise<PaginatedResponse<TerminalWatchlist>> => {
-    const ownerUserId = await getAuthenticatedCustomerId();
-    const { data, error } = await supabase
-      .from("watchlists")
-      .select("id, owner_user_id, name, watchlist_items(symbol, display_order)")
-      .eq("owner_user_id", ownerUserId)
-      .order("created_at", { ascending: false })
-      .limit(100);
-    if (error) throw new Error(`Watchlists request failed: ${error.message}`);
-
-    const rows: TerminalWatchlist[] = (data ?? []).map((row) => ({
-      id: row.id,
-      trader_id: row.owner_user_id,
-      name: row.name,
-      items: [...(row.watchlist_items ?? [])]
-        .sort((left, right) => left.display_order - right.display_order)
-        .map((item) => item.symbol),
-      is_default: false,
-    }));
-    return {
-      data: rows,
-      meta: { total: rows.length, page: 1, page_size: 100, has_more: rows.length === 100 },
-    };
-  })();
+  return fetchTerminalJson<PaginatedResponse<TerminalWatchlist>>("/api/terminal/watchlists?page_size=100");
 }
 
 export { TERMINAL_OS_BASE };

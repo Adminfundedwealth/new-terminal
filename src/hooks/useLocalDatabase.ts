@@ -20,6 +20,7 @@ import {
   getDatabaseStats,
   getFnOStockList,
   getAllInstruments,
+  saveInstruments,
   type PriceSnapshot,
   type CandleHistory,
   type CandleData,
@@ -27,8 +28,11 @@ import {
   type Instrument,
 } from "@/lib/localDatabase";
 import { classifyInstrument, type InstrumentCategory } from "@/lib/instrumentClassification";
-import { fetchInstrumentMaster, normalizeInstrumentMasterResponse } from "@/lib/marketApi";
-import { normalizeInstrumentMaster } from "@/lib/instrumentMaster";
+import {
+  requestTerminalMarketData,
+  type TerminalMarketDataInstrument,
+  toLocalMarketDataInstrument,
+} from "@/lib/terminalApi";
 
 // ── Hook: Database readiness check ──
 
@@ -182,24 +186,38 @@ export function useInstrumentLookup() {
     return () => { cancelled = true; };
   }, []);
 
-  const centralMasterQuery = useQuery({
-    queryKey: ["central-dhan-instrument-master"],
+  const gatewayQuery = useQuery({
+    queryKey: ["terminal-instrument-master", "founder-dhan"],
     queryFn: async () => {
-      const response = await fetchInstrumentMaster();
-      const report = normalizeInstrumentMaster(normalizeInstrumentMasterResponse(response), "dhan");
-      if (report.instruments.length === 0) throw new Error("The central Dhan instrument master contained no valid instruments.");
-      return report.instruments;
+      const remote = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(
+        null,
+        "dhan",
+        { operation: "searchInstruments", query: "" },
+      );
+      const instruments = remote
+        .filter((instrument) => instrument.providerInstrumentId && instrument.symbol && instrument.tradingSymbol)
+        .map(toLocalMarketDataInstrument);
+      if (instruments.length === 0) throw new Error("Terminal OS returned an empty instrument master.");
+      const BATCH_SIZE = 2000;
+      try {
+        for (let i = 0; i < instruments.length; i += BATCH_SIZE) {
+          await saveInstruments(instruments.slice(i, i + BATCH_SIZE));
+        }
+      } catch (error) {
+        console.error("Founder Dhan instruments could not be cached locally:", error);
+      }
+      return instruments;
     },
-    retry: (failureCount, error) => failureCount < 2 &&
-      error instanceof Error &&
-      (/\b(?:429|5\d{2})\b/.test(error.message) || /failed to fetch|network/i.test(error.message)),
-    retryDelay: (attempt) => Math.min(250 * (2 ** attempt), 1000),
+    retry: false,
     staleTime: 6 * 60 * 60 * 1000,
   });
 
-  const allInstruments = centralMasterQuery.data ?? localInstruments;
-  const isLoaded = localLoaded && centralMasterQuery.isFetched;
-  const loadError = centralMasterQuery.error instanceof Error ? centralMasterQuery.error.message : null;
+  const cachedDhanInstruments = localInstruments.filter((instrument) => instrument.provider === "dhan");
+  const allInstruments = gatewayQuery.data ?? cachedDhanInstruments;
+  const isLoaded = localLoaded && gatewayQuery.isFetched;
+  const loadError = gatewayQuery.error instanceof Error
+    ? gatewayQuery.error.message
+    : null;
 
   const search = useCallback((query: string, category?: InstrumentCategory, limit = 20) => {
     if (!query || query.length < 1) return [];

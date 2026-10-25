@@ -1312,7 +1312,7 @@ localWSS.on("connection", (ws) => {
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, x-dhan-client-id, x-dhan-access-token",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type, x-dhan-client-id, x-dhan-access-token",
 };
 const terminalSso = createTerminalSsoHandlers();
 const terminalAccountLink = createTerminalAccountLinkHandlers();

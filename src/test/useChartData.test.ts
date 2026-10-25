@@ -98,7 +98,7 @@ describe("parseColumnarCandles", () => {
   });
 });
 
-describe("global market-data chart history gateway", () => {
+describe("Founder-global Dhan chart history gateway", () => {
   const accountId = "11111111-1111-4111-8111-111111111111";
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) =>
@@ -115,11 +115,11 @@ describe("global market-data chart history gateway", () => {
   });
 
   it.each([
-    ["dhan", "dhan", "13", "15m"],
-    ["kite", "dhan", "13", "15m"],
-  ] as const)("routes %s account chart candles through global %s market data", async (accountProvider, gatewayProvider, providerInstrumentId, expectedInterval) => {
+    ["dhan", "13"],
+    ["kite", "13"],
+  ] as const)("routes a %s-mapped account's candles through Founder-global Dhan", async (accountProvider, providerInstrumentId) => {
     const instrument = {
-      provider: gatewayProvider,
+      provider: "dhan",
       providerInstrumentId,
       symbol: "NIFTY 50",
       tradingSymbol: "NIFTY",
@@ -147,37 +147,48 @@ describe("global market-data chart history gateway", () => {
     const { result } = renderHook(() => useChartData("NIFTY", "1W"), { wrapper });
     await waitFor(() => expect(result.current.data).toHaveLength(1));
 
-    expect(gatewayMocks.requestMarketData).toHaveBeenCalledWith(accountId, gatewayProvider, {
+    expect(gatewayMocks.requestMarketData).toHaveBeenCalledWith(null, "dhan", {
       operation: "searchInstruments",
       query: "NIFTY",
     });
-    expect(gatewayMocks.requestMarketData).toHaveBeenCalledWith(accountId, gatewayProvider, expect.objectContaining({
+    expect(gatewayMocks.requestMarketData).toHaveBeenCalledWith(null, "dhan", expect.objectContaining({
       operation: "getHistoricalCandles",
       instrument: expect.objectContaining({ providerInstrumentId }),
-      interval: expectedInterval,
+      interval: "15m",
     }));
     expect(result.current.data?.[0]).toMatchObject({ open: 100, high: 105, low: 99, close: 103, volume: 10 });
   });
 
-  it("loads real Yahoo chart history without requiring a FundedWealth trading account", async () => {
+  it("loads chart history from Founder-global Dhan without a trading-account identifier", async () => {
     gatewayMocks.accountContext.mockReturnValue({ activeAccountId: null, accounts: [] });
-    gatewayMocks.fetchYahooChart.mockResolvedValue({
-      status: "success",
-      data: {
-        timestamp: [1779200000],
-        open: [100],
-        high: [105],
-        low: [99],
-        close: [103],
-        volume: [10],
-      },
+    gatewayMocks.requestMarketData.mockImplementation(async (accountId, provider, operation) => {
+      if (operation.operation === "searchInstruments") return [{
+        provider: "dhan",
+        providerInstrumentId: "2885",
+        symbol: "RELIANCE",
+        tradingSymbol: "RELIANCE",
+        exchange: "NSE",
+        exchangeSegment: "NSE_EQ",
+        instrumentType: "EQUITY",
+      }];
+      if (operation.operation === "getHistoricalCandles") return [{
+        timestamp: "2026-09-28T09:15:00.000Z",
+        open: 100,
+        high: 105,
+        low: 99,
+        close: 103,
+        volume: 10,
+      }];
+      return null;
     });
 
     const { result } = renderHook(() => useChartData("RELIANCE", "3M"), { wrapper });
     await waitFor(() => expect(result.current.data).toHaveLength(1));
 
-    expect(gatewayMocks.fetchYahooChart).toHaveBeenCalledWith("RELIANCE", "D", expect.any(String), expect.any(String));
-    expect(gatewayMocks.requestMarketData).not.toHaveBeenCalled();
+    expect(gatewayMocks.requestMarketData).toHaveBeenCalledWith(null, "dhan", {
+      operation: "searchInstruments",
+      query: "RELIANCE",
+    });
     expect(result.current.data?.[0]).toMatchObject({ open: 100, high: 105, low: 99, close: 103, volume: 10 });
   });
 });

@@ -1,6 +1,10 @@
-import { fetchCashQuotes } from "@/lib/marketApi";
 import type { Instrument } from "@/lib/localDatabase";
-import type { TerminalMarketDataQuote } from "@/lib/terminalApi";
+import {
+  requestTerminalMarketData,
+  TerminalMarketDataError,
+  toTerminalMarketDataInstrument,
+  type TerminalMarketDataQuote,
+} from "@/lib/terminalApi";
 
 export interface CentralMarketQuoteTarget {
   key: string;
@@ -10,7 +14,9 @@ export interface CentralMarketQuoteTarget {
 const RATE_LIMIT_RETRY_DELAY_MS = 1_000;
 
 function isRateLimitError(error: unknown): boolean {
-  return error instanceof Error && /\b429\b/.test(error.message);
+  return error instanceof TerminalMarketDataError
+    ? error.status === 429
+    : error instanceof Error && /\b429\b/.test(error.message);
 }
 
 export async function fetchCentralMarketQuotes(targets: CentralMarketQuoteTarget[]): Promise<{
@@ -31,58 +37,63 @@ export async function fetchCentralMarketQuotes(targets: CentralMarketQuoteTarget
     instrumentsBySegment.set(instrument.exchangeSegment, segmentInstruments);
   }
 
-  const quoteGroupEntries = [...instrumentsBySegment.entries()];
-  const quotesBySegment = new Map<string, Awaited<ReturnType<typeof fetchCashQuotes>>>();
-  const failedSegments = new Map<string, string>();
+  const quotes: Record<string, TerminalMarketDataQuote> = {};
+  for (const [segment, instruments] of instrumentsBySegment) {
+    const entries = [...instruments.values()];
+    for (let offset = 0; offset < entries.length; offset += 10) {
+      const batch = entries.slice(offset, offset + 10);
+      const terminalInstruments = batch.map((instrument) =>
+        toTerminalMarketDataInstrument({
+          ...instrument,
+          exchange: instrument.exchange ?? (instrument.exchangeSegment.startsWith("BSE") ? "BSE" : "NSE"),
+        }, "dhan")
+      );
 
-  for (const [segment, instruments] of quoteGroupEntries) {
-    try {
-      quotesBySegment.set(segment, await fetchCashQuotes(segment, [...instruments.keys()]));
-    } catch (error) {
-      if (!isRateLimitError(error)) {
-        failedSegments.set(segment, error instanceof Error ? error.message : "A central Dhan quote request failed.");
+      let batchQuotes: TerminalMarketDataQuote[] | null = null;
+      let failure: unknown;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          batchQuotes = await requestTerminalMarketData<TerminalMarketDataQuote[]>(
+            null,
+            "dhan",
+            { operation: "getQuotes", instruments: terminalInstruments },
+          );
+          failure = undefined;
+          break;
+        } catch (error) {
+          failure = error;
+          if (attempt > 0 || !isRateLimitError(error)) break;
+          await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_RETRY_DELAY_MS));
+        }
+      }
+
+      if (!batchQuotes) {
+        const message = failure instanceof Error ? failure.message : "A central Dhan quote request failed.";
+        for (const instrument of batch) {
+          errors.push(`Central Dhan quote request failed for ${instrument.tradingSymbol}: ${message}`);
+        }
         continue;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_RETRY_DELAY_MS));
-      try {
-        quotesBySegment.set(segment, await fetchCashQuotes(segment, [...instruments.keys()]));
-      } catch (retryError) {
-        failedSegments.set(segment, retryError instanceof Error ? retryError.message : "A central Dhan quote retry failed.");
+      const quotesByInstrument = new Map(
+        batchQuotes.map((quote) => [`${quote.exchange}:${quote.tradingSymbol}`, quote]),
+      );
+      for (const instrument of batch) {
+        const exchange = instrument.exchange ?? (instrument.exchangeSegment.startsWith("BSE") ? "BSE" : "NSE");
+        const quote = quotesByInstrument.get(`${exchange}:${instrument.tradingSymbol}`);
+        const matchingTargets = targets.filter((target) =>
+          target.instrument?.securityId === instrument.securityId &&
+          target.instrument.exchangeSegment === segment
+        );
+        for (const target of matchingTargets) {
+          if (!quote) {
+            errors.push(`Central Dhan returned no quote for ${instrument.tradingSymbol}.`);
+          } else {
+            quotes[target.key] = quote;
+          }
+        }
       }
     }
-  }
-
-  const quotes: Record<string, TerminalMarketDataQuote> = {};
-  for (const target of targets) {
-    const instrument = target.instrument;
-    if (!instrument || instrument.provider !== "dhan") continue;
-    const segmentError = failedSegments.get(instrument.exchangeSegment);
-    if (segmentError) {
-      errors.push(`Central Dhan quote request failed for ${instrument.tradingSymbol}: ${segmentError}`);
-      continue;
-    }
-    const quote = quotesBySegment.get(instrument.exchangeSegment)?.[instrument.securityId];
-    if (!quote) {
-      errors.push(`Central Dhan returned no quote for ${instrument.tradingSymbol}.`);
-      continue;
-    }
-    quotes[target.key] = {
-      provider: "dhan",
-      symbol: instrument.symbol,
-      tradingSymbol: instrument.tradingSymbol,
-      exchange: instrument.exchange ?? (instrument.exchangeSegment.startsWith("BSE") ? "BSE" : "NSE"),
-      ltp: quote.ltp,
-      open: quote.open,
-      high: quote.high,
-      low: quote.low,
-      previousClose: quote.previousClose,
-      change: quote.change,
-      changePercent: quote.changePercent,
-      volume: quote.volume,
-      openInterest: quote.openInterest,
-      timestamp: quote.timestamp ?? "",
-    };
   }
 
   return { quotes, errors: [...new Set(errors)] };

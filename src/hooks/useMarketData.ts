@@ -1,9 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchMarketStatus, fetchAllIndices, fetchProxyHealth, isNseMarketOpenAt, isWithinNseSessionAt } from "@/lib/marketApi";
-import {
-  fetchLiveIndices as fetchAccountLiveIndices,
-  fetchLiveFnOStocks as fetchAccountLiveFnOStocks,
-} from "@/lib/marketApi.js";
+import { fetchLiveIndices, fetchMarketStatus, fetchAllIndices, fetchLiveFnOStocks, fetchProxyHealth, isNseMarketOpenAt, isWithinNseSessionAt } from "@/lib/marketApi";
 import type { FnOStockData, OptionUnderlying } from "@/lib/marketApi";
 import { getMaxPain } from "@/lib/oiUtils";
 import type { OptionData, IndexData, ExpiryDate } from "@/lib/mockData";
@@ -26,6 +22,17 @@ import {
 // ── Shared state: tracks whether proxy is reachable ──
 let proxyStatus: "unknown" | "online" | "offline" = "unknown";
 let proxyCheckTime = 0;
+
+const CENTRAL_INDEX_OPTION_UNDERLYINGS: Record<string, OptionUnderlying> = {
+  NIFTY: { securityId: "13", exchangeSegment: "IDX_I" },
+  BANKNIFTY: { securityId: "25", exchangeSegment: "IDX_I" },
+  FINNIFTY: { securityId: "27", exchangeSegment: "IDX_I" },
+  MIDCPNIFTY: { securityId: "442", exchangeSegment: "IDX_I" },
+};
+
+function resolveCentralOptionUnderlying(symbol: string, underlying?: OptionUnderlying): OptionUnderlying | null {
+  return underlying ?? CENTRAL_INDEX_OPTION_UNDERLYINGS[symbol.trim().toUpperCase()] ?? null;
+}
 
 function markProxyOnline() { proxyStatus = "online"; proxyCheckTime = Date.now(); }
 function markProxyOffline() { proxyStatus = "offline"; proxyCheckTime = Date.now(); }
@@ -86,18 +93,16 @@ function buildCachedIndices(prices: PriceSnapshot[]): IndexData[] {
 // ── Hook: Live Indices (WebSocket primary, polling fallback, DB cache tertiary) ──
 // NO MOCK FALLBACK — returns empty array when offline
 export function useLiveIndices() {
-  const { activeAccountId, accounts } = useAccountContext();
-  const provider = resolveTerminalMarketDataProvider(accounts.find((account) => account.id === activeAccountId)?.broker_provider);
   const { indices: wsIndices, isConnected: wsConnected } = useWebSocketIndices();
 
   const pollingQuery = useQuery({
-    queryKey: ["terminal-indices", activeAccountId, provider],
+    queryKey: ["nse-indices"],
     queryFn: async () => {
-      if (activeAccountId && provider) {
+      if (shouldTryProxy()) {
         try {
-          const data = await fetchAccountLiveIndices(activeAccountId, provider);
-          if (data.length > 0) return { data, isLive: true, source: "terminal-os" as const };
-        } catch (e) { console.warn("Terminal OS indices fetch failed:", e); }
+          const data = await fetchLiveIndices();
+          if (data && data.length > 0) { markProxyOnline(); return { data, isLive: true }; }
+        } catch (e) { markProxyOffline(); console.warn("Indices fetch failed:", e); }
       }
       // Try local DB prices
       const dbPrices = await getCachedPricesOnce();
@@ -188,21 +193,20 @@ export function useMarketStatus() {
 
 // ── Hook: Live Option Chain ──
 // Returns live data during market hours, or cached "last close" data after hours
-export function useLiveOptionChain(symbol: string, expiry?: string, enabled = true, _underlying?: OptionUnderlying) {
-  const { activeAccountId, accounts } = useAccountContext();
-  const provider = resolveTerminalMarketDataProvider(accounts.find((account) => account.id === activeAccountId)?.broker_provider);
+export function useLiveOptionChain(symbol: string, expiry?: string, enabled = true, underlying?: OptionUnderlying) {
+  const provider = resolveTerminalMarketDataProvider(null);
+  const centralUnderlying = resolveCentralOptionUnderlying(symbol, underlying);
 
   return useQuery({
-    queryKey: ["live-option-chain", activeAccountId ?? "no-account", provider, symbol, expiry],
-    enabled: enabled && Boolean(activeAccountId && provider),
+    queryKey: ["live-option-chain", "founder-dhan", symbol, expiry, centralUnderlying?.securityId, centralUnderlying?.exchangeSegment],
+    enabled: enabled && Boolean(symbol.trim()),
     queryFn: async () => {
-      if (!activeAccountId || !provider) throw new Error("Select an active trading account to load account-specific option data.");
-      const result = await requestTerminalMarketData<TerminalMarketDataOptionChain>(activeAccountId, provider, {
+      const result = await requestTerminalMarketData<TerminalMarketDataOptionChain>(null, provider, {
         operation: "getOptionChain",
         underlying: symbol.toUpperCase(),
         ...(expiry ? { expiry } : {}),
       });
-      const optionInstruments = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(activeAccountId, provider, {
+      const optionInstruments = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(null, provider, {
         operation: "searchInstruments",
         query: symbol.toUpperCase(),
       });
@@ -265,15 +269,14 @@ export function useLiveOptionChain(symbol: string, expiry?: string, enabled = tr
 // ── Hook: Expiry List ──
 // NO MOCK FALLBACK — returns empty array
 export function useExpiryList(symbol: string, underlying?: OptionUnderlying) {
-  const { activeAccountId, accounts } = useAccountContext();
-  const provider = resolveTerminalMarketDataProvider(accounts.find((account) => account.id === activeAccountId)?.broker_provider);
+  const provider = resolveTerminalMarketDataProvider(null);
+  const centralUnderlying = resolveCentralOptionUnderlying(symbol, underlying);
 
   return useQuery({
-    queryKey: ["expiry-list", activeAccountId ?? "no-account", provider, symbol],
-    enabled: Boolean(activeAccountId && provider),
+    queryKey: ["expiry-list", "founder-dhan", symbol, centralUnderlying?.securityId, centralUnderlying?.exchangeSegment],
+    enabled: Boolean(symbol.trim()),
     queryFn: async () => {
-      if (!activeAccountId || !provider) throw new Error("Select an active Dhan or Kite account to load option expiries.");
-      const chain = await requestTerminalMarketData<TerminalMarketDataOptionChain>(activeAccountId, provider, {
+      const chain = await requestTerminalMarketData<TerminalMarketDataOptionChain>(null, provider, {
         operation: "getOptionChain",
         underlying: symbol.toUpperCase(),
       });
@@ -346,14 +349,12 @@ export function useAllIndices() {
 // ── Hook: F&O Stocks (Top Movers + Most Active) ──
 // NO MOCK FALLBACK — returns empty arrays when offline
 export function useFnOStocks() {
-  const { activeAccountId, accounts } = useAccountContext();
-  const provider = resolveTerminalMarketDataProvider(accounts.find((account) => account.id === activeAccountId)?.broker_provider);
   return useQuery({
-    queryKey: ["terminal-fno-stocks", activeAccountId, provider],
+    queryKey: ["nse-fno-stocks"],
     queryFn: async () => {
-      if (activeAccountId && provider) {
+      if (shouldTryProxy()) {
         try {
-          const stocks = await fetchAccountLiveFnOStocks(activeAccountId, provider);
+          const stocks = await fetchLiveFnOStocks();
           if (stocks.length > 0) {
             markProxyOnline();
             const gainers = [...stocks].filter(s => s.changePercent > 0).sort((a, b) => b.changePercent - a.changePercent).slice(0, 5);

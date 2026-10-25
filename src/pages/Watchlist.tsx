@@ -19,9 +19,7 @@ import { DEFAULT_WATCHLIST_SYMBOLS } from "@/lib/defaultWatchlist";
 import {
   requestTerminalMarketData,
   resolveTerminalMarketDataProvider,
-  toLocalMarketDataInstrument,
   toTerminalMarketDataInstrument,
-  type TerminalMarketDataInstrument,
   type TerminalMarketDataQuote,
 } from "@/lib/terminalApi";
 import { useQuery } from "@tanstack/react-query";
@@ -33,17 +31,34 @@ const DEFAULT_WATCHLIST = [...new Set([
 ])];
 const INDEX_SYMBOLS = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX", "NIFTY_MIDCAP_50", "SENSEX"]);
 
+function normalizeWatchlistSymbols(value: unknown): string[] {
+  if (!Array.isArray(value)) return DEFAULT_WATCHLIST;
+  return [...new Set(
+    value
+      .filter((symbol): symbol is string => typeof symbol === "string")
+      .map((symbol) => symbol.trim().toUpperCase())
+      .filter(Boolean),
+  )];
+}
+
 function getSavedWatchlist(): string[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : DEFAULT_WATCHLIST;
+    if (!raw) return DEFAULT_WATCHLIST;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return DEFAULT_WATCHLIST;
+    const normalized = normalizeWatchlistSymbols(parsed);
+    if (JSON.stringify(parsed) !== JSON.stringify(normalized)) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+    }
+    return normalized;
   } catch {
     return DEFAULT_WATCHLIST;
   }
 }
 
 function saveWatchlist(symbols: string[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(symbols));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeWatchlistSymbols(symbols)));
 }
 
 export default function Watchlist() {
@@ -78,41 +93,36 @@ export default function Watchlist() {
         })));
       }
       if (!activeAccountId || !provider) throw new Error("An active account and market-data provider are required for account-scoped watchlist quotes.");
-      const results = await Promise.allSettled(watchedSymbols.map(async (symbol) => {
-        let instrument = findWatchlistInstrument(supportedInstruments, symbol);
-
-        if (!instrument) {
-          const searchResults = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(
-            activeAccountId,
-            provider,
-            { operation: "searchInstruments", query: symbol },
-          );
-          const localSearchResults = searchResults
-            .filter((candidate) =>
-              candidate.providerInstrumentId && candidate.symbol && candidate.tradingSymbol
-            )
-            .map(toLocalMarketDataInstrument);
-          instrument = findWatchlistInstrument(localSearchResults, symbol);
-        }
-        if (!instrument) throw new Error(`Terminal OS could not resolve ${symbol} as a supported cash-equity or index instrument.`);
-        const quote = await requestTerminalMarketData<TerminalMarketDataQuote>(
-          activeAccountId,
-          provider,
-          {
-            operation: "getQuote",
-            instrument: toTerminalMarketDataInstrument({
-              ...instrument,
-              exchange: instrument.exchange ?? (instrument.exchangeSegment.startsWith("BSE") ? "BSE" : "NSE"),
-            }, provider),
-          },
-        );
-        return [symbol, quote] as const;
+      const instrumentsBySymbol = new Map(watchedSymbols.flatMap((symbol) => {
+        const instrument = findWatchlistInstrument(supportedInstruments, symbol);
+        return instrument ? [[symbol, instrument] as const] : [];
       }));
+      const terminalInstruments = [...new Map(
+        [...instrumentsBySymbol.values()].map((instrument) => {
+          const terminalInstrument = toTerminalMarketDataInstrument({
+            ...instrument,
+            exchange: instrument.exchange ?? (instrument.exchangeSegment.startsWith("BSE") ? "BSE" : "NSE"),
+          }, provider);
+          return [`${terminalInstrument.exchange}:${terminalInstrument.tradingSymbol}`, terminalInstrument] as const;
+        }),
+      ).values()];
+      if (terminalInstruments.length === 0) return { quotes: {}, errors: [] };
+
+      const batchQuotes = await requestTerminalMarketData<TerminalMarketDataQuote[]>(
+        activeAccountId,
+        provider,
+        { operation: "getQuotes", instruments: terminalInstruments },
+      );
+      const quoteByInstrument = new Map(
+        batchQuotes.map((quote) => [`${quote.exchange}:${quote.tradingSymbol}`, quote]),
+      );
       const quotes: Record<string, TerminalMarketDataQuote> = {};
       const errors: string[] = [];
-      for (const result of results) {
-        if (result.status === "fulfilled") quotes[result.value[0]] = result.value[1];
-        else errors.push(result.reason instanceof Error ? result.reason.message : "A watchlist quote request failed.");
+      for (const [symbol, instrument] of instrumentsBySymbol) {
+        const exchange = instrument.exchange ?? (instrument.exchangeSegment.startsWith("BSE") ? "BSE" : "NSE");
+        const quote = quoteByInstrument.get(`${exchange}:${instrument.tradingSymbol}`);
+        if (quote) quotes[symbol] = quote;
+        else errors.push(`No account quote was returned for ${symbol}.`);
       }
       return { quotes, errors: [...new Set(errors)] };
     },
@@ -123,18 +133,19 @@ export default function Watchlist() {
 
   const quotes = useMemo(() => quoteQuery.data?.quotes ?? {}, [quoteQuery.data?.quotes]);
   const hasQuotes = Object.keys(quotes).length > 0;
-  const marketClosed = marketStatusData?.isOpen === false;
   const hasFreshQuote = Object.values(quotes).some((quote) => {
     const age = Date.now() - Date.parse(quote.timestamp);
     return Number.isFinite(age) && age >= 0 && age <= 60_000;
   });
-  const statusLabel = hasFreshQuote && !marketClosed ? "LIVE" : hasQuotes ? "HISTORICAL" : "UNAVAILABLE";
+  const statusLabel = hasFreshQuote && marketStatusData?.isOpen === true ? "LIVE" : hasQuotes ? "HISTORICAL" : "UNAVAILABLE";
   const baseStatusText = hasNoAccount
     ? statusLabel === "LIVE"
       ? "Central Dhan quotes · market data is independent of trading account status."
       : statusLabel === "HISTORICAL"
         ? "Latest available central Dhan quotes · market data is independent of trading account status."
-        : "No current central Dhan watchlist quotes are available."
+        : instrumentLoadError
+          ? `Using cached instruments. Central Dhan master refresh failed: ${instrumentLoadError}`
+          : "No current central Dhan watchlist quotes are available."
     : statusLabel === "LIVE"
       ? "Account-scoped Terminal OS quotes"
       : statusLabel === "HISTORICAL"

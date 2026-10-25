@@ -30,12 +30,8 @@ function useTerminalTicks(symbols: string[]) {
 
   useEffect(() => {
     setTicks({});
-    if (!activeAccountId || !provider) {
-      setState("DISCONNECTED");
-      return;
-    }
     const subscribedSymbols = symbolsKey.split(",").filter(Boolean);
-    if (import.meta.env.VITE_REALTIME_URL?.trim()) {
+    if (provider !== "dhan" && import.meta.env.VITE_REALTIME_URL?.trim()) {
       const unsubscribers = subscribedSymbols.flatMap((symbol) => {
         const securityId = SYMBOL_TO_SECURITY_ID[symbol];
         return securityId ? [marketWS.subscribe(securityId, (tick) => setTicks((current) => ({ ...current, [symbol]: tick })))] : [];
@@ -47,7 +43,7 @@ function useTerminalTicks(symbols: string[]) {
       };
     }
     return subscribeToTerminalMarketDataStream(
-      activeAccountId,
+      provider === "dhan" ? null : activeAccountId,
       provider,
       subscribedSymbols,
       (event) => {
