@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
 import {
+  canonicalizeLegacyInstantFundedRules,
   canonicalFundedWealthProductCode,
   createTerminalAccountLinkHandlers,
   createTerminalAccountLinkWorkflow,
@@ -47,13 +50,14 @@ function request(body, headers = {}) {
 }
 
 function makeStore({ identity = null, account = null, conflict = false, accountAction } = {}) {
-  const calls = { invites: 0, creates: 0, reconciles: 0, audits: 0 };
+  const calls = { invites: 0, creates: 0, reconciles: 0, audits: 0, inspectOptions: [] };
   let currentIdentity = identity;
   let currentAccount = account;
   return {
     calls,
     store: {
-      async inspect() {
+      async inspect(_source, options = {}) {
+        calls.inspectOptions.push(options);
         if (conflict) throw Object.assign(new Error("Account owner conflict."), { status: 409 });
         return {
           identity: currentIdentity,
@@ -173,6 +177,187 @@ test("matches funded Flash and Instant rules without relaxing any challenge limi
   ), false);
 });
 
+test("repairs only the seeded legacy Instant funded rules shape", () => {
+  const legacyVersion = {
+    status: "active",
+    rules: {
+      plan_name: "INSTANT",
+      max_drawdown_percent: 5,
+      daily_drawdown_percent: 3,
+      trading_days: 7,
+      profit_target_percent: null,
+      funded_rules: null,
+    },
+  };
+  const repairedRules = canonicalizeLegacyInstantFundedRules(legacyVersion);
+  const instantSource = {
+    ...source,
+    challenge: {
+      ...source.challenge,
+      plan: "10L Instant",
+      type: "funded",
+      profitTargetPct: 0,
+      dailyLossLimitPct: 3,
+      maxDrawdownPct: 5,
+      minTradingDays: 7,
+    },
+  };
+
+  assert.deepEqual(repairedRules.funded_rules, {
+    max_drawdown_percent: 5,
+    daily_drawdown_percent: 3,
+    profit_target_percent: 0,
+    max_risk_per_trade_percent: 1,
+    minimum_trading_days: 7,
+  });
+  assert.equal(isCompatibleFundedWealthRuleVersion({ rules: repairedRules }, instantSource, "FUNDED"), true);
+  assert.equal(canonicalizeLegacyInstantFundedRules({
+    ...legacyVersion,
+    rules: { ...legacyVersion.rules, max_drawdown_percent: 6 },
+  }), null);
+});
+
+test("the forward migration publishes the canonical Instant funded rule successor", () => {
+  const migration = readFileSync(
+    resolve(process.cwd(), "supabase/migrations/20261027000100_instant_funded_rule_compatibility.sql"),
+    "utf8",
+  );
+  assert.match(migration, /version = 'v1'/);
+  assert.match(migration, /'max_drawdown_percent', 5/);
+  assert.match(migration, /'daily_drawdown_percent', 3/);
+  assert.match(migration, /'profit_target_percent', 0/);
+  assert.match(migration, /'max_risk_per_trade_percent', 1/);
+  assert.match(migration, /'minimum_trading_days', 7/);
+  assert.match(migration, /version = 'v2'/);
+  assert.match(migration, /'publish_rule_version'/);
+});
+
+test("trusted Instant linking publishes the audited canonical rule before creating its account mapping", async () => {
+  const identity = { id: "55555555-5555-4555-8555-555555555555", email: source.customer.email };
+  const product = { id: "77777777-7777-4777-8777-777777777777", code: "INSTANT", status: "active" };
+  const phase = { id: "88888888-8888-4888-8888-888888888888", product_id: product.id, code: "FUNDED", status: "active" };
+  const legacyRule = {
+    id: "99999999-9999-4999-8999-999999999999",
+    version: "v1",
+    status: "active",
+    rules: {
+      plan_name: "INSTANT",
+      max_drawdown_percent: 5,
+      daily_drawdown_percent: 3,
+      trading_days: 7,
+      profit_target_percent: null,
+      funded_rules: null,
+    },
+  };
+  const instantSource = {
+    ...source,
+    account: { ...source.account, accountCode: "FW-INSTANT-ACCOUNT", balance: 1_000_000 },
+    challenge: {
+      ...source.challenge,
+      type: "funded",
+      plan: "10L Instant",
+      initialBalance: 1_000_000,
+      currentBalance: 1_000_000,
+      peakBalance: 1_000_000,
+      profitTargetPct: 0,
+      dailyLossLimitPct: 3,
+      maxDrawdownPct: 5,
+      minTradingDays: 7,
+    },
+  };
+  let canonicalRule = null;
+  let account = null;
+  const ruleActions = [];
+
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url);
+    const params = parsed.searchParams;
+    const method = init.method ?? "GET";
+    let body = [];
+
+    if (parsed.pathname === "/auth/v1/admin/users") {
+      body = [identity];
+    } else if (parsed.pathname === "/rest/v1/products") {
+      body = [product];
+    } else if (parsed.pathname === "/rest/v1/account_phases") {
+      body = [phase];
+    } else if (parsed.pathname === "/rest/v1/rule_versions" && method === "GET") {
+      if (params.get("version") === "eq.v2") {
+        body = canonicalRule ? [canonicalRule] : [];
+      } else if (params.get("id") === `eq.${legacyRule.id}`) {
+        body = [legacyRule];
+      } else {
+        body = [legacyRule, ...(canonicalRule?.status === "active" ? [canonicalRule] : [])];
+      }
+    } else if (parsed.pathname === "/rest/v1/rpc/manage_rule_configuration" && method === "POST") {
+      const requestBody = JSON.parse(init.body);
+      ruleActions.push(requestBody.action);
+      assert.equal(requestBody.actor_email, "account-linker@fundedwealth.com");
+      if (requestBody.action === "create_rule_version") {
+        canonicalRule = {
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          version: requestBody.version,
+          status: "draft",
+          rules: requestBody.rules,
+        };
+      } else if (requestBody.action === "publish_rule_version") {
+        canonicalRule.status = "active";
+      } else {
+        assert.fail(`Unexpected rule management action: ${requestBody.action}`);
+      }
+      body = { rule_version: canonicalRule };
+    } else if (parsed.pathname === "/rest/v1/trading_accounts") {
+      if (method === "POST") {
+        const values = JSON.parse(init.body);
+        account = {
+          id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          ...values,
+          equity: values.equity,
+          peak_equity: values.peak_equity,
+        };
+        return new Response("", { status: 201 });
+      }
+      body = account && account.owner_user_id === identity.id &&
+        account.external_account_id === instantSource.account.id &&
+        (!params.has("account_code") || account.account_code === instantSource.account.accountCode)
+        ? [account]
+        : [];
+    } else if (parsed.pathname === "/rest/v1/terminal_activity" && method === "POST") {
+      return new Response("", { status: 201 });
+    }
+
+    return new Response(JSON.stringify(body), { status: 200 });
+  };
+
+  const handlers = createTerminalAccountLinkHandlers({
+    env: {
+      SSO_API_KEY: secret,
+      SUPABASE_URL: "https://terminal.example.test",
+      SUPABASE_SECRET_KEY: "service-role-test-key",
+    },
+    fetchImpl,
+  });
+  const response = await handlers.handle(request(
+    { mode: "ensure", source: instantSource },
+    { "x-sso-api-key": secret },
+  ));
+  const result = JSON.parse(response.body);
+
+  assert.equal(response.status, 200);
+  assert.equal(result.result.created, true);
+  assert.deepEqual(ruleActions, ["create_rule_version", "publish_rule_version"]);
+  assert.equal(canonicalRule.status, "active");
+  assert.equal(account.owner_user_id, identity.id);
+  assert.equal(account.rule_version_id, canonicalRule.id);
+  assert.deepEqual(canonicalRule.rules.funded_rules, {
+    max_drawdown_percent: 5,
+    daily_drawdown_percent: 3,
+    profit_target_percent: 0,
+    max_risk_per_trade_percent: 1,
+    minimum_trading_days: 7,
+  });
+});
+
 test("previews an existing customer identity and already-linked account without writes", async () => {
   const identity = { id: "55555555-5555-4555-8555-555555555555", email: source.customer.email };
   const account = { id: "66666666-6666-4666-8666-666666666666", owner_user_id: identity.id };
@@ -185,6 +370,7 @@ test("previews an existing customer identity and already-linked account without 
   assert.equal(result.accountAction, "already_linked");
   assert.equal(calls.invites, 0);
   assert.equal(calls.creates, 0);
+  assert.deepEqual(calls.inspectOptions, [{}]);
 });
 
 test("invites the existing customer and creates the terminal mapping after confirmation", async () => {
@@ -248,6 +434,7 @@ test("trusted provisioning ensure preflights and audits idempotent mapping creat
   assert.equal(calls.invites, 1);
   assert.equal(calls.creates, 1);
   assert.equal(calls.audits, 2);
+  assert.deepEqual(calls.inspectOptions, [{ repairLegacyInstantRules: true }]);
 });
 
 test("accepts legacy accounts only with the trusted ownership-verified marker", async () => {

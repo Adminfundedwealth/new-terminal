@@ -3,6 +3,14 @@ import { timingSafeEqual } from "node:crypto";
 const MAX_BODY_BYTES = 16384;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const RULE_CONTROL_ACTOR_EMAIL = "account-linker@fundedwealth.com";
+const INSTANT_FUNDED_RULES = Object.freeze({
+  max_drawdown_percent: 5,
+  daily_drawdown_percent: 3,
+  profit_target_percent: 0,
+  max_risk_per_trade_percent: 1,
+  minimum_trading_days: 7,
+});
 
 function jsonResponse(status, body) {
   return {
@@ -107,6 +115,23 @@ export function isCompatibleFundedWealthRuleVersion(ruleVersion, source, phaseCo
     Number(planRules.max_risk_per_trade_percent) > 0;
 }
 
+export function canonicalizeLegacyInstantFundedRules(ruleVersion) {
+  const rules = ruleVersion?.rules;
+  if (ruleVersion?.status !== "active" || rules?.plan_name !== "INSTANT" ||
+      Number(rules.max_drawdown_percent) !== 5 ||
+      Number(rules.daily_drawdown_percent) !== 3 ||
+      Number(rules.trading_days) !== 7 ||
+      rules.profit_target_percent !== null ||
+      rules.funded_rules != null) {
+    return null;
+  }
+
+  return {
+    ...rules,
+    funded_rules: { ...INSTANT_FUNDED_RULES },
+  };
+}
+
 function makeSupabaseStore({ fetchImpl, env }) {
   const baseUrl = env.SUPABASE_URL?.replace(/\/+$/, "");
   const serviceKey = env.SUPABASE_SECRET_KEY;
@@ -157,6 +182,69 @@ function makeSupabaseStore({ fetchImpl, env }) {
     return result;
   }
 
+  async function manageRuleConfiguration(payload) {
+    const result = await request("/rest/v1/rpc/manage_rule_configuration", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, actor_email: RULE_CONTROL_ACTOR_EMAIL }),
+    });
+    if (!result?.rule_version) {
+      throw Object.assign(new Error("Terminal rule management returned an invalid result."), { status: 502 });
+    }
+    return result.rule_version;
+  }
+
+  async function publishInstantFundedRuleVersion(product, phase, legacyRuleVersion, source) {
+    const rules = canonicalizeLegacyInstantFundedRules(legacyRuleVersion);
+    if (!rules || !isCompatibleFundedWealthRuleVersion({ rules }, source, "FUNDED")) {
+      return null;
+    }
+
+    const query = new URLSearchParams({
+      select: "id,version,status,rules",
+      product_id: `eq.${product.id}`,
+      phase_id: `eq.${phase.id}`,
+      version: "eq.v2",
+      limit: "2",
+    });
+    let [ruleVersion] = await rows("rule_versions", query);
+    if (ruleVersion && (ruleVersion.rules?.plan_name !== "INSTANT" ||
+        !isCompatibleFundedWealthRuleVersion(ruleVersion, source, "FUNDED"))) {
+      throw Object.assign(new Error("The canonical Instant funded rule version conflicts with an existing Terminal rule."), { status: 409 });
+    }
+
+    if (!ruleVersion) {
+      try {
+        ruleVersion = await manageRuleConfiguration({
+          action: "create_rule_version",
+          product_id: product.id,
+          phase_id: phase.id,
+          version: "v2",
+          rules,
+        });
+      } catch (error) {
+        const [concurrentVersion] = await rows("rule_versions", query);
+        if (!concurrentVersion || concurrentVersion.rules?.plan_name !== "INSTANT" ||
+            !isCompatibleFundedWealthRuleVersion(concurrentVersion, source, "FUNDED")) {
+          throw error;
+        }
+        ruleVersion = concurrentVersion;
+      }
+    }
+
+    if (ruleVersion.status === "draft") {
+      ruleVersion = await manageRuleConfiguration({
+        action: "publish_rule_version",
+        id: ruleVersion.id,
+      });
+    }
+    if (ruleVersion.status !== "active" ||
+        !isCompatibleFundedWealthRuleVersion(ruleVersion, source, "FUNDED")) {
+      throw Object.assign(new Error("The canonical Instant funded rule version could not be verified as active."), { status: 409 });
+    }
+    return ruleVersion;
+  }
+
   async function findIdentity(email) {
     const wanted = email.toLowerCase();
     const perPage = 100;
@@ -186,7 +274,7 @@ function makeSupabaseStore({ fetchImpl, env }) {
     return { byExternalId, byCode };
   }
 
-  async function inspect(source) {
+  async function inspect(source, { repairLegacyInstantRules = false } = {}) {
     const [identity, accounts] = await Promise.all([
       findIdentity(source.customer.email),
       findAccounts(source.account.id, source.account.accountCode),
@@ -199,7 +287,7 @@ function makeSupabaseStore({ fetchImpl, env }) {
       throw Object.assign(new Error("Multiple terminal accounts already use this account code."), { status: 409 });
     }
 
-    const existing = accounts.byExternalId[0] ?? accounts.byCode[0] ?? null;
+    let existing = accounts.byExternalId[0] ?? accounts.byCode[0] ?? null;
     const accountAction = !existing
       ? "create_terminal_mapping"
       : existing.external_account_id === source.account.id
@@ -211,7 +299,7 @@ function makeSupabaseStore({ fetchImpl, env }) {
       throw Object.assign(new Error("An existing terminal account conflicts with the verified customer or account state."), { status: 409 });
     }
 
-    const catalog = await ensureCatalog(source);
+    const catalog = await ensureCatalog(source, { repairLegacyInstantRules });
     let product = null;
     let phase = null;
     let ruleVersion = null;
@@ -234,11 +322,38 @@ function makeSupabaseStore({ fetchImpl, env }) {
         }));
       }
       if (!identity || existing.product_id !== catalog.product.id || existing.phase_id !== catalog.phase.id ||
-          (existing.rule_version_id ?? null) !== (catalog.ruleVersion?.id ?? null) ||
           existing.account_type !== source.challenge.plan ||
           product?.status !== "active" || phase?.status !== "active" ||
-          product?.id !== catalog.product.id || phase?.id !== catalog.phase.id ||
-          (existing.rule_version_id && (!ruleVersion || ruleVersion.status !== "active"))) {
+          product?.id !== catalog.product.id || phase?.id !== catalog.phase.id) {
+        throw Object.assign(new Error("An existing terminal account has incomplete or conflicting verified account data."), { status: 409 });
+      }
+      if ((existing.rule_version_id ?? null) !== (catalog.ruleVersion?.id ?? null)) {
+        const canRepairLegacyAssignment = repairLegacyInstantRules &&
+          catalog.product.code === "INSTANT" && catalog.phase.code === "FUNDED" &&
+          ruleVersion?.status === "active" &&
+          canonicalizeLegacyInstantFundedRules(ruleVersion) !== null &&
+          isCompatibleFundedWealthRuleVersion(catalog.ruleVersion, source, "FUNDED");
+        if (!canRepairLegacyAssignment) {
+          throw Object.assign(new Error("An existing terminal account has incomplete or conflicting verified account data."), { status: 409 });
+        }
+
+        const assignment = await manageRuleConfiguration({
+          action: "apply_rule_version",
+          id: catalog.ruleVersion.id,
+          account_id: existing.id,
+        });
+        const updatedAccount = assignment?.account;
+        if (!updatedAccount || updatedAccount.id !== existing.id ||
+            updatedAccount.owner_user_id !== identity.id ||
+            updatedAccount.product_id !== catalog.product.id ||
+            updatedAccount.phase_id !== catalog.phase.id ||
+            updatedAccount.rule_version_id !== catalog.ruleVersion.id) {
+          throw Object.assign(new Error("The existing account's canonical rule assignment could not be verified."), { status: 409 });
+        }
+        existing = { ...existing, rule_version_id: catalog.ruleVersion.id };
+        ruleVersion = catalog.ruleVersion;
+      }
+      if (existing.rule_version_id && (!ruleVersion || ruleVersion.status !== "active")) {
         throw Object.assign(new Error("An existing terminal account has incomplete or conflicting verified account data."), { status: 409 });
       }
     }
@@ -254,7 +369,7 @@ function makeSupabaseStore({ fetchImpl, env }) {
     };
   }
 
-  async function ensureCatalog(source) {
+  async function ensureCatalog(source, { repairLegacyInstantRules = false } = {}) {
     const productCode = canonicalFundedWealthProductCode(source.challenge.plan);
     const phaseCode = source.challenge.type === "funded" ? "FUNDED" : "CHALLENGE";
 
@@ -279,15 +394,24 @@ function makeSupabaseStore({ fetchImpl, env }) {
     }
     const phase = phases[0];
 
-    const activeRules = await rows("rule_versions", new URLSearchParams({
+    let activeRules = await rows("rule_versions", new URLSearchParams({
       select: "id,version,status,rules",
       product_id: `eq.${product.id}`,
       phase_id: `eq.${phase.id}`,
       status: "eq.active",
       limit: "2",
     }));
-    const matchingRules = activeRules.filter((ruleVersion) =>
+    let matchingRules = activeRules.filter((ruleVersion) =>
       isCompatibleFundedWealthRuleVersion(ruleVersion, source, phaseCode));
+    if (matchingRules.length === 0 && repairLegacyInstantRules &&
+        product.code === "INSTANT" && phaseCode === "FUNDED" &&
+        activeRules.length === 1) {
+      const repaired = await publishInstantFundedRuleVersion(product, phase, activeRules[0], source);
+      if (repaired) {
+        activeRules = [...activeRules, repaired];
+        matchingRules = [repaired];
+      }
+    }
     if (matchingRules.length > 1) {
       throw Object.assign(new Error("More than one active terminal rule version matches the verified FundedWealth limits; resolve it through the existing Terminal OS rule workflow."), { status: 409 });
     }
@@ -466,7 +590,7 @@ export function createTerminalAccountLinkWorkflow(store) {
 
   async function link(source, actor) {
     const validated = validateSource(source);
-    const plan = await store.inspect(validated);
+    const plan = await store.inspect(validated, { repairLegacyInstantRules: true });
     if (plan.accountAction === "already_linked") {
       try {
         await store.writeAudit(validated, plan.identity, plan.account, actor, "already_linked");
@@ -504,7 +628,6 @@ export function createTerminalAccountLinkWorkflow(store) {
   }
 
   async function ensure(source) {
-    await preview(source);
     return link(source, {
       id: "fundedwealth-provisioning-service",
       email: "account-linker@fundedwealth.com",
