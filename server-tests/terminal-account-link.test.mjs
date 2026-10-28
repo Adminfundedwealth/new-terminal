@@ -362,6 +362,15 @@ test("trusted Instant linking publishes the audited canonical rule before creati
   });
 });
 
+test("keeps the rule-management RPC restricted to service_role after removing the legacy JWT-claim gate", () => {
+  const migration = readFileSync(resolve(
+    "supabase/migrations/20261028000100_service_role_rule_control.sql",
+  ), "utf8");
+  assert.match(migration, /pg_get_functiondef\('public\.manage_rule_configuration\(jsonb\)'::regprocedure\)/);
+  assert.match(migration, /revoke all on function public\.manage_rule_configuration\(jsonb\) from public, anon, authenticated/i);
+  assert.match(migration, /grant execute on function public\.manage_rule_configuration\(jsonb\) to service_role/i);
+});
+
 test("previews an existing customer identity and already-linked account without writes", async () => {
   const identity = { id: "55555555-5555-4555-8555-555555555555", email: source.customer.email };
   const account = { id: "66666666-6666-4666-8666-666666666666", owner_user_id: identity.id };

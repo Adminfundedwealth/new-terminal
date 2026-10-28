@@ -44,7 +44,7 @@ function readBody(req) {
 
 function getSupabaseConfig(env) {
   const baseUrl = env.SUPABASE_URL?.replace(/\/+$/, "");
-  const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY ?? env.SUPABASE_SERVICE_KEY ?? env.SUPABASE_SECRET_KEY;
+  const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY ?? env.SUPABASE_SECRET_KEY;
   if (!baseUrl || !serviceKey) {
     throw Object.assign(new Error("Terminal SSO service is not configured."), { status: 503 });
   }

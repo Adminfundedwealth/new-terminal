@@ -134,7 +134,7 @@ export function canonicalizeLegacyInstantFundedRules(ruleVersion) {
 
 function makeSupabaseStore({ fetchImpl, env }) {
   const baseUrl = env.SUPABASE_URL?.replace(/\/+$/, "");
-  const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY ?? env.SUPABASE_SERVICE_KEY ?? env.SUPABASE_SECRET_KEY;
+  const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY ?? env.SUPABASE_SECRET_KEY;
 
   async function request(path, init = {}) {
     if (!baseUrl || !serviceKey) {
