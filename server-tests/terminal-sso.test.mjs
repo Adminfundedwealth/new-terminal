@@ -44,7 +44,7 @@ test("creates a one-time handoff only for the authenticated server caller", asyn
   const { fetchImpl, calls } = makeFetch();
   const handlers = createTerminalSsoHandlers({
     fetchImpl,
-    env: { SSO_API_KEY: secret, SUPABASE_URL: "https://db.example.test", SUPABASE_SECRET_KEY: "service-key" },
+    env: { SSO_API_KEY: secret, SUPABASE_URL: "https://db.example.test", SUPABASE_SERVICE_ROLE_KEY: "service-role-key" },
   });
   const denied = await handlers.generate(request(JSON.stringify({ accountId: "external-account-1" }), {
     "x-sso-api-key": "wrong",
@@ -61,6 +61,8 @@ test("creates a one-time handoff only for the authenticated server caller", asyn
   assert.equal(body.expiresIn, 60);
   assert.equal(typeof body.token, "string");
   assert.ok(calls.some(({ url, init }) => url.includes("/auth/v1/admin/generate_link") && init.method === "POST"));
+  assert.equal(calls[0].init.headers.apikey, "service-role-key");
+  assert.equal(calls[0].init.headers.Authorization, "Bearer service-role-key");
 });
 
 test("rejects a mapping whose owner identity cannot be resolved", async () => {

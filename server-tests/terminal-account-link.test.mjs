@@ -290,6 +290,8 @@ test("trusted Instant linking publishes the audited canonical rule before creati
         body = [legacyRule, ...(canonicalRule?.status === "active" ? [canonicalRule] : [])];
       }
     } else if (parsed.pathname === "/rest/v1/rpc/manage_rule_configuration" && method === "POST") {
+      assert.equal(init.headers.apikey, "service-role-test-key");
+      assert.equal(init.headers.Authorization, "Bearer service-role-test-key");
       const rpcArgs = JSON.parse(init.body);
       assert.deepEqual(Object.keys(rpcArgs), ["request"]);
       const requestBody = rpcArgs.request;
@@ -335,7 +337,7 @@ test("trusted Instant linking publishes the audited canonical rule before creati
     env: {
       SSO_API_KEY: secret,
       SUPABASE_URL: "https://terminal.example.test",
-      SUPABASE_SECRET_KEY: "service-role-test-key",
+      SUPABASE_SERVICE_ROLE_KEY: "service-role-test-key",
     },
     fetchImpl,
   });
