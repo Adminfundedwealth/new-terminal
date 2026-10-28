@@ -16,7 +16,6 @@ import { marketWS } from "@/lib/terminalRealtimeClient";
 import { resolveTerminalMarketDataProvider } from "@/lib/terminalApi";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import {
-  fetchTerminalDashboard,
   fetchTerminalExecutions,
   fetchTerminalPerformance,
   fetchTerminalPositions,
@@ -48,7 +47,6 @@ export default function DashboardLayout() {
 
   useQueries({
     queries: [
-      { queryKey: ["terminal-os", user?.id ?? "anonymous", "dashboard", activeAccountId], queryFn: () => fetchTerminalDashboard(activeAccountId ?? undefined), retry: false, staleTime: 30_000, enabled: Boolean(activeAccountId) },
       { queryKey: ["terminal-os", user?.id ?? "anonymous", "positions", activeAccountId], queryFn: () => fetchTerminalPositions(activeAccountId ?? undefined), retry: false, staleTime: 30_000, enabled: Boolean(activeAccountId) },
       { queryKey: ["terminal-os", user?.id ?? "anonymous", "executions", activeAccountId], queryFn: () => fetchTerminalExecutions(activeAccountId ?? undefined), retry: false, staleTime: 30_000, enabled: Boolean(activeAccountId) },
       { queryKey: ["terminal-os", user?.id ?? "anonymous", "risk", activeAccountId], queryFn: () => fetchTerminalRisk(activeAccountId ?? undefined), retry: false, staleTime: 30_000, enabled: Boolean(activeAccountId) },

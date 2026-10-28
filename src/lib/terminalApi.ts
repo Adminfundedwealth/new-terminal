@@ -266,16 +266,6 @@ interface SystemHealthResponse {
   checked_at: string;
 }
 
-export interface TerminalDashboardSummary {
-  total_accounts: number;
-  active_accounts: number;
-  orders_today: number;
-  executions_today: number;
-  open_positions: number;
-  total_exposure: number;
-  risk_events_today: number;
-}
-
 interface PaginatedResponse<T> {
   data: T[];
   meta: { total: number; page: number; page_size: number; has_more?: boolean };
@@ -1020,10 +1010,6 @@ export async function modifyTerminalPositionProtection(
   });
   if (error) throw new Error(error.message || "Position protection update failed.");
   return data as TerminalPosition;
-}
-
-export function fetchTerminalDashboard(accountId?: string) {
-  return fetchTerminalJson<{ data: { summary: TerminalDashboardSummary } }>(`/api/terminal/dashboard${accountId ? `?account_id=${encodeURIComponent(accountId)}` : ""}`);
 }
 
 export function fetchTerminalOrders(accountId?: string) {
