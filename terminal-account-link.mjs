@@ -186,7 +186,9 @@ function makeSupabaseStore({ fetchImpl, env }) {
     const result = await request("/rest/v1/rpc/manage_rule_configuration", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...payload, actor_email: RULE_CONTROL_ACTOR_EMAIL }),
+      body: JSON.stringify({
+        request: { ...payload, actor_email: RULE_CONTROL_ACTOR_EMAIL },
+      }),
     });
     if (!result?.rule_version) {
       throw Object.assign(new Error("Terminal rule management returned an invalid result."), { status: 502 });

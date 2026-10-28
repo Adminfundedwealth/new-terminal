@@ -290,7 +290,9 @@ test("trusted Instant linking publishes the audited canonical rule before creati
         body = [legacyRule, ...(canonicalRule?.status === "active" ? [canonicalRule] : [])];
       }
     } else if (parsed.pathname === "/rest/v1/rpc/manage_rule_configuration" && method === "POST") {
-      const requestBody = JSON.parse(init.body);
+      const rpcArgs = JSON.parse(init.body);
+      assert.deepEqual(Object.keys(rpcArgs), ["request"]);
+      const requestBody = rpcArgs.request;
       ruleActions.push(requestBody.action);
       assert.equal(requestBody.actor_email, "account-linker@fundedwealth.com");
       if (requestBody.action === "create_rule_version") {
