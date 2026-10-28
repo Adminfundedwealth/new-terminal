@@ -1,9 +1,13 @@
 import type { OptionData, ExpiryDate, IndexData } from "./mockData";
 import { classifyInstrument, isCashEquityListing, isCashEquitySymbol } from "./instrumentClassification";
 import { normalizeProviderInstrument } from "./instrumentMaster";
+import { parseCsv } from "../../server-lib/brokers/csv";
 
 // Local proxy base URL — override via VITE_PROXY_URL if deploying proxy elsewhere
 const PROXY_BASE = import.meta.env.VITE_PROXY_URL || "http://localhost:4002";
+const DHAN_INSTRUMENT_MASTER_URL = "https://images.dhan.co/api-data/api-scrip-master.csv";
+let dhanInstrumentMasterCache: { expiresAt: number; rows: Record<string, string>[] } | null = null;
+let dhanInstrumentMasterRequest: Promise<Record<string, string>[]> | null = null;
 
 export interface IndianNewsArticle {
   headline: string;
@@ -27,6 +31,34 @@ async function fetchDhanProxy(endpoint: string, params?: Record<string, string>)
     throw new Error(`Dhan proxy error ${res.status}: ${errText}`);
   }
   return res.json();
+}
+
+export async function fetchDhanInstrumentMaster(): Promise<unknown[]> {
+  if (dhanInstrumentMasterCache && dhanInstrumentMasterCache.expiresAt > Date.now()) {
+    return dhanInstrumentMasterCache.rows;
+  }
+  if (!dhanInstrumentMasterRequest) {
+    dhanInstrumentMasterRequest = (async () => {
+      const response = await fetch(DHAN_INSTRUMENT_MASTER_URL, {
+        headers: { Accept: "text/csv" },
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        throw new Error(`Dhan instrument master request failed (${response.status}).`);
+      }
+      const rows = parseCsv(await response.text());
+      if (rows.length === 0 || !rows[0].SEM_SMST_SECURITY_ID || !rows[0].SEM_SEGMENT) {
+        throw new Error("Dhan instrument master has an invalid or empty CSV schema.");
+      }
+      dhanInstrumentMasterCache = { rows, expiresAt: Date.now() + 60 * 60 * 1000 };
+      return rows;
+    })();
+  }
+  try {
+    return await dhanInstrumentMasterRequest;
+  } finally {
+    dhanInstrumentMasterRequest = null;
+  }
 }
 
 // NSE proxy for indices & market status

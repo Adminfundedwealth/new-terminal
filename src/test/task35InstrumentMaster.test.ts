@@ -19,6 +19,31 @@ describe("Task 35 instrument master", () => {
     expect(normalizeProviderInstrument(row({ SEM_SMST_SECURITY_ID: "13", SEM_EXM: "IDX_I", SEM_TRADING_SYMBOL: "NIFTY 50", SEM_CUSTOM_SYMBOL: "NIFTY 50", SEM_INSTRUMENT_NAME: "INDEX" }), "dhan").instrument).toMatchObject({ exchange: "NSE", exchangeSegment: "IDX_I", instrumentType: "INDEX", lotSize: 1 });
   });
 
+  it("maps official Dhan ES instrument types to cash equities", () => {
+    const result = normalizeProviderInstrument({
+      SEM_EXM_EXCH_ID: "NSE",
+      SEM_SEGMENT: "E",
+      SEM_SMST_SECURITY_ID: "2885",
+      SEM_INSTRUMENT_NAME: "EQUITY",
+      SEM_TRADING_SYMBOL: "RELIANCE",
+      SEM_LOT_UNITS: "1.0",
+      SEM_CUSTOM_SYMBOL: "Reliance Industries",
+      SEM_TICK_SIZE: "10.0000",
+      SEM_EXCH_INSTRUMENT_TYPE: "ES",
+      SEM_SERIES: "EQ",
+      SM_SYMBOL_NAME: "RELIANCE INDUSTRIES LTD",
+    }, "dhan").instrument;
+
+    expect(result).toMatchObject({
+      securityId: "2885",
+      exchangeSegment: "NSE_EQ",
+      instrumentType: "EQUITY",
+      tradingSymbol: "RELIANCE",
+      series: "EQ",
+    });
+    expect(result && isCashEquityListing(result)).toBe(true);
+  });
+
   it("preserves NSE series metadata so debt-series listings do not enter cash equities", () => {
     const linkedNote = normalizeProviderInstrument(row({
       SEM_SMST_SECURITY_ID: "23669",

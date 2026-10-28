@@ -125,6 +125,39 @@ describe("Main Terminal market-data contract", () => {
     });
   });
 
+  it("uses supported single-quote requests for Dhan batches and keeps successful quotes on partial failure", async () => {
+    const instruments = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX", "BAD"].map((symbol, index) => ({
+      provider: "dhan" as const,
+      providerInstrumentId: index === 5 ? "" : String(index + 13),
+      symbol,
+      tradingSymbol: symbol,
+      exchange: "NSE",
+      exchangeSegment: "IDX_I",
+      instrumentType: "INDEX",
+    }));
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { symbol: "NIFTY" } }), { status: 200 }))
+      .mockRejectedValueOnce(new Error("temporary provider failure"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { symbol: "FINNIFTY" } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { symbol: "MIDCPNIFTY" } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { symbol: "INDIAVIX" } }), { status: 200 }));
+
+    const quotes = await requestTerminalMarketData<Array<{ symbol: string }>>(
+      null,
+      "dhan",
+      { operation: "getQuotes", instruments },
+    );
+
+    expect(quotes.map((quote) => quote.symbol)).toEqual(["NIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX"]);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(JSON.parse(String((init as RequestInit).body))).toMatchObject({
+        provider: "dhan",
+        operation: "getQuote",
+      });
+    }
+  });
+
   it("never puts the customer token or broker credentials in the request body", async () => {
     const instrument = {
       provider: "kite" as const,

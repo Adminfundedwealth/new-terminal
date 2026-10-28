@@ -4,8 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { getAllInstruments, saveInstruments } from "@/lib/localDatabase";
 
-const { requestTerminalMarketDataMock } = vi.hoisted(() => ({
+const { requestTerminalMarketDataMock, fetchDhanInstrumentMasterMock } = vi.hoisted(() => ({
   requestTerminalMarketDataMock: vi.fn(),
+  fetchDhanInstrumentMasterMock: vi.fn(),
 }));
 
 vi.mock("@/lib/localDatabase", async (importOriginal) => {
@@ -22,6 +23,11 @@ vi.mock("@/lib/terminalApi", async (importOriginal) => ({
   requestTerminalMarketData: requestTerminalMarketDataMock,
 }));
 
+vi.mock("@/lib/marketApi", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/marketApi")>(),
+  fetchDhanInstrumentMaster: fetchDhanInstrumentMasterMock,
+}));
+
 vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ user: null }),
 }));
@@ -29,6 +35,7 @@ vi.mock("@/hooks/useAuth", () => ({
 describe("useInstrumentLookup Founder-global Dhan catalog", () => {
   beforeEach(() => {
     requestTerminalMarketDataMock.mockReset();
+    fetchDhanInstrumentMasterMock.mockReset();
   });
 
   afterEach(() => vi.clearAllMocks());
@@ -67,6 +74,48 @@ describe("useInstrumentLookup Founder-global Dhan catalog", () => {
       operation: "listInstruments",
     });
     expect(result.current.loadError).toBeNull();
+  });
+
+  it("fills missing cash equities from the official Dhan master when Terminal OS only lists derivatives and indices", async () => {
+    requestTerminalMarketDataMock.mockResolvedValue([{
+      provider: "dhan",
+      providerInstrumentId: "13",
+      symbol: "NIFTY",
+      tradingSymbol: "NIFTY",
+      exchange: "NSE",
+      exchangeSegment: "IDX_I",
+      instrumentType: "INDEX",
+      lotSize: 1,
+      tickSize: 0.05,
+    }]);
+    fetchDhanInstrumentMasterMock.mockResolvedValue([{
+      SEM_EXM_EXCH_ID: "NSE",
+      SEM_SEGMENT: "E",
+      SEM_SMST_SECURITY_ID: "2885",
+      SEM_INSTRUMENT_NAME: "EQUITY",
+      SEM_TRADING_SYMBOL: "RELIANCE",
+      SEM_LOT_UNITS: "1.0",
+      SEM_CUSTOM_SYMBOL: "Reliance Industries",
+      SEM_TICK_SIZE: "10.0000",
+      SEM_EXCH_INSTRUMENT_TYPE: "ES",
+      SEM_SERIES: "EQ",
+      SM_SYMBOL_NAME: "RELIANCE INDUSTRIES LTD",
+    }]);
+
+    const { result } = renderLookup();
+
+    await waitFor(() => expect(result.current.instruments).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        securityId: "2885",
+        tradingSymbol: "RELIANCE",
+        exchangeSegment: "NSE_EQ",
+        instrumentType: "EQUITY",
+      }),
+    ])));
+    expect(fetchDhanInstrumentMasterMock).toHaveBeenCalledTimes(1);
+    expect(saveInstruments).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ providerInstrumentId: "2885", tradingSymbol: "RELIANCE" }),
+    ]));
   });
 
   it("starts central instrument resolution while the local cache is still loading", async () => {

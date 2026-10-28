@@ -53,8 +53,12 @@ function exchangeFor(segment: string): string {
   return segment.split("_")[0] || "";
 }
 function instrumentTypeValue(raw: Record<string, unknown>, segment: string): string {
+  const instrumentName = upper(raw.SEM_INSTRUMENT_NAME);
+  if (["EQUITY", "INDEX", "FUTSTK", "FUTIDX", "OPTSTK", "OPTIDX", "FUTCOM", "FUTCUR", "OPTFUT", "OPTCUR"].includes(instrumentName)) {
+    return instrumentName;
+  }
   const source = upper(first(raw, ["instrumentType", "instrument_type", "instrumenttype", "SEM_EXCH_INSTRUMENT_TYPE", "SEM_INSTRUMENT_NAME"]));
-  if (source === "INDEX") return "INDEX";
+  if (source === "ES") return "EQUITY";
   return source || (segment.endsWith("_EQ") ? "EQUITY" : "");
 }
 

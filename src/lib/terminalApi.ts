@@ -626,6 +626,29 @@ export async function requestTerminalMarketData<T>(
   operation: TerminalMarketDataOperation,
   environment: "production" | "paper" | "sandbox" = "production",
 ): Promise<T> {
+  if (provider === "dhan" && operation.operation === "getQuotes") {
+    const instruments = operation.instruments.filter((instrument) =>
+      instrument.provider === "dhan" &&
+      /^\d+$/.test(instrument.providerInstrumentId) &&
+      instrument.exchangeSegment.length > 0 &&
+      instrument.tradingSymbol.length > 0
+    );
+    const quotes: TerminalMarketDataQuote[] = [];
+    for (let offset = 0; offset < instruments.length; offset += 5) {
+      const batch = instruments.slice(offset, offset + 5);
+      const results = await Promise.allSettled(batch.map((instrument) =>
+        requestTerminalMarketData<TerminalMarketDataQuote>(
+          accountId,
+          provider,
+          { operation: "getQuote", instrument },
+          environment,
+        )
+      ));
+      quotes.push(...results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []));
+    }
+    return quotes as T;
+  }
+
   const scopedAccountId = provider === "dhan" ? null : accountId;
   if (!scopedAccountId && provider !== "dhan") throw new Error("A trading account is required for account-scoped market data.");
   const accessToken = await getCustomerAccessToken();

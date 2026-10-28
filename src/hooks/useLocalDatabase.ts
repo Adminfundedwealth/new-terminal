@@ -27,7 +27,9 @@ import {
   type DatabaseStats,
   type Instrument,
 } from "@/lib/localDatabase";
-import { classifyInstrument, type InstrumentCategory } from "@/lib/instrumentClassification";
+import { classifyInstrument, isCashEquityListing, type InstrumentCategory } from "@/lib/instrumentClassification";
+import { fetchDhanInstrumentMaster } from "@/lib/marketApi";
+import { normalizeProviderInstrument } from "@/lib/instrumentMaster";
 import {
   requestTerminalMarketData,
   type TerminalMarketDataInstrument,
@@ -197,6 +199,35 @@ export function useInstrumentLookup() {
       const instruments = remote
         .filter((instrument) => instrument.providerInstrumentId && instrument.symbol && instrument.tradingSymbol)
         .map(toLocalMarketDataInstrument);
+      if (!instruments.some((instrument) =>
+        instrument.exchangeSegment === "NSE_EQ" && instrument.instrumentType === "EQUITY")) {
+        const master = await fetchDhanInstrumentMaster();
+        const existingIds = new Set(instruments.map((instrument) =>
+          `${instrument.exchangeSegment}:${instrument.providerInstrumentId}`));
+        const officialInstruments = master.flatMap((row, index) => {
+          if (!row || typeof row !== "object") return [];
+          const source = row as Record<string, unknown>;
+          const instrumentName = String(source.SEM_INSTRUMENT_NAME ?? "").toUpperCase();
+          if (!["EQUITY", "INDEX", "FUTSTK", "FUTIDX"].includes(instrumentName)) return [];
+          const normalized = normalizeProviderInstrument(source, "dhan", index).instrument;
+          if (!normalized) return [];
+          const category = classifyInstrument(normalized);
+          if (!category || !["stocks", "indices", "futures"].includes(category)) return [];
+          if (category === "stocks" && !isCashEquityListing(normalized)) return [];
+          if (category === "futures") {
+            const expiry = Date.parse(normalized.expiryDate ?? "");
+            if (!Number.isFinite(expiry) || expiry < Date.now()) return [];
+          }
+          const key = `${normalized.exchangeSegment}:${normalized.providerInstrumentId}`;
+          if (existingIds.has(key)) return [];
+          existingIds.add(key);
+          return [normalized];
+        });
+        if (officialInstruments.length === 0) {
+          throw new Error("Dhan's official instrument master contains no valid stocks, indices, or futures.");
+        }
+        instruments.push(...officialInstruments);
+      }
       if (instruments.length === 0) throw new Error("Terminal OS returned an empty Dhan instrument catalog.");
       const BATCH_SIZE = 2000;
       try {
