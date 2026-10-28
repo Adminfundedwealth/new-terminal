@@ -79,26 +79,25 @@ describe("fetchLiveFnOStocks", () => {
 });
 
 describe("browser broker credential boundary", () => {
-  it("downloads and parses the official Dhan instrument master without a local proxy", async () => {
-    const csv = [
-      "SEM_EXM_EXCH_ID,SEM_SEGMENT,SEM_SMST_SECURITY_ID,SEM_INSTRUMENT_NAME,SEM_TRADING_SYMBOL,SEM_LOT_UNITS,SEM_CUSTOM_SYMBOL,SEM_EXPIRY_DATE,SEM_STRIKE_PRICE,SEM_OPTION_TYPE,SEM_TICK_SIZE,SEM_EXCH_INSTRUMENT_TYPE,SEM_SERIES,SM_SYMBOL_NAME",
-      'NSE,E,2885,EQUITY,RELIANCE,1,"RELIANCE INDUSTRIES, LIMITED",0001-01-01,0,XX,5,EQUITY,EQ,"RELIANCE INDUSTRIES LTD"',
-    ].join("\n");
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(csv, { status: 200, headers: { "Content-Type": "text/csv" } }),
-    );
+  it("loads the parsed official instrument master through the configured Dhan proxy", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      instruments: [{
+        securityId: "2885",
+        symbol: "RELIANCE INDUSTRIES LTD",
+        tradingSymbol: "RELIANCE",
+        exchangeSegment: "NSE_EQ",
+        instrumentType: "EQUITY",
+        lotSize: 1,
+        tickSize: 5,
+        series: "EQ",
+      }],
+      count: 1,
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
 
     await expect(fetchDhanInstrumentMaster()).resolves.toMatchObject([
-      expect.objectContaining({
-        SEM_SMST_SECURITY_ID: "2885",
-        SEM_TRADING_SYMBOL: "RELIANCE",
-        SEM_SEGMENT: "E",
-      }),
+      expect.objectContaining({ securityId: "2885", tradingSymbol: "RELIANCE" }),
     ]);
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://images.dhan.co/api-data/api-scrip-master.csv",
-      expect.objectContaining({ cache: "no-store" }),
-    );
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/api/dhan-proxy?endpoint=instruments");
   });
 
   it("does not forward browser-held Dhan credentials to the legacy proxy", async () => {

@@ -89,17 +89,15 @@ describe("useInstrumentLookup Founder-global Dhan catalog", () => {
       tickSize: 0.05,
     }]);
     fetchDhanInstrumentMasterMock.mockResolvedValue([{
-      SEM_EXM_EXCH_ID: "NSE",
-      SEM_SEGMENT: "E",
-      SEM_SMST_SECURITY_ID: "2885",
-      SEM_INSTRUMENT_NAME: "EQUITY",
-      SEM_TRADING_SYMBOL: "RELIANCE",
-      SEM_LOT_UNITS: "1.0",
-      SEM_CUSTOM_SYMBOL: "Reliance Industries",
-      SEM_TICK_SIZE: "10.0000",
-      SEM_EXCH_INSTRUMENT_TYPE: "ES",
-      SEM_SERIES: "EQ",
-      SM_SYMBOL_NAME: "RELIANCE INDUSTRIES LTD",
+      securityId: "2885",
+      symbol: "RELIANCE INDUSTRIES LTD",
+      tradingSymbol: "RELIANCE",
+      exchange: "NSE",
+      exchangeSegment: "NSE_EQ",
+      instrumentType: "EQUITY",
+      lotSize: 1,
+      tickSize: 0.05,
+      series: "EQ",
     }]);
 
     const { result } = renderLookup();

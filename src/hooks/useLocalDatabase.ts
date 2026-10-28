@@ -207,7 +207,7 @@ export function useInstrumentLookup() {
         const officialInstruments = master.flatMap((row, index) => {
           if (!row || typeof row !== "object") return [];
           const source = row as Record<string, unknown>;
-          const instrumentName = String(source.SEM_INSTRUMENT_NAME ?? "").toUpperCase();
+          const instrumentName = String(source.SEM_INSTRUMENT_NAME ?? source.instrumentType ?? "").toUpperCase();
           if (!["EQUITY", "INDEX", "FUTSTK", "FUTIDX"].includes(instrumentName)) return [];
           const normalized = normalizeProviderInstrument(source, "dhan", index).instrument;
           if (!normalized) return [];
