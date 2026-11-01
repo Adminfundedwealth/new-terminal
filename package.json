@@ -35,6 +35,7 @@
     "proxy": "node proxy-server.mjs",
     "dev:live": "concurrently -n vite,proxy -c cyan,green \"vite\" \"node proxy-server.mjs\"",
     "build": "vite build",
+    "build:hostinger": "node scripts/build-hostinger.mjs",
     "build:server": "tsc -p tsconfig.server.json",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
