@@ -25,11 +25,47 @@ $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
 if ($route === 'sso') {
     $forwardHeaders[] = 'Content-Type: ' . $contentType;
 }
-if (isset($_SERVER['HTTP_ORIGIN'])) {
+if ($route === 'exchange') {
+    $host = strtolower(trim($_SERVER['HTTP_HOST'] ?? ''));
+    $isHttps = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
+        || (string) ($_SERVER['SERVER_PORT'] ?? '') === '443';
+    if (!$isHttps || !in_array($host, ['charts.fundedwealth.com', 'charts.fundedwealth.com:443'], true)) {
+        http_response_code(403);
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store');
+        echo '{"error":"SSO exchange host is not allowed."}';
+        exit;
+    }
+
+    $isTrustedUrl = static function (string $value, bool $allowPath): bool {
+        $parts = parse_url($value);
+        return is_array($parts)
+            && ($parts['scheme'] ?? '') === 'https'
+            && strtolower($parts['host'] ?? '') === 'charts.fundedwealth.com'
+            && ($parts['port'] ?? 443) === 443
+            && !isset($parts['user'])
+            && !isset($parts['pass'])
+            && ($allowPath || !isset($parts['path']) || $parts['path'] === '' || $parts['path'] === '/');
+    };
+    $origin = trim($_SERVER['HTTP_ORIGIN'] ?? '');
+    $referer = trim($_SERVER['HTTP_REFERER'] ?? '');
+    $trustedOrigin = $origin !== '' && $isTrustedUrl($origin, false);
+    $trustedReferer = $referer !== '' && $isTrustedUrl($referer, true);
+
+    if (($origin !== '' && !$trustedOrigin)
+        || ($referer !== '' && !$trustedReferer)
+        || (!$trustedOrigin && !$trustedReferer)) {
+        http_response_code(403);
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store');
+        echo '{"error":"SSO exchange origin is not allowed."}';
+        exit;
+    }
+
+    $forwardHeaders[] = 'Origin: https://charts.fundedwealth.com';
+    $forwardHeaders[] = 'Referer: https://charts.fundedwealth.com/';
+} elseif (isset($_SERVER['HTTP_ORIGIN'])) {
     $forwardHeaders[] = 'Origin: ' . $_SERVER['HTTP_ORIGIN'];
-}
-if ($route === 'exchange' && isset($_SERVER['HTTP_REFERER'])) {
-    $forwardHeaders[] = 'Referer: ' . $_SERVER['HTTP_REFERER'];
 }
 if ($route === 'exchange' && isset($_COOKIE['fw_sso_exchange'])) {
     $forwardHeaders[] = 'Cookie: fw_sso_exchange=' . $_COOKIE['fw_sso_exchange'];
