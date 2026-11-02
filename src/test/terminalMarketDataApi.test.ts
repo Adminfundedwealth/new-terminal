@@ -118,22 +118,18 @@ describe("Main Terminal market-data contract", () => {
     expect(JSON.parse(String(init.body))).toEqual({ operation: "listInstruments" });
   });
 
-  it("uses supported single-quote requests for Dhan batches and keeps successful quotes on partial failure", async () => {
-    const instruments = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX", "BAD"].map((symbol, index) => ({
+  it("sends Dhan quote batches through the global service in one request", async () => {
+    const instruments = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"].map((symbol, index) => ({
       provider: "dhan" as const,
-      providerInstrumentId: index === 5 ? "" : String(index + 13),
+      providerInstrumentId: String(index + 13),
       symbol,
       tradingSymbol: symbol,
       exchange: "NSE",
       exchangeSegment: "IDX_I",
       instrumentType: "INDEX",
     }));
-    fetchMock
-      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { symbol: "NIFTY" } }), { status: 200 }))
-      .mockRejectedValueOnce(new Error("temporary provider failure"))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { symbol: "FINNIFTY" } }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { symbol: "MIDCPNIFTY" } }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { symbol: "INDIAVIX" } }), { status: 200 }));
+    const expectedQuotes = instruments.map((instrument) => ({ symbol: instrument.symbol }));
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: expectedQuotes }), { status: 200 }));
 
     const quotes = await requestTerminalMarketData<Array<{ symbol: string }>>(
       null,
@@ -141,14 +137,13 @@ describe("Main Terminal market-data contract", () => {
       { operation: "getQuotes", instruments },
     );
 
-    expect(quotes.map((quote) => quote.symbol)).toEqual(["NIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX"]);
-    expect(fetchMock).toHaveBeenCalledTimes(5);
-    for (const [, init] of fetchMock.mock.calls) {
-      expect(JSON.parse(String((init as RequestInit).body))).toMatchObject({
-        provider: "dhan",
-        operation: "getQuote",
-      });
-    }
+    expect(quotes).toEqual(expectedQuotes);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(new URL(url, "https://main.test").pathname).toBe("/api/public/market-data");
+    expect(JSON.parse(String(init.body))).toEqual({ operation: "getQuotes", instruments });
+    expect(new Headers(init.headers).get("Content-Type")).toBe("text/plain;charset=UTF-8");
+    expect(new Headers(init.headers).get("Authorization")).toBeNull();
   });
 
   it("never puts the customer token or broker credentials in the request body", async () => {
