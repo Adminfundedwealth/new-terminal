@@ -1,10 +1,9 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { TrendingUp, TrendingDown, Radio, Moon } from "lucide-react";
 import { AreaChart, Area, ResponsiveContainer } from "recharts";
-import { useWebSocketStatus } from "@/hooks/useWebSocket";
-import { getCandleHistory, type CandleHistory } from "@/lib/localDatabase";
+import { useMarketStatus, useStoredCandles } from "@/hooks/useMarketData";
 import { useChartData } from "@/hooks/useChartData";
 
 interface IndexData {
@@ -17,78 +16,34 @@ interface IndexData {
   high: number;
   low: number;
   prevClose: number;
-  indices?: any[];
+  timestamp?: string;
 }
 
 interface Props {
   indices: IndexData[];
+  isLive: boolean;
+  isMarketOpen: boolean;
 }
 
-// Map index symbols to their Dhan security IDs
-const SYMBOL_SEC_MAP: Record<string, string> = {
-  NIFTY: "13",
-  BANKNIFTY: "25",
-  FINNIFTY: "27",
-  MIDCPNIFTY: "442",
-};
-
-export function IndexCards({ indices }: Props) {
+export function IndexCards({ indices, isLive, isMarketOpen }: Props) {
   const navigate = useNavigate();
-  const wsConnected = useWebSocketStatus();
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-      {indices.map((index, idx) => (
-        <IndexCard key={index.symbol} index={index} idx={idx} isLive={wsConnected} onClick={() => navigate(`/option-chain?symbol=${index.symbol}`)} />
+      {indices.map((index) => (
+        <IndexCard key={index.symbol} index={index} isLive={isLive} isMarketOpen={isMarketOpen} onClick={() => navigate(`/option-chain?symbol=${index.symbol}`)} />
       ))}
     </div>
   );
 }
 
-// Placeholder pulsing sparkline when no data is available
-function SparklinePlaceholder({ isPositive }: { isPositive: boolean }) {
-  return (
-    <div className="h-full w-full flex items-end gap-[2px] px-2 opacity-20">
-      {Array.from({ length: 30 }).map((_, i) => {
-        const height = 22 + Math.sin(i * 0.52) * 13 + ((i * 7) % 9);
-        return (
-          <div
-            key={i}
-            className={`flex-1 rounded-t-sm animate-pulse ${isPositive ? "bg-bullish" : "bg-bearish"}`}
-            style={{ height: `${height}%`, animationDelay: `${i * 50}ms` }}
-          />
-        );
-      })}
-    </div>
-  );
-}
-
-function IndexCard({ index, idx, isLive, onClick }: { index: IndexData; idx: number; isLive?: boolean; onClick: () => void }) {
+function IndexCard({ index, isLive, isMarketOpen, onClick }: { index: IndexData; isLive: boolean; isMarketOpen: boolean; onClick: () => void }) {
   const isPositive = index.change >= 0;
-  const [storedCandles, setStoredCandles] = useState<{ price: number }[] | null>(null);
-  const [dbChecked, setDbChecked] = useState(false);
-
-  // Detect after-hours: if market data exists but websocket is disconnected
-  const isAfterHours = !isLive && index.ltp > 0;
-
-  // Try to load stored candle data from IndexedDB
-  useEffect(() => {
-    const secId = SYMBOL_SEC_MAP[index.symbol];
-    if (!secId) { setDbChecked(true); return; }
-
-    getCandleHistory(secId, "5").then((history) => {
-      if (history && history.candles.length > 0) {
-        const recent = history.candles.slice(-75);
-        setStoredCandles(recent.map((c) => ({ price: c.close })));
-      }
-      setDbChecked(true);
-    }).catch(() => { setDbChecked(true); });
-  }, [index.symbol]);
-
-  // Fallback: fetch from Dhan historical API when IndexedDB is empty
+  const { data: storedHistory, isFetched: dbChecked } = useStoredCandles(index.symbol, "5m");
+  const storedCandles = storedHistory?.candles?.map((candle) => ({ price: candle.close })) ?? null;
+  const isAfterHours = !isMarketOpen && index.ltp > 0;
   const { data: apiCandles } = useChartData(index.symbol, "1W", dbChecked && !storedCandles);
 
-  // Use stored candles if available, otherwise use API candles, or empty
   const intraday = useMemo(() => {
     if (storedCandles && storedCandles.length > 0) return storedCandles;
     if (apiCandles && apiCandles.length > 0) return apiCandles.map(c => ({ price: c.close }));
@@ -132,7 +87,7 @@ function IndexCard({ index, idx, isLive, onClick }: { index: IndexData; idx: num
           </div>
         </div>
 
-        {/* Sparkline Chart or Placeholder */}
+        {/* Historical sparkline */}
         <div className="h-[50px] -mx-2">
           {hasChart ? (
             <ResponsiveContainer width="100%" height="100%">
@@ -146,13 +101,20 @@ function IndexCard({ index, idx, isLive, onClick }: { index: IndexData; idx: num
                 <Area type="monotone" dataKey="price" stroke={isPositive ? "hsl(var(--bullish))" : "hsl(var(--bearish))"} fill={`url(#grad-${index.symbol})`} strokeWidth={1.5} dot={false} />
               </AreaChart>
             </ResponsiveContainer>
-          ) : (
-            <SparklinePlaceholder isPositive={isPositive} />
-          )}
+          ) : null}
         </div>
 
         {/* OHLV Row + Day Range Bar */}
         <div className="space-y-1.5 mt-1">
+          {index.timestamp && (
+            <p className="text-[9px] text-muted-foreground">
+              {!isLive ? "Last quote" : "Updated"} {new Date(index.timestamp).toLocaleTimeString("en-IN", {
+                timeZone: "Asia/Kolkata",
+                hour: "2-digit",
+                minute: "2-digit",
+              })} IST
+            </p>
+          )}
           <div className="flex justify-between text-2xs text-muted-foreground font-mono tabular-nums">
             <span>O: {index.open.toLocaleString("en-IN")}</span>
             <span>H: {index.high.toLocaleString("en-IN")}</span>

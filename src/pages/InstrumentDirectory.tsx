@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
-import { fetchCashQuotes } from "@/lib/marketApi";
+import { fetchCentralMarketQuotes } from "@/lib/centralMarketQuotes";
 import { classifyInstrument, isCashEquityListing, isProductionInstrument } from "@/lib/instrumentClassification";
 
 const PAGE_SIZE = 50;
@@ -29,24 +29,19 @@ export default function InstrumentDirectory({ category }: { category: "stocks" |
   }, [category, instruments, search]);
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
   const pageRows = filteredRows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-  const quoteGroups = useMemo(() => {
-    const groups = new Map<string, string[]>();
-    for (const instrument of pageRows) {
-      const ids = groups.get(instrument.exchangeSegment) || [];
-      ids.push(instrument.securityId);
-      groups.set(instrument.exchangeSegment, ids);
-    }
-    return [...groups.entries()];
-  }, [pageRows]);
   const quoteQuery = useQuery({
-    queryKey: ["cash-quotes", quoteGroups],
+    queryKey: ["central-dhan-instrument-directory-quotes", pageRows.map((instrument) => instrument.securityId)],
     queryFn: async () => {
-      const responses = await Promise.all(quoteGroups.map(([segment, ids]) => fetchCashQuotes(segment, ids)));
-      return Object.assign({}, ...responses);
+      const { quotes, errors } = await fetchCentralMarketQuotes(pageRows.map((instrument) => ({
+        key: instrument.securityId,
+        instrument,
+      })));
+      if (errors.length > 0) throw new Error(errors.join(" "));
+      return quotes;
     },
-    enabled: isLoaded && quoteGroups.length > 0,
-    staleTime: 15000,
-    refetchInterval: 30000,
+    enabled: isLoaded && pageRows.length > 0,
+    staleTime: 5000,
+    refetchInterval: 5000,
     retry: 1,
   });
 

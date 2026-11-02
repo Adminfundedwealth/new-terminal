@@ -10,18 +10,11 @@ import { isMeaningfulMarketValue } from "@/lib/marketDataState";
 import { useNavigate } from "react-router-dom";
 import { Search, Star, TrendingUp, TrendingDown, ExternalLink, Radio, Loader2, Plus, X, BarChart3 } from "lucide-react";
 import { MiniChart } from "@/components/MiniChart";
-import { useAccountContext } from "@/hooks/useAccountContext";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { canonicalIndexSymbol, classifyInstrument, isCashEquityListing } from "@/lib/instrumentClassification";
 import { fetchCentralMarketQuotes } from "@/lib/centralMarketQuotes";
 import { findWatchlistInstrument } from "@/lib/watchlistInstrument";
 import { DEFAULT_WATCHLIST_SYMBOLS } from "@/lib/defaultWatchlist";
-import {
-  requestTerminalMarketData,
-  resolveTerminalMarketDataProvider,
-  toTerminalMarketDataInstrument,
-  type TerminalMarketDataQuote,
-} from "@/lib/terminalApi";
 import { useQuery } from "@tanstack/react-query";
 
 const STORAGE_KEY = "optionsdesk_watchlist";
@@ -68,9 +61,7 @@ export default function Watchlist() {
   const [addSymbol, setAddSymbol] = useState("");
   const [addSymbolError, setAddSymbolError] = useState<string | null>(null);
   const { instruments, isLoaded: instrumentsLoaded, loadError: instrumentLoadError } = useInstrumentLookup();
-  const { activeAccountId, accounts, hasNoAccount } = useAccountContext();
   const { data: marketStatusData } = useMarketStatus();
-  const provider = resolveTerminalMarketDataProvider(accounts.find((account) => account.id === activeAccountId)?.broker_provider);
 
   const supportedInstruments = useMemo(
     () => instruments.filter((instrument) =>
@@ -83,49 +74,12 @@ export default function Watchlist() {
     [watchedSymbols, supportedInstruments],
   );
   const quoteQuery = useQuery({
-    queryKey: ["terminal-watchlist-quotes", activeAccountId ?? "central-dhan", provider, watchedSymbols, instrumentsLoaded],
-    enabled: Boolean(instrumentsLoaded && watchedSymbols.length > 0 && (activeAccountId ? provider : hasNoAccount)),
-    queryFn: async () => {
-      if (!activeAccountId && hasNoAccount) {
-        return fetchCentralMarketQuotes(watchedSymbols.map((symbol) => ({
-          key: symbol,
-          instrument: findWatchlistInstrument(supportedInstruments, symbol),
-        })));
-      }
-      if (!activeAccountId || !provider) throw new Error("An active account and market-data provider are required for account-scoped watchlist quotes.");
-      const instrumentsBySymbol = new Map(watchedSymbols.flatMap((symbol) => {
-        const instrument = findWatchlistInstrument(supportedInstruments, symbol);
-        return instrument ? [[symbol, instrument] as const] : [];
-      }));
-      const terminalInstruments = [...new Map(
-        [...instrumentsBySymbol.values()].map((instrument) => {
-          const terminalInstrument = toTerminalMarketDataInstrument({
-            ...instrument,
-            exchange: instrument.exchange ?? (instrument.exchangeSegment.startsWith("BSE") ? "BSE" : "NSE"),
-          }, provider);
-          return [`${terminalInstrument.exchange}:${terminalInstrument.tradingSymbol}`, terminalInstrument] as const;
-        }),
-      ).values()];
-      if (terminalInstruments.length === 0) return { quotes: {}, errors: [] };
-
-      const batchQuotes = await requestTerminalMarketData<TerminalMarketDataQuote[]>(
-        activeAccountId,
-        provider,
-        { operation: "getQuotes", instruments: terminalInstruments },
-      );
-      const quoteByInstrument = new Map(
-        batchQuotes.map((quote) => [`${quote.exchange}:${quote.tradingSymbol}`, quote]),
-      );
-      const quotes: Record<string, TerminalMarketDataQuote> = {};
-      const errors: string[] = [];
-      for (const [symbol, instrument] of instrumentsBySymbol) {
-        const exchange = instrument.exchange ?? (instrument.exchangeSegment.startsWith("BSE") ? "BSE" : "NSE");
-        const quote = quoteByInstrument.get(`${exchange}:${instrument.tradingSymbol}`);
-        if (quote) quotes[symbol] = quote;
-        else errors.push(`No account quote was returned for ${symbol}.`);
-      }
-      return { quotes, errors: [...new Set(errors)] };
-    },
+    queryKey: ["terminal-watchlist-quotes", "global-dhan", watchedSymbols, instrumentsLoaded],
+    enabled: Boolean(instrumentsLoaded && watchedSymbols.length > 0),
+    queryFn: () => fetchCentralMarketQuotes(watchedSymbols.map((symbol) => ({
+      key: symbol,
+      instrument: findWatchlistInstrument(supportedInstruments, symbol),
+    }))),
     staleTime: 5_000,
     refetchInterval: 15_000,
     retry: false,
@@ -138,19 +92,11 @@ export default function Watchlist() {
     return Number.isFinite(age) && age >= 0 && age <= 60_000;
   });
   const statusLabel = hasFreshQuote && marketStatusData?.isOpen === true ? "LIVE" : hasQuotes ? "HISTORICAL" : "UNAVAILABLE";
-  const baseStatusText = hasNoAccount
-    ? statusLabel === "LIVE"
-      ? "Central Dhan quotes · market data is independent of trading account status."
-      : statusLabel === "HISTORICAL"
-        ? "Latest available central Dhan quotes · market data is independent of trading account status."
-        : instrumentLoadError
-          ? `Using cached instruments. Central Dhan catalog refresh failed: ${instrumentLoadError}`
-          : "No current central Dhan watchlist quotes are available."
-    : statusLabel === "LIVE"
-      ? "Account-scoped Terminal OS quotes"
-      : statusLabel === "HISTORICAL"
-        ? "Latest available account quote"
-        : instrumentLoadError ?? quoteQuery.error?.message ?? "No account quotes are available";
+  const baseStatusText = statusLabel === "LIVE"
+    ? "Central Dhan quotes · independent of customer login or trading accounts."
+    : statusLabel === "HISTORICAL"
+      ? "Latest available central Dhan quotes · independent of customer login or trading accounts."
+      : instrumentLoadError ?? quoteQuery.error?.message ?? "No central Dhan watchlist quotes are available.";
   const statusText = quoteQuery.data?.errors.length
     ? `${baseStatusText}. ${quoteQuery.data.errors[0]}`
     : baseStatusText;

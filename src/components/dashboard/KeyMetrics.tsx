@@ -1,20 +1,16 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { useAllIndices, useLiveOptionChain, useFnOStocks } from "@/hooks/useMarketData";
-import { useWebSocketVix, useWebSocketStatus } from "@/hooks/useWebSocket";
 import { TrendingUp, Zap, Activity, BarChart3, Radio, Database, Moon, ArrowUp, ArrowDown, Minus } from "lucide-react";
 
 export function KeyMetrics() {
   const { data } = useAllIndices();
-  const { vix: wsVix } = useWebSocketVix();
-  const wsConnected = useWebSocketStatus();
   const { data: fnoData } = useFnOStocks();
 
   const { data: niftyOC } = useLiveOptionChain("NIFTY");
   const { data: bnfOC } = useLiveOptionChain("BANKNIFTY");
 
-  // VIX: WebSocket → Polled → null
-  const vix = wsVix || data?.vix;
+  const vix = data?.vix;
   const vixValue = vix?.value ?? null;
   const vixChange = vix?.changePercent ?? null;
 
@@ -63,7 +59,7 @@ export function KeyMetrics() {
         value={vixValue !== null ? vixValue.toFixed(2) : "—"}
         sub={vixChange !== null ? `${vixChange >= 0 ? "+" : ""}${vixChange.toFixed(2)}%` : undefined}
         subColor={vixChange !== null ? (vixChange < 0 ? "text-bullish" : "text-bearish") : undefined}
-        isLive={wsConnected && wsVix !== null}
+        isLive={Boolean(data?.isLive && vix)}
         trendDirection={vixChange !== null ? (vixChange > 0.5 ? "up" : vixChange < -0.5 ? "down" : "flat") : undefined}
       />
       <MetricCard

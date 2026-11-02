@@ -66,7 +66,9 @@ export function MostActiveFnO() {
           <TableBody>
             {mostActive.map((stock: any) => {
               const chgPct = stock.changePercent || 0;
-              const weekChg = stock.weekChange || 0;
+              const weekChange = stock.weekChange;
+              const hasWeekChange = typeof weekChange === "number" && Number.isFinite(weekChange);
+              const weekChg = hasWeekChange ? weekChange : 0;
               return (
                 <TableRow
                   key={stock.symbol}
@@ -105,7 +107,7 @@ export function MostActiveFnO() {
                     </TableCell>
                   )}
                   <TableCell className={`text-right py-2 ${weekChg >= 0 ? "text-bullish/80" : "text-bearish/80"}`}>
-                    {weekChg >= 0 ? "+" : ""}{weekChg.toFixed(1)}%
+                    {hasWeekChange ? `${weekChg >= 0 ? "+" : ""}${weekChg.toFixed(1)}%` : "—"}
                   </TableCell>
                   <TableCell className="py-2 px-5">
                     {hasOI ? (

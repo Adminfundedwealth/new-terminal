@@ -1,9 +1,8 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { useAllIndices, useLiveIndices, useLiveOptionChain, useMarketStatus, useStoredCandles } from "@/hooks/useMarketData";
-import { useWebSocketVix, useWebSocketIndices, useWebSocketStatus } from "@/hooks/useWebSocket";
+import { useAllIndices, useLiveIndices, useMarketStatus, useStoredCandles } from "@/hooks/useMarketData";
 import { Globe, Activity, Database } from "lucide-react";
 import { useChartData } from "@/hooks/useChartData";
 import {
@@ -22,9 +21,6 @@ export function FuturesVIX() {
   const { data: indicesData } = useAllIndices();
   const { data: marketStatus } = useMarketStatus();
   const { data: liveIndices } = useLiveIndices();
-  const { vix: wsVix } = useWebSocketVix();
-  const { indices: wsIndices } = useWebSocketIndices();
-  const wsConnected = useWebSocketStatus();
   
   // Try to load stored VIX candle data from IndexedDB
   const { data: storedVixCandles } = useStoredCandles("INDIAVIX");
@@ -32,10 +28,10 @@ export function FuturesVIX() {
   // Also get NIFTY stored candles for a real intraday chart
   const { data: storedNiftyCandles } = useStoredCandles("NIFTY");
 
-  const vix = wsVix || indicesData?.vix;
+  const vix = indicesData?.vix;
   const dataStatus = marketStatus?.isOpen === true
-    ? wsConnected ? "CONNECTED" : indicesData?.isLive ? "POLLING" : null
-    : marketStatus?.isOpen === false && indicesData?.isLive ? "CLOSED" : null;
+    ? indicesData?.isLive ? "LIVE" : null
+    : marketStatus?.isOpen === false && vix ? "CLOSED" : null;
   
   // Fallback: fetch VIX history from Dhan API when IndexedDB is empty
   const hasStoredVixData = !!storedVixCandles?.candles?.length;
@@ -62,25 +58,18 @@ export function FuturesVIX() {
 
   // Build index performance data using live spot prices — honest display without fake futures
   const liveFuturesData = useMemo(() => {
-    const wsIdxMap = new Map(wsIndices.map(i => [i.symbol, i]));
-    const polledIndices = liveIndices?.data || [];
-    const allLiveIndices = [...polledIndices];
-    // Add websocket indices that aren't already in polled
-    for (const wsIdx of wsIndices) {
-      if (!allLiveIndices.find((i: any) => i.symbol === wsIdx.symbol)) {
-        allLiveIndices.push(wsIdx);
-      }
-    }
-    return allLiveIndices.filter((idx: any) => idx.ltp > 0).map((idx: any) => ({
+    return (liveIndices?.data ?? []).filter((index) =>
+      index.ltp > 0 && index.change !== null && index.changePercent !== null
+    ).map((idx) => ({
       symbol: idx.symbol || idx.name,
       spotPrice: idx.ltp,
-      change: idx.change || 0,
-      changePercent: idx.changePercent || 0,
-      high: idx.high || idx.ltp,
-      low: idx.low || idx.ltp,
-      open: idx.open || idx.ltp,
+      change: idx.change,
+      changePercent: idx.changePercent,
+      high: idx.high,
+      low: idx.low,
+      open: idx.open,
     }));
-  }, [wsIndices, liveIndices]);
+  }, [liveIndices]);
 
   const indexChangeChart = useMemo(() => {
     return liveFuturesData.map((f) => ({
@@ -97,7 +86,7 @@ export function FuturesVIX() {
           <CardHeader className="pb-3 pt-4 px-5 bg-gradient-to-r from-primary/5 to-transparent">
             <CardTitle className="text-base flex items-center gap-2">
               <Globe className="h-5 w-5 text-primary drop-shadow-[0_0_8px_hsl(var(--primary)/0.5)]" /> Index Performance
-              {dataStatus && <Badge variant="outline" className={`text-xs h-5 px-2 ml-auto ${dataStatus === "CONNECTED" ? "border-bullish/30 text-bullish" : "border-muted-foreground/30 text-muted-foreground"}`}>{dataStatus}</Badge>}
+              {dataStatus && <Badge variant="outline" className={`text-xs h-5 px-2 ml-auto ${dataStatus === "LIVE" ? "border-bullish/30 text-bullish" : "border-muted-foreground/30 text-muted-foreground"}`}>{dataStatus}</Badge>}
             </CardTitle>
           </CardHeader>
           <CardContent className="px-5 pb-4">
@@ -171,11 +160,11 @@ export function FuturesVIX() {
               </div>
               <div className="rounded-md bg-accent/30 p-2 text-center border border-white/5">
                 <p className="text-xs text-muted-foreground mb-0.5">High</p>
-                <p className="text-base font-bold font-mono text-bearish">{vix.high.toFixed(2)}</p>
+                <p className="text-base font-bold font-mono text-bearish">{vix.high?.toFixed(2) ?? "—"}</p>
               </div>
               <div className="rounded-md bg-accent/30 p-2 text-center border border-white/5">
                 <p className="text-xs text-muted-foreground mb-0.5">Low</p>
-                <p className="text-base font-bold font-mono text-bullish">{vix.low.toFixed(2)}</p>
+                <p className="text-base font-bold font-mono text-bullish">{vix.low?.toFixed(2) ?? "—"}</p>
               </div>
             </div>
           )}

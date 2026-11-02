@@ -224,6 +224,7 @@ export function ChartDataDownloader() {
             securityId: sym.securityId,
             symbol: sym.symbol,
             exchangeSegment: sym.segment,
+            provider: "dhan",
             interval: `${interval}_${timeframe}`,
             candles: candleData,
             lastUpdated: Date.now(),

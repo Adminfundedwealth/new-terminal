@@ -3,17 +3,17 @@ import { Wifi, WifiOff, Clock, Activity } from "lucide-react";
 
 interface Props {
   hasMarketData: boolean;
-  isConnected: boolean;
+  isLive: boolean;
   isOpen: boolean;
   marketStatus: string;
 }
 
-export function MarketHeader({ hasMarketData, isConnected, isOpen, marketStatus }: Props) {
+export function MarketHeader({ hasMarketData, isLive, isOpen, marketStatus }: Props) {
   const now = new Date();
   const dataStatus = !isOpen
     ? hasMarketData ? "CLOSED" : "OFFLINE"
-    : isConnected ? "CONNECTED" : hasMarketData ? "POLLING" : "OFFLINE";
-  const isRealtimeConnected = dataStatus === "CONNECTED";
+    : isLive ? "LIVE" : hasMarketData ? "POLLING" : "OFFLINE";
+  const isRealtimeConnected = dataStatus === "LIVE";
   const StatusIcon = isRealtimeConnected ? Wifi : dataStatus === "CLOSED" ? Clock : hasMarketData ? Activity : WifiOff;
 
   return (

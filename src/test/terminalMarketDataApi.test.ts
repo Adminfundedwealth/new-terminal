@@ -16,6 +16,7 @@ import {
   subscribeToTerminalMarketDataStream,
   toLocalMarketDataInstrument,
   TerminalMarketDataError,
+  type TerminalRealtimeQuoteEvent,
 } from "@/lib/terminalApi";
 import { REALTIME_MOCK_TEST_ACCOUNT_ID } from "@/lib/realtimeMockTestScope";
 
@@ -81,19 +82,14 @@ describe("Main Terminal market-data contract", () => {
     expect(init.cache).toBe("no-store");
   });
 
-  it("uses authenticated Founder-global Dhan without a trading-account identifier", async () => {
-    await requestTerminalMarketData(accountId, "dhan", { operation: "authenticate" });
+  it("requests Founder-global Dhan data without customer authentication or a trading-account identifier", async () => {
+    await requestTerminalMarketData(accountId, "dhan", { operation: "listInstruments" });
 
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    const headers = new Headers(init.headers);
-    expect(new URL(url, "http://main.test").pathname).toBe("/api/terminal/market-data");
-    expect(headers.get("Authorization")).toBe(`Bearer ${accessToken}`);
+    expect(new URL(url, "http://main.test").pathname).toBe("/api/public/market-data");
+    expect(new Headers(init.headers).get("Authorization")).toBeNull();
     expect(init.credentials).toBe("omit");
-    expect(JSON.parse(String(init.body))).toEqual({
-      provider: "dhan",
-      environment: "production",
-      operation: "authenticate",
-    });
+    expect(JSON.parse(String(init.body))).toEqual({ operation: "listInstruments" });
   });
 
   it("keeps account identifiers for account-scoped providers", async () => {
@@ -112,17 +108,13 @@ describe("Main Terminal market-data contract", () => {
     expect(JSON.parse(String(init.body))).toMatchObject({ account_id: accountId, provider: "kite" });
   });
 
-  it("requests Founder-global Dhan data without sending a trading-account identifier", async () => {
-    await requestTerminalMarketData(null, "dhan", { operation: "authenticate" });
+  it("sends public market-data requests to the global service when no account is present", async () => {
+    await requestTerminalMarketData(null, "dhan", { operation: "listInstruments" });
 
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(new URL(url, "https://main.test").pathname).toBe("/api/terminal/market-data");
-    expect(new Headers(init.headers).get("Authorization")).toBe(`Bearer ${accessToken}`);
-    expect(JSON.parse(String(init.body))).toEqual({
-      provider: "dhan",
-      environment: "production",
-      operation: "authenticate",
-    });
+    expect(new URL(url, "https://main.test").pathname).toBe("/api/public/market-data");
+    expect(new Headers(init.headers).get("Authorization")).toBeNull();
+    expect(JSON.parse(String(init.body))).toEqual({ operation: "listInstruments" });
   });
 
   it("uses supported single-quote requests for Dhan batches and keeps successful quotes on partial failure", async () => {
@@ -198,7 +190,7 @@ describe("Main Terminal market-data contract", () => {
       },
     }), { status: 200, headers: { "Content-Type": "text/event-stream" } }));
 
-    const quoteReceived = new Promise<typeof quoteEvent>((resolve) => {
+    const quoteReceived = new Promise<TerminalRealtimeQuoteEvent>((resolve) => {
       const unsubscribe = subscribeToTerminalMarketDataStream(null, "dhan", ["NIFTY"], (event) => {
         unsubscribe();
         resolve(event);
@@ -292,7 +284,7 @@ describe("Main Terminal market-data contract", () => {
   it("fails before network access when the customer session is missing", async () => {
     getSession.mockResolvedValueOnce({ data: { session: null }, error: null });
 
-    await expect(requestTerminalMarketData(accountId, "dhan", { operation: "authenticate" }))
+    await expect(requestTerminalMarketData(accountId, "kite", { operation: "listInstruments" }))
       .rejects.toThrow("Authentication required");
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -306,7 +298,7 @@ describe("Main Terminal market-data contract", () => {
   ] as const)("normalizes HTTP %i into a safe %s error", async (status, error, code) => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error }), { status }));
 
-    const failure = await requestTerminalMarketData(accountId, "dhan", { operation: "authenticate" })
+    const failure = await requestTerminalMarketData(accountId, "dhan", { operation: "listInstruments" })
       .catch((reason: unknown) => reason);
 
     expect(failure).toBeInstanceOf(TerminalMarketDataError);

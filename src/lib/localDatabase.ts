@@ -62,6 +62,7 @@ export interface CandleHistory {
   securityId: string;
   symbol: string;
   exchangeSegment: string;
+  provider?: "dhan";
   interval: string; // "5" = 5min candles
   candles: CandleData[];
   lastUpdated: number;

@@ -66,7 +66,7 @@ const App = () => (
           <Routes>
             <Route path="/login" element={<Suspense fallback={<BrandSplash />}><Login /></Suspense>} />
             <Route path="/auth/sso/complete" element={<Suspense fallback={<BrandSplash />}><TerminalSsoComplete /></Suspense>} />
-            <Route element={<ProtectedRoute><DashboardLayout /></ProtectedRoute>}>
+            <Route element={<DashboardLayout />}>
               <Route path="/" element={<PageSuspense><Index /></PageSuspense>} />
               <Route path="/stocks" element={<PageSuspense><Stocks /></PageSuspense>} />
               <Route path="/indices" element={<PageSuspense><Indices /></PageSuspense>} />
@@ -74,15 +74,15 @@ const App = () => (
               <Route path="/options" element={<PageSuspense><OptionChain /></PageSuspense>} />
               <Route path="/index-stocks" element={<PageSuspense><InstrumentDirectory category="indices" /></PageSuspense>} />
               <Route path="/futures" element={<PageSuspense><Futures /></PageSuspense>} />
-              <Route path="/oi-analysis" element={<PageSuspense><OIAnalysis /></PageSuspense>} />
               <Route path="/watchlist" element={<PageSuspense><Watchlist /></PageSuspense>} />
-              <Route path="/strategy-builder" element={<PageSuspense><StrategyBuilder /></PageSuspense>} />
-              <Route path="/position-tracker" element={<PageSuspense><PositionTracker /></PageSuspense>} />
-              <Route path="/calendar" element={<PageSuspense><Calendar /></PageSuspense>} />
-              <Route path="/market-news" element={<PageSuspense><MarketNews /></PageSuspense>} />
-              <Route path="/broker-settings" element={<PageSuspense><BrokerSettings /></PageSuspense>} />
-              <Route path="/my-stats" element={<PageSuspense><MyStats /></PageSuspense>} />
-              <Route path="/__realtime-e2e" element={<PageSuspense><RealtimeMockE2E /></PageSuspense>} />
+              <Route path="/strategy-builder" element={<ProtectedRoute><PageSuspense><StrategyBuilder /></PageSuspense></ProtectedRoute>} />
+              <Route path="/position-tracker" element={<ProtectedRoute><PageSuspense><PositionTracker /></PageSuspense></ProtectedRoute>} />
+              <Route path="/calendar" element={<ProtectedRoute><PageSuspense><Calendar /></PageSuspense></ProtectedRoute>} />
+              <Route path="/market-news" element={<ProtectedRoute><PageSuspense><MarketNews /></PageSuspense></ProtectedRoute>} />
+              <Route path="/broker-settings" element={<ProtectedRoute><PageSuspense><BrokerSettings /></PageSuspense></ProtectedRoute>} />
+              <Route path="/my-stats" element={<ProtectedRoute><PageSuspense><MyStats /></PageSuspense></ProtectedRoute>} />
+              <Route path="/__realtime-e2e" element={<ProtectedRoute><PageSuspense><RealtimeMockE2E /></PageSuspense></ProtectedRoute>} />
+              <Route path="/oi-analysis" element={<PageSuspense><OIAnalysis /></PageSuspense>} />
             </Route>
             <Route path="*" element={<Suspense fallback={null}><NotFound /></Suspense>} />
           </Routes>

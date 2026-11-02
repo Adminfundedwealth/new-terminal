@@ -6,7 +6,7 @@ import type { OptionData } from "@/lib/mockData";
 import { deserializeCanonicalOrder, type CanonicalOrderRow, type CanonicalOrder } from "@/lib/orderModel";
 import { REALTIME_MOCK_TEST_ACCOUNT_ID } from "@/lib/realtimeMockTestScope";
 
-const TERMINAL_OS_BASE = (import.meta.env.VITE_TERMINAL_OS_URL || "").replace(/\/$/, "");
+const TERMINAL_OS_BASE = (import.meta.env.VITE_TERMINAL_OS_URL || "https://terminal-os.fundedwealth.com").replace(/\/$/, "");
 
 export interface TerminalAccount {
   id: string;
@@ -418,23 +418,41 @@ export interface TerminalMarketDataCandle {
   openInterest?: number;
 }
 
+export interface TerminalMarketDataOptionLeg {
+  ltp: number | null;
+  iv: number | null;
+  oi_change: number | null;
+  bid: number | null;
+  ask: number | null;
+  greeks: {
+    delta: number | null;
+    gamma: number | null;
+    theta: number | null;
+    vega: number | null;
+  } | null;
+}
+
 export interface TerminalMarketDataOptionChain {
   provider: TerminalMarketDataProvider;
   underlying: string;
   expiry: string;
   expiries: string[];
   spotPrice: number;
+  totalCEOI: number;
+  totalPEOI: number;
+  greeksAvailable: boolean;
+  ivAvailable?: boolean;
+  oiChangeAvailable?: boolean;
+  depthAvailable?: boolean;
+  afterHours?: boolean;
+  cachedAt?: string | number | null;
   chain: Array<{
     strikePrice: number;
     ce: OptionData["ce"];
     pe: OptionData["pe"];
+    call?: TerminalMarketDataOptionLeg | null;
+    put?: TerminalMarketDataOptionLeg | null;
   }>;
-  totalCEOI: number;
-  totalPEOI: number;
-  greeksAvailable: boolean;
-  oiChangeAvailable?: boolean;
-  afterHours?: boolean;
-  cachedAt?: string | number | null;
 }
 
 export function resolveTerminalMarketDataProvider(_accountBrokerProvider: string | null | undefined): TerminalMarketDataProvider {
@@ -493,7 +511,6 @@ export function toLocalMarketDataInstrument(instrument: TerminalMarketDataInstru
 }
 
 export type TerminalMarketDataOperation =
-  | { operation: "authenticate" }
   | { operation: "listInstruments" }
   | { operation: "searchInstruments"; query: string }
   | { operation: "getQuote"; instrument: TerminalMarketDataInstrument }
@@ -626,31 +643,20 @@ export async function requestTerminalMarketData<T>(
   operation: TerminalMarketDataOperation,
   environment: "production" | "paper" | "sandbox" = "production",
 ): Promise<T> {
-  if (provider === "dhan" && operation.operation === "getQuotes") {
-    const instruments = operation.instruments.filter((instrument) =>
-      instrument.provider === "dhan" &&
-      /^\d+$/.test(instrument.providerInstrumentId) &&
-      instrument.exchangeSegment.length > 0 &&
-      instrument.tradingSymbol.length > 0
-    );
-    const quotes: TerminalMarketDataQuote[] = [];
-    for (let offset = 0; offset < instruments.length; offset += 5) {
-      const batch = instruments.slice(offset, offset + 5);
-      const results = await Promise.allSettled(batch.map((instrument) =>
-        requestTerminalMarketData<TerminalMarketDataQuote>(
-          accountId,
-          provider,
-          { operation: "getQuote", instrument },
-          environment,
-        )
-      ));
-      quotes.push(...results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []));
-    }
-    return quotes as T;
+  if (provider === "dhan") {
+    if (!TERMINAL_OS_BASE) throw new Error("Terminal OS is not configured.");
+    const response = await fetch(`${TERMINAL_OS_BASE}/api/public/market-data`, {
+      method: "POST",
+      credentials: "omit",
+      cache: "no-store",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(operation),
+    });
+    return readMarketDataResponse<T>(response);
   }
 
-  const scopedAccountId = provider === "dhan" ? null : accountId;
-  if (!scopedAccountId && provider !== "dhan") throw new Error("A trading account is required for account-scoped market data.");
+  const scopedAccountId = accountId;
+  if (!scopedAccountId) throw new Error("A trading account is required for account-scoped market data.");
   const accessToken = await getCustomerAccessToken();
   const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/market-data`, {
     method: "POST",

@@ -9,7 +9,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { BarChart3, Loader2, X, CandlestickChart, LineChart } from "lucide-react";
 
-const TIME_RANGES = ["1W", "1M", "3M", "6M", "1Y"] as const;
+const TIME_RANGES = ["1m", "5m", "15m", "1W", "1M", "3M", "6M", "1Y"] as const;
 type TimeRange = (typeof TIME_RANGES)[number];
 
 interface StockChartProps {
@@ -91,10 +91,10 @@ function ChartCore({
       },
       timeScale: {
         borderVisible: false,
-        timeVisible: range === "1W",
+        timeVisible: ["1m", "5m", "15m", "1W"].includes(range),
         secondsVisible: false,
         rightOffset: 3,
-        minBarSpacing: range === "1W" ? 3 : 4,
+        minBarSpacing: ["1m", "5m", "15m", "1W"].includes(range) ? 3 : 4,
       },
       handleScroll: { mouseWheel: true, pressedMouseMove: true },
       handleScale: { mouseWheel: true, pinch: true },
@@ -256,7 +256,7 @@ function ChartCore({
         )}
         {error && !candles && (
           <div className="flex items-center justify-center h-[200px] text-sm text-muted-foreground">
-            Chart data unavailable. Start the proxy server for live data.
+            Dhan historical data is unavailable for this instrument and interval.
           </div>
         )}
         <div ref={chartContainerRef} className={`w-full rounded-lg overflow-hidden ${fill ? "min-h-0 flex-1" : ""}`} />

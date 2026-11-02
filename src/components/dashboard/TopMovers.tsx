@@ -11,11 +11,7 @@ export function TopMovers() {
   const { data, isLoading } = useFnOStocks();
   const gainers = data?.gainers || [];
   const losers = data?.losers || [];
-  const sourceLabel = data?.source === "nse"
-    ? "NSE SNAPSHOT"
-    : data?.source === "tradingview"
-      ? "TRADINGVIEW SNAPSHOT"
-      : data?.source === "database" ? "CACHED" : null;
+  const sourceLabel = data?.source === "dhan" ? "DHAN" : null;
 
   return (
     <div className="grid lg:grid-cols-2 gap-3">

@@ -1,11 +1,9 @@
 import { useMemo } from "react";
 import { useLiveIndices, useMarketStatus, useExpiryList, useAllIndices } from "@/hooks/useMarketData";
-import { getSpotPrice } from "@/lib/positionStore";
 import { DashboardSkeleton } from "@/components/LoadingSkeletons";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ExpectedMoveWidget } from "@/components/ExpectedMoveWidget";
 import { IVRankCard, IVRankDashboard } from "@/components/IVRankWidget";
-import { useWebSocketStatus, useWebSocketVix } from "@/hooks/useWebSocket";
 import { Target, BarChart3, Zap, TrendingUp, Activity } from "lucide-react";
 
 import { MarketHeader } from "@/components/dashboard/MarketHeader";
@@ -50,18 +48,17 @@ export default function Index() {
   const { data: niftyExpiry } = useExpiryList("NIFTY");
   const { data: bnfExpiry } = useExpiryList("BANKNIFTY");
   const { data: allIndicesData } = useAllIndices();
-  const { vix: wsVix } = useWebSocketVix();
-  const isRealtimeConnected = useWebSocketStatus();
 
   const indices = indicesResult?.data || [];
-  const hasMarketData = Boolean(indicesResult?.isLive);
+  const hasMarketData = indices.length > 0;
+  const isLive = Boolean(indicesResult?.isLive);
   const isOpen = marketStatusResult?.isOpen ?? false;
   const marketStatus = marketStatusResult?.status || "Closed";
   const giftNifty = marketStatusResult?.giftNifty;
   const indicativeNifty = marketStatusResult?.indicativeNifty;
   
   // Live VIX value for Expected Move calculations
-  const liveVix = wsVix?.value ?? allIndicesData?.vix?.value ?? 0;
+  const liveVix = allIndicesData?.vix?.value ?? 0;
 
   const nearestExpiries = useMemo(() => {
     const nExpiry = niftyExpiry?.expiries?.[0]?.value || "";
@@ -94,14 +91,14 @@ export default function Index() {
         {/* ═══ WELCOME + HEADER ═══ */}
         <MarketHeader
           hasMarketData={hasMarketData}
-          isConnected={isRealtimeConnected}
+          isLive={isLive}
           isOpen={isOpen}
           marketStatus={marketStatus}
         />
         <WelcomeBanner />
 
         {/* ═══ TICKER TAPE ═══ */}
-        <TickerTape indices={indices} giftNifty={giftNifty} />
+        <TickerTape indices={indices} isLive={isLive} giftNifty={giftNifty} />
 
         {/* ═══ QUICK TRADE ACTIONS ═══ */}
         <SectionHeader
@@ -119,7 +116,7 @@ export default function Index() {
           icon={<TrendingUp className="h-4 w-4" />}
           tooltip="Real-time spot prices for major indices. The mini-chart shows today's intraday movement. Click to open option chain."
         />
-        <IndexCards indices={indices} />
+        <IndexCards indices={indices} isLive={isLive} isMarketOpen={isOpen} />
 
         {/* ═══ KEY METRICS ═══ */}
         <SectionHeader
@@ -140,13 +137,13 @@ export default function Index() {
         <div className="grid lg:grid-cols-3 gap-3">
           <ExpectedMoveWidget
             symbol="NIFTY"
-            spotPrice={indices[0]?.ltp || getSpotPrice("NIFTY")}
+            spotPrice={indices[0]?.ltp ?? 0}
             iv={liveVix}
             daysToExpiry={getDTE("NIFTY")}
           />
           <ExpectedMoveWidget
             symbol="BANKNIFTY"
-            spotPrice={indices[1]?.ltp || getSpotPrice("BANKNIFTY")}
+            spotPrice={indices[1]?.ltp ?? 0}
             iv={liveVix * 1.15}
             daysToExpiry={getDTE("BANKNIFTY")}
           />

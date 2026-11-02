@@ -8,14 +8,19 @@ import {
   Database, Download, RefreshCw, Trash2, CheckCircle2, Clock, HardDrive, BarChart3,
   Loader2, AlertCircle, Radio, Layers, CandlestickChart, TrendingUp,
 } from "lucide-react";
-import { fetchCashQuotes, fetchInstrumentMaster, fetchHistoricalCandles } from "@/lib/marketApi";
 import {
   saveInstruments, savePriceSnapshots, saveCandleHistory, getDatabaseStats,
   clearAllData, setMetadata, type DatabaseStats, type Instrument,
   type CandleHistory, type CandleData,
 } from "@/lib/localDatabase";
-import { invalidateLocalPriceCache } from "@/hooks/useMarketData";
 import { useQueryClient } from "@tanstack/react-query";
+import {
+  requestTerminalMarketData,
+  toLocalMarketDataInstrument,
+  toTerminalMarketDataInstrument,
+  type TerminalMarketDataInstrument,
+  type TerminalMarketDataQuote,
+} from "@/lib/terminalApi";
 
 type UpdatePhase = "idle" | "instruments" | "prices" | "candles" | "fno-candles" | "done" | "error";
 
@@ -26,28 +31,36 @@ interface UpdateProgress {
   message: string;
 }
 
-// Index instruments to fetch historical candles for
-const INDEX_CANDLE_TARGETS = [
-  { securityId: "13", symbol: "NIFTY", segment: "IDX_I", instrument: "INDEX" },
-  { securityId: "25", symbol: "BANKNIFTY", segment: "IDX_I", instrument: "INDEX" },
-  { securityId: "27", symbol: "FINNIFTY", segment: "IDX_I", instrument: "INDEX" },
-  { securityId: "442", symbol: "MIDCPNIFTY", segment: "IDX_I", instrument: "INDEX" },
-  { securityId: "26", symbol: "INDIAVIX", segment: "IDX_I", instrument: "INDEX" },
-];
+const INDEX_ALIASES: Record<string, string[]> = {
+  NIFTY: ["NIFTY", "NIFTY 50"],
+  BANKNIFTY: ["BANKNIFTY", "NIFTY BANK"],
+  FINNIFTY: ["FINNIFTY", "NIFTY FIN SERVICE"],
+  MIDCPNIFTY: ["MIDCPNIFTY", "NIFTY MID SELECT"],
+};
+const STOCK_SYMBOLS = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "SBIN", "ICICIBANK"];
+const HISTORY_LOOKBACK_DAYS = 30;
 
-// Top F&O stocks to also fetch candle history for
-const FNO_STOCK_CANDLE_TARGETS = [
-  { securityId: "2885", symbol: "RELIANCE", segment: "NSE_EQ", instrument: "EQUITY" },
-  { securityId: "11536", symbol: "TCS", segment: "NSE_EQ", instrument: "EQUITY" },
-  { securityId: "1333", symbol: "HDFCBANK", segment: "NSE_EQ", instrument: "EQUITY" },
-  { securityId: "11915", symbol: "INFY", segment: "NSE_EQ", instrument: "EQUITY" },
-  { securityId: "4963", symbol: "ICICIBANK", segment: "NSE_EQ", instrument: "EQUITY" },
-  { securityId: "3045", symbol: "SBIN", segment: "NSE_EQ", instrument: "EQUITY" },
-  { securityId: "11723", symbol: "BHARTIARTL", segment: "NSE_EQ", instrument: "EQUITY" },
-  { securityId: "1660", symbol: "ITC", segment: "NSE_EQ", instrument: "EQUITY" },
-  { securityId: "10999", symbol: "TATAMOTORS", segment: "NSE_EQ", instrument: "EQUITY" },
-  { securityId: "5258", symbol: "BAJFINANCE", segment: "NSE_EQ", instrument: "EQUITY" },
-];
+function findMarketInstrument(catalog: Instrument[], symbol: string): Instrument | undefined {
+  const names = new Set((INDEX_ALIASES[symbol] ?? [symbol]).map((name) => name.toUpperCase()));
+  return catalog.find((instrument) =>
+    names.has(instrument.symbol.trim().toUpperCase()) ||
+    names.has(instrument.tradingSymbol.trim().toUpperCase())
+  );
+}
+
+function asDateString(date: Date): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(date);
+}
+
+function toEpochMilliseconds(value: string | number): number {
+  const numericTimestamp = Number(value);
+  if (Number.isFinite(numericTimestamp) && /^\d+$/.test(String(value))) {
+    return numericTimestamp > 1e12 ? numericTimestamp : numericTimestamp * 1000;
+  }
+  const parsed = Date.parse(String(value));
+  if (!Number.isFinite(parsed)) throw new Error("Dhan returned an invalid candle timestamp.");
+  return parsed;
+}
 
 export function DatabaseManager() {
   const queryClient = useQueryClient();
@@ -78,11 +91,15 @@ export function DatabaseManager() {
       // ── Phase 1: Download Instrument Master ──
       setProgress({ phase: "instruments", current: 0, total: 1, message: "Downloading instrument master..." });
 
-      const result = await fetchInstrumentMaster();
-      const instruments: Instrument[] = result.instruments || [];
+      const remoteInstruments = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(
+        null,
+        "dhan",
+        { operation: "listInstruments" },
+      );
+      const instruments = remoteInstruments.map(toLocalMarketDataInstrument);
 
       if (instruments.length === 0) {
-        throw new Error("No instruments received from Dhan API");
+        throw new Error("The central Dhan service returned no official instruments.");
       }
 
       setProgress({ phase: "instruments", current: 50, total: 100, message: `Saving ${instruments.length.toLocaleString()} instruments...` });
@@ -103,40 +120,45 @@ export function DatabaseManager() {
       await setMetadata("lastInstrumentUpdate", new Date().toISOString());
 
       // ── Phase 2: Save cash-market price snapshots from Dhan quotes ──
-      setProgress({ phase: "prices", current: 0, total: 100, message: "Fetching cash-market quotes from Dhan..." });
+      setProgress({ phase: "prices", current: 0, total: 100, message: "Fetching central Dhan cash-market quotes..." });
 
       try {
-        const quoteTargets = [...INDEX_CANDLE_TARGETS, ...FNO_STOCK_CANDLE_TARGETS];
-        const targetsBySegment = new Map<string, string[]>();
-        for (const target of quoteTargets) {
-          const ids = targetsBySegment.get(target.segment) || [];
-          ids.push(target.securityId);
-          targetsBySegment.set(target.segment, ids);
-        }
-        const quoteGroups = await Promise.all(
-          [...targetsBySegment.entries()].map(async ([segment, ids]) => [segment, await fetchCashQuotes(segment, ids)] as const),
+        const quoteTargets = [...Object.keys(INDEX_ALIASES), ...STOCK_SYMBOLS].flatMap((symbol) => {
+          const instrument = findMarketInstrument(instruments, symbol);
+          return instrument ? [{ symbol, instrument }] : [];
+        });
+        const terminalInstruments = quoteTargets.map(({ instrument }) =>
+          toTerminalMarketDataInstrument(instrument, "dhan")
         );
-        const quotesById = Object.assign({}, ...quoteGroups.map(([, quotes]) => quotes));
-        const priceSnapshots = quoteTargets.flatMap((target) => {
-          const quote = quotesById[target.securityId];
-          if (!quote) return [];
-          const previousClose = quote.previousClose ?? quote.ltp;
+        const quotes = await requestTerminalMarketData<TerminalMarketDataQuote[]>(
+          null,
+          "dhan",
+          { operation: "getQuotes", instruments: terminalInstruments },
+        );
+        const quotesByInstrument = new Map(quotes.map((quote) => [`${quote.exchange}:${quote.tradingSymbol}`, quote]));
+        const priceSnapshots = quoteTargets.flatMap(({ symbol, instrument }) => {
+          const exchange = instrument.exchange ?? (instrument.exchangeSegment.startsWith("BSE") ? "BSE" : "NSE");
+          const quote = quotesByInstrument.get(`${exchange}:${instrument.tradingSymbol}`);
+          const timestamp = quote ? Date.parse(quote.timestamp) : Number.NaN;
+          if (!quote || !Number.isFinite(timestamp) || quote.open === null || quote.high === null ||
+              quote.low === null || quote.previousClose === null || quote.change === null ||
+              quote.changePercent === null || quote.volume === null) return [];
           return [{
-            securityId: target.securityId,
-            symbol: target.symbol,
+            securityId: instrument.securityId,
+            symbol,
             ltp: quote.ltp,
-            open: quote.open ?? quote.ltp,
-            high: quote.high ?? quote.ltp,
-            low: quote.low ?? quote.ltp,
-            close: previousClose,
-            change: quote.ltp - previousClose,
-            changePercent: previousClose ? ((quote.ltp - previousClose) / previousClose) * 100 : 0,
+            open: quote.open,
+            high: quote.high,
+            low: quote.low,
+            close: quote.previousClose,
+            change: quote.change,
+            changePercent: quote.changePercent,
             volume: quote.volume,
-            oi: 0,
-            timestamp: Date.now(),
+            oi: quote.openInterest ?? 0,
+            timestamp,
           }];
         });
-        if (priceSnapshots.length === 0) throw new Error("Dhan returned no cash-market quotes for the selected instruments");
+        if (priceSnapshots.length === 0) throw new Error("The central Dhan service returned no complete cash-market quotes.");
         await savePriceSnapshots(priceSnapshots);
         await setMetadata("lastPriceUpdate", new Date().toISOString());
         setProgress({ phase: "prices", current: 100, total: 100, message: `Saved ${priceSnapshots.length} cash-market price snapshots` });
@@ -145,54 +167,74 @@ export function DatabaseManager() {
         setProgress({ phase: "prices", current: 100, total: 100, message: `Price snapshots unavailable: ${message}` });
       }
 
-      // ── Phase 3: Download Historical Candles for Indices ──
-      const allCandleTargets = [...INDEX_CANDLE_TARGETS, ...FNO_STOCK_CANDLE_TARGETS];
+      // ── Phase 3: Download Historical Candles for supported indices and stocks ──
+      const allCandleTargets = [...Object.keys(INDEX_ALIASES), ...STOCK_SYMBOLS].flatMap((symbol) => {
+        const instrument = findMarketInstrument(instruments, symbol);
+        return instrument ? [{ symbol, instrument }] : [];
+      });
       setProgress({ phase: "candles", current: 0, total: allCandleTargets.length, message: "Downloading historical candles..." });
 
       let successCount = 0;
+      const candleErrors: string[] = [];
       for (let i = 0; i < allCandleTargets.length; i++) {
         const target = allCandleTargets[i];
-        const isIndex = i < INDEX_CANDLE_TARGETS.length;
+        const isIndex = target.instrument.exchangeSegment === "IDX_I";
         setProgress({
-          phase: i < INDEX_CANDLE_TARGETS.length ? "candles" : "fno-candles",
+          phase: isIndex ? "candles" : "fno-candles",
           current: i,
           total: allCandleTargets.length,
           message: `Fetching ${target.symbol} ${isIndex ? "index" : "stock"} candles...`,
         });
 
         try {
-          const candleResult = await fetchHistoricalCandles(
-            target.securityId,
-            target.segment,
-            target.instrument,
-            "5", // 5-minute candles
+          const now = new Date();
+          const from = new Date(now.getTime() - HISTORY_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+          const candlesFromService = await requestTerminalMarketData<Array<{
+            timestamp: string;
+            open: number;
+            high: number;
+            low: number;
+            close: number;
+            volume: number;
+            openInterest?: number;
+          }>>(
+            null,
+            "dhan",
+            {
+              operation: "getHistoricalCandles",
+              instrument: toTerminalMarketDataInstrument(target.instrument, "dhan"),
+              interval: "5m",
+              fromDate: asDateString(from),
+              toDate: asDateString(now),
+            },
           );
-
-          if (candleResult?.data?.timestamp?.length > 0) {
-            const candles: CandleData[] = candleResult.data.timestamp.map((ts: number, idx: number) => ({
-              timestamp: ts * 1000, // Convert epoch seconds to ms
-              open: candleResult.data.open[idx],
-              high: candleResult.data.high[idx],
-              low: candleResult.data.low[idx],
-              close: candleResult.data.close[idx],
-              volume: candleResult.data.volume[idx],
-              oi: candleResult.data.oi?.[idx],
+          if (candlesFromService.length > 0) {
+            const candles: CandleData[] = candlesFromService.map((candle) => ({
+              timestamp: toEpochMilliseconds(candle.timestamp),
+              open: candle.open,
+              high: candle.high,
+              low: candle.low,
+              close: candle.close,
+              volume: candle.volume,
+              oi: candle.openInterest,
             }));
-
             const history: CandleHistory = {
-              securityId: target.securityId,
+              securityId: target.instrument.securityId,
               symbol: target.symbol,
-              exchangeSegment: target.segment,
-              interval: "5",
+              exchangeSegment: target.instrument.exchangeSegment,
+              provider: "dhan",
+              interval: "5m",
               candles,
               lastUpdated: Date.now(),
             };
 
             await saveCandleHistory(history);
             successCount++;
+          } else {
+            candleErrors.push(`${target.symbol}: no candles returned`);
           }
-        } catch (err) {
-          console.warn(`Failed to fetch candles for ${target.symbol}:`, err);
+        } catch (error) {
+          candleErrors.push(`${target.symbol}: ${error instanceof Error ? error.message : "request failed"}`);
         }
 
         // Small delay between requests to avoid rate limiting
@@ -205,16 +247,14 @@ export function DatabaseManager() {
 
       // ── Done ──
       // Invalidate all caches so hook refreshes pull from IndexedDB
-      invalidateLocalPriceCache();
-      queryClient.invalidateQueries({ queryKey: ["nse-indices"] });
-      queryClient.invalidateQueries({ queryKey: ["nse-fno-stocks"] });
+      queryClient.invalidateQueries({ queryKey: ["global-dhan-indices"] });
+      queryClient.invalidateQueries({ queryKey: ["global-dhan-fno-stocks"] });
       queryClient.invalidateQueries({ queryKey: ["stored-candles"] });
 
       setProgress({ phase: "done", current: 100, total: 100, message: "Database updated successfully!" });
-      toast.success(
-        `Database updated: ${instruments.length.toLocaleString()} instruments, ${successCount} candle charts stored`,
-        { duration: 5000 }
-      );
+      const completionMessage = `Database updated: ${instruments.length.toLocaleString()} instruments, ${successCount} candle charts stored`;
+      if (candleErrors.length > 0) toast.warning(`${completionMessage}. ${candleErrors.length} candle requests were unavailable.`, { duration: 7000 });
+      else toast.success(completionMessage, { duration: 5000 });
       await loadStats();
     } catch (err: any) {
       setProgress({ phase: "error", current: 0, total: 0, message: err.message || "Update failed" });
@@ -230,7 +270,6 @@ export function DatabaseManager() {
   const handleClearDatabase = async () => {
     try {
       await clearAllData();
-      invalidateLocalPriceCache();
       queryClient.invalidateQueries();
       await loadStats();
       toast.info("Local database cleared");

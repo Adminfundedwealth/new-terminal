@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
-import { Outlet, useLocation } from "react-router-dom";
+import { Link, Outlet, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { StatusFooter } from "@/components/StatusFooter";
 import { CommandPalette } from "@/components/CommandPalette";
@@ -11,7 +11,6 @@ import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useAuth } from "@/hooks/useAuth";
 import { useAccountContext } from "@/hooks/useAccountContext";
 import { useLiveIndices, useMarketStatus, useAllIndices } from "@/hooks/useMarketData";
-import { useWebSocketStatus } from "@/hooks/useWebSocket";
 import { marketWS } from "@/lib/terminalRealtimeClient";
 import { resolveTerminalMarketDataProvider } from "@/lib/terminalApi";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
@@ -22,7 +21,7 @@ import {
   fetchTerminalRisk,
   fetchTerminalWatchlists,
 } from "@/lib/terminalApi";
-import { Search, Bell, Timer, RefreshCw, Wifi, WifiOff, Plane, LogOut } from "lucide-react";
+import { Search, Bell, Timer, RefreshCw, Wifi, WifiOff, Plane, LogOut, LogIn } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
@@ -41,9 +40,10 @@ export default function DashboardLayout() {
   );
 
   useEffect(() => {
+    if (!user) return;
     marketWS.start({ accountId: null, provider: activeAccountProvider });
     return () => marketWS.stop();
-  }, [activeAccountProvider]);
+  }, [activeAccountProvider, user]);
 
   useQueries({
     queries: [
@@ -63,14 +63,13 @@ export default function DashboardLayout() {
   const { data: indicesResult } = useLiveIndices();
   const { data: marketResult } = useMarketStatus();
   const { data: allIndicesData } = useAllIndices();
-  const isRealtimeConnected = useWebSocketStatus();
 
   const indices = indicesResult?.data || [];
   const isMarketOpen = marketResult?.isOpen || false;
   const dataStatus = !isMarketOpen
-    ? indicesResult?.isLive ? "CLOSED" : "OFFLINE"
-    : isRealtimeConnected ? "CONNECTED" : indicesResult?.isLive ? "POLLING" : "OFFLINE";
-  const isRealtimeActive = dataStatus === "CONNECTED";
+    ? indices.length > 0 ? "CLOSED" : "OFFLINE"
+    : indicesResult?.isLive ? "LIVE" : "OFFLINE";
+  const isRealtimeActive = dataStatus === "LIVE";
   const giftNifty = marketResult?.giftNifty || null;
   const liveVix = allIndicesData?.vix;
 
@@ -194,7 +193,7 @@ export default function DashboardLayout() {
                   <div className="space-y-3">
                     <div className="flex items-center gap-2">
                       <div className={`h-2.5 w-2.5 rounded-full ${isRealtimeActive ? "bg-bullish animate-pulse" : "bg-muted-foreground/50"}`} />
-                      <p className="text-xs font-semibold">{dataStatus === "CLOSED" ? "Market closed · Last available data" : dataStatus === "CONNECTED" ? "Realtime stream connected · Awaiting ticks" : dataStatus === "POLLING" ? "Market data polling · Realtime disconnected" : "Data unavailable"}</p>
+                      <p className="text-xs font-semibold">{dataStatus === "CLOSED" ? "Market closed · Showing last Dhan quotes" : dataStatus === "LIVE" ? "Market open · Dhan quotes updating" : "Market data unavailable"}</p>
                     </div>
 
                     <div className="space-y-1.5 text-xs">
@@ -248,14 +247,20 @@ export default function DashboardLayout() {
                 <TooltipContent side="bottom" className="text-xs">Alerts</TooltipContent>
               </Tooltip>
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button aria-label={`Sign out ${user?.email ?? "account"}`} variant="ghost" size="icon" className="h-7 w-7 hover:bg-destructive/10 hover:text-destructive" onClick={() => void handleSignOut()}>
-                    <LogOut className="h-3.5 w-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" className="text-xs">Sign out</TooltipContent>
-              </Tooltip>
+              {user ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button aria-label={`Sign out ${user.email ?? "account"}`} variant="ghost" size="icon" className="h-7 w-7 hover:bg-destructive/10 hover:text-destructive" onClick={() => void handleSignOut()}>
+                      <LogOut className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="text-xs">Sign out</TooltipContent>
+                </Tooltip>
+              ) : (
+                <Button asChild size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs">
+                  <Link to="/login"><LogIn className="h-3.5 w-3.5" /> Sign in</Link>
+                </Button>
+              )}
 
               <div className="w-px h-4 bg-border mx-0.5" />
 
@@ -276,7 +281,7 @@ export default function DashboardLayout() {
           </header>
 
           <main className="dashboard-main flex min-h-0 flex-1 flex-col overflow-auto p-2.5 sm:p-3 lg:p-4 pb-14 sm:pb-12">
-            <TradingAccountBar />
+            {user && <TradingAccountBar />}
             <div className="page-transition min-h-0 flex-1" key={location.pathname}>
               <Outlet />
             </div>

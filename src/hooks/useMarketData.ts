@@ -1,38 +1,23 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchLiveIndices, fetchMarketStatus, fetchAllIndices, fetchLiveFnOStocks, fetchProxyHealth, isNseMarketOpenAt, isWithinNseSessionAt } from "@/lib/marketApi";
+import { fetchMarketStatus, fetchAllIndices, fetchProxyHealth, isNseMarketOpenAt, isWithinNseSessionAt } from "@/lib/marketApi";
 import type { FnOStockData, OptionUnderlying } from "@/lib/marketApi";
 import { getMaxPain } from "@/lib/oiUtils";
-import type { OptionData, IndexData, ExpiryDate } from "@/lib/mockData";
+import type { OptionData, ExpiryDate } from "@/lib/mockData";
 import { useAccountContext } from "@/hooks/useAccountContext";
 import {
   requestTerminalMarketData,
   resolveTerminalMarketDataProvider,
   type TerminalMarketDataInstrument,
   type TerminalMarketDataOptionChain,
+  type TerminalMarketDataQuote,
 } from "@/lib/terminalApi";
-import { useWebSocketIndices, useWebSocketVix, useWebSocketStatus } from "@/hooks/useWebSocket";
-import { useMemo, useEffect, useState, useRef } from "react";
 import {
-  getAllPriceSnapshots,
   getCandleHistory,
-  getDatabaseStats,
-  type PriceSnapshot,
 } from "@/lib/localDatabase";
 
 // ── Shared state: tracks whether proxy is reachable ──
 let proxyStatus: "unknown" | "online" | "offline" = "unknown";
 let proxyCheckTime = 0;
-
-const CENTRAL_INDEX_OPTION_UNDERLYINGS: Record<string, OptionUnderlying> = {
-  NIFTY: { securityId: "13", exchangeSegment: "IDX_I" },
-  BANKNIFTY: { securityId: "25", exchangeSegment: "IDX_I" },
-  FINNIFTY: { securityId: "27", exchangeSegment: "IDX_I" },
-  MIDCPNIFTY: { securityId: "442", exchangeSegment: "IDX_I" },
-};
-
-function resolveCentralOptionUnderlying(symbol: string, underlying?: OptionUnderlying): OptionUnderlying | null {
-  return underlying ?? CENTRAL_INDEX_OPTION_UNDERLYINGS[symbol.trim().toUpperCase()] ?? null;
-}
 
 function markProxyOnline() { proxyStatus = "online"; proxyCheckTime = Date.now(); }
 function markProxyOffline() { proxyStatus = "offline"; proxyCheckTime = Date.now(); }
@@ -42,116 +27,81 @@ function shouldTryProxy(): boolean {
   return Date.now() - proxyCheckTime > 30000;
 }
 
-// ── Local database cache singleton ──
-let cachedPrices: PriceSnapshot[] | null = null;
-let cachedPricesLoaded = false;
-let cachedPricesPromise: Promise<PriceSnapshot[]> | null = null;
-
-async function getCachedPricesOnce(): Promise<PriceSnapshot[]> {
-  if (cachedPrices !== null) return cachedPrices;
-  if (cachedPricesPromise) return cachedPricesPromise;
-  cachedPricesPromise = getAllPriceSnapshots().then((p) => {
-    cachedPrices = p;
-    cachedPricesLoaded = true;
-    return p;
-  }).catch(() => {
-    cachedPrices = [];
-    cachedPricesLoaded = true;
-    return [];
-  });
-  return cachedPricesPromise;
-}
-
-// Build indices from cached price snapshots
-function buildCachedIndices(prices: PriceSnapshot[]): IndexData[] {
-  const indexSymbols = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"];
-  const nameMap: Record<string, string> = {
-    NIFTY: "NIFTY 50",
-    BANKNIFTY: "BANK NIFTY",
-    FINNIFTY: "FIN NIFTY",
-    MIDCPNIFTY: "MIDCAP NIFTY",
-  };
-  return indexSymbols
-    .map((sym) => {
-      const p = prices.find((pr) => pr.symbol === sym);
-      if (!p) return null;
-      return {
-        name: nameMap[sym] || sym,
-        symbol: sym,
-        ltp: p.ltp,
-        change: p.change,
-        changePercent: p.changePercent,
-        high: p.high,
-        low: p.low,
-        open: p.open,
-        prevClose: p.close,
-      };
-    })
-    .filter(Boolean) as IndexData[];
-}
-
-// ── Hook: Live Indices (WebSocket primary, polling fallback, DB cache tertiary) ──
-// NO MOCK FALLBACK — returns empty array when offline
+// ── Hook: Live indices from the central Dhan market-data service ──
 export function useLiveIndices() {
-  const { indices: wsIndices, isConnected: wsConnected } = useWebSocketIndices();
+  const marketStatus = useMarketStatus();
+  const aliases: Record<string, string[]> = {
+    NIFTY: ["NIFTY", "NIFTY 50"],
+    BANKNIFTY: ["BANKNIFTY", "NIFTY BANK"],
+    FINNIFTY: ["FINNIFTY", "NIFTY FIN SERVICE"],
+    MIDCPNIFTY: ["MIDCPNIFTY", "NIFTY MID SELECT"],
+  };
 
   const pollingQuery = useQuery({
-    queryKey: ["nse-indices"],
+    queryKey: ["global-dhan-indices"],
     queryFn: async () => {
-      if (shouldTryProxy()) {
-        try {
-          const data = await fetchLiveIndices();
-          if (data && data.length > 0) { markProxyOnline(); return { data, isLive: true }; }
-        } catch (e) { markProxyOffline(); console.warn("Indices fetch failed:", e); }
-      }
-      // Try local DB prices
-      const dbPrices = await getCachedPricesOnce();
-      const dbIndices = buildCachedIndices(dbPrices);
-      if (dbIndices.length > 0) {
-        return { data: dbIndices, isLive: false, source: "database" as const };
-      }
-      // NO MOCK — return empty
-      return { data: [] as IndexData[], isLive: false };
+      const catalog = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(
+        null,
+        "dhan",
+        { operation: "listInstruments" },
+      );
+      const instruments = Object.entries(aliases).flatMap(([symbol, names]) => {
+        const acceptedNames = new Set(names.map((name) => name.toUpperCase()));
+        const instrument = catalog.find((candidate) =>
+          candidate.exchangeSegment === "IDX_I" &&
+          candidate.instrumentType.toUpperCase() === "INDEX" &&
+          (acceptedNames.has(candidate.symbol.trim().toUpperCase()) ||
+            acceptedNames.has(candidate.tradingSymbol.trim().toUpperCase()))
+        );
+        return instrument ? [{ symbol, instrument }] : [];
+      });
+      if (instruments.length === 0) throw new Error("The official Dhan instrument catalog contains no supported NSE indices.");
+      const quotes = await requestTerminalMarketData<TerminalMarketDataQuote[]>(
+        null,
+        "dhan",
+        { operation: "getQuotes", instruments: instruments.map(({ instrument }) => instrument) },
+      );
+      const quotesBySymbol = new Map(quotes.map((quote) => [quote.symbol, quote]));
+      return {
+        data: instruments.flatMap(({ symbol, instrument }) => {
+          const quote = quotesBySymbol.get(instrument.symbol) ??
+            quotesBySymbol.get(instrument.tradingSymbol);
+          if (!quote || quote.change === null || quote.changePercent === null ||
+              quote.open === null || quote.high === null || quote.low === null ||
+              quote.previousClose === null || quote.ltp <= 0) return [];
+          const names: Record<string, string> = {
+            NIFTY: "NIFTY 50",
+            BANKNIFTY: "BANK NIFTY",
+            FINNIFTY: "FIN NIFTY",
+            MIDCPNIFTY: "MIDCAP NIFTY",
+          };
+          return [{
+            name: names[symbol],
+            symbol,
+            ltp: quote.ltp,
+            change: quote.change,
+            changePercent: quote.changePercent,
+            high: quote.high,
+            low: quote.low,
+            open: quote.open,
+            prevClose: quote.previousClose,
+            timestamp: quote.timestamp,
+          }];
+        }),
+      };
     },
-    refetchInterval: wsConnected ? 120000 : ((query) => query.state.data?.isLive ? 15000 : 60000),
-    staleTime: 10000,
-    retry: 1,
+    refetchInterval: marketStatus.data?.isOpen ? 5_000 : 60_000,
+    staleTime: 3_000,
+    retry: 2,
   });
 
-  // Merge WebSocket data over polling data
-  const mergedData = useMemo(() => {
-    if (wsIndices.length > 0) {
-      const polledData = pollingQuery.data?.data || [];
-      const merged = wsIndices.map((wsIdx) => {
-        const polled = polledData.find((p: any) => p.symbol === wsIdx.symbol);
-        return {
-          name: wsIdx.name,
-          symbol: wsIdx.symbol,
-          ltp: wsIdx.ltp,
-          change: wsIdx.change,
-          changePercent: wsIdx.changePercent,
-          open: wsIdx.open || polled?.open || wsIdx.ltp,
-          high: wsIdx.high || polled?.high || wsIdx.ltp,
-          low: wsIdx.low || polled?.low || wsIdx.ltp,
-          prevClose: wsIdx.prevClose || polled?.prevClose || wsIdx.ltp,
-        };
-      });
-
-      for (const p of polledData) {
-        if (!merged.find((m: any) => m.symbol === p.symbol)) {
-          merged.push(p);
-        }
-      }
-
-      return { data: merged, isLive: true };
-    }
-
-    return pollingQuery.data || { data: [] as IndexData[], isLive: false };
-  }, [wsIndices, pollingQuery.data]);
+  const indices = pollingQuery.data?.data ?? [];
+  const isLive = Boolean(marketStatus.data?.isLive && marketStatus.data.isOpen && indices.length > 0);
 
   return {
-    data: mergedData,
-    isLoading: pollingQuery.isLoading && wsIndices.length === 0,
+    data: { data: indices, isLive },
+    isLoading: pollingQuery.isLoading,
+    error: pollingQuery.error,
   };
 }
 
@@ -195,7 +145,7 @@ export function useMarketStatus() {
 // Returns live data during market hours, or cached "last close" data after hours
 export function useLiveOptionChain(symbol: string, expiry?: string, enabled = true, underlying?: OptionUnderlying) {
   const provider = resolveTerminalMarketDataProvider(null);
-  const centralUnderlying = resolveCentralOptionUnderlying(symbol, underlying);
+  const centralUnderlying = underlying ?? null;
 
   return useQuery({
     queryKey: ["live-option-chain", "founder-dhan", symbol, expiry, centralUnderlying?.securityId, centralUnderlying?.exchangeSegment],
@@ -240,6 +190,10 @@ export function useLiveOptionChain(symbol: string, expiry?: string, enabled = tr
         maxPain: hasChainData ? getMaxPain(result.chain) : 0,
         totalCEOI: result.totalCEOI,
         totalPEOI: result.totalPEOI,
+        greeksAvailable: result.greeksAvailable,
+        ivAvailable: result.ivAvailable ?? result.chain.some((row) =>
+          row.call?.iv != null || row.put?.iv != null
+        ),
         isLive: hasChainData && !isAfterHours,
         afterHours: isAfterHours,
         source: "source" in result ? result.source : result.provider,
@@ -270,7 +224,7 @@ export function useLiveOptionChain(symbol: string, expiry?: string, enabled = tr
 // NO MOCK FALLBACK — returns empty array
 export function useExpiryList(symbol: string, underlying?: OptionUnderlying) {
   const provider = resolveTerminalMarketDataProvider(null);
-  const centralUnderlying = resolveCentralOptionUnderlying(symbol, underlying);
+  const centralUnderlying = underlying ?? null;
 
   return useQuery({
     queryKey: ["expiry-list", "founder-dhan", symbol, centralUnderlying?.securityId, centralUnderlying?.exchangeSegment],
@@ -299,130 +253,189 @@ export function useExpiryList(symbol: string, underlying?: OptionUnderlying) {
 // ── Hook: All Indices (VIX + Sectors + Advance/Decline) ──
 // NO MOCK FALLBACK — returns null values when offline
 export function useAllIndices() {
-  const { vix: wsVix } = useWebSocketVix();
-  const wsConnected = useWebSocketStatus();
-
-  const pollingQuery = useQuery({
+  const marketStatus = useMarketStatus();
+  return useQuery({
     queryKey: ["nse-all-indices"],
     queryFn: async () => {
-      if (shouldTryProxy()) {
-        try {
-          const data = await fetchAllIndices();
-          if (data) { markProxyOnline(); return { ...data, isLive: true }; }
-        } catch (e) { markProxyOffline(); console.warn("All indices fetch failed:", e); }
-      }
-      // NO MOCK — return empty/null values
-      return {
-        vix: null,
-        sectors: [],
+      let marketSummary = {
+        sectors: [] as Array<{ name: string; change: number; stocks: Array<{ symbol: string; change: number }> }>,
         advances: 0,
         declines: 0,
         unchanged: 0,
-        isLive: false,
+      };
+      if (shouldTryProxy()) {
+        try {
+          const data = await fetchAllIndices();
+          if (data) {
+            markProxyOnline();
+            marketSummary = {
+              sectors: data.sectors ?? [],
+              advances: data.advances ?? 0,
+              declines: data.declines ?? 0,
+              unchanged: data.unchanged ?? 0,
+            };
+          }
+        } catch (error) {
+          markProxyOffline();
+          console.warn("NSE market summary fetch failed:", error);
+        }
+      }
+
+      let vix: { value: number; change: number; changePercent: number; high: number | null; low: number | null; timestamp: string } | null = null;
+      try {
+        const catalog = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(
+          null,
+          "dhan",
+          { operation: "listInstruments" },
+        );
+        const vixInstrument = catalog.find((instrument) =>
+          instrument.exchangeSegment === "IDX_I" &&
+          instrument.instrumentType.toUpperCase() === "INDEX" &&
+          ["INDIAVIX", "INDIA VIX"].includes(instrument.symbol.trim().toUpperCase())
+        );
+        if (vixInstrument) {
+          const quote = await requestTerminalMarketData<TerminalMarketDataQuote>(
+            null,
+            "dhan",
+            { operation: "getQuote", instrument: vixInstrument },
+          );
+          if (quote.change !== null && quote.changePercent !== null && quote.ltp > 0) {
+            vix = {
+              value: quote.ltp,
+              change: quote.change,
+              changePercent: quote.changePercent,
+              high: quote.high,
+              low: quote.low,
+              timestamp: quote.timestamp,
+            };
+          }
+        }
+      } catch (error) {
+        console.warn("Central Dhan India VIX quote unavailable:", error);
+      }
+
+      return {
+        ...marketSummary,
+        vix,
+        isLive: Boolean(vix && marketStatus.data?.isLive && marketStatus.data.isOpen),
       };
     },
-    refetchInterval: wsConnected ? 120000 : ((query) => query.state.data?.isLive ? 30000 : 120000),
+    refetchInterval: marketStatus.data?.isOpen ? 30_000 : 120_000,
     staleTime: 15000,
     retry: 1,
   });
-
-  // Merge WebSocket VIX over polled VIX
-  const mergedData = useMemo(() => {
-    const base = pollingQuery.data || {
-      vix: null, sectors: [], advances: 0, declines: 0, unchanged: 0, isLive: false,
-    };
-
-    if (wsVix) {
-      return {
-        ...base,
-        vix: wsVix,
-        isLive: true,
-      };
-    }
-
-    return base;
-  }, [pollingQuery.data, wsVix]);
-
-  return { data: mergedData, isLoading: pollingQuery.isLoading };
 }
 
 // ── Hook: F&O Stocks (Top Movers + Most Active) ──
 // NO MOCK FALLBACK — returns empty arrays when offline
 export function useFnOStocks() {
+  const marketStatus = useMarketStatus();
   return useQuery({
-    queryKey: ["nse-fno-stocks"],
+    queryKey: ["global-dhan-fno-stocks"],
     queryFn: async () => {
-      if (shouldTryProxy()) {
-        try {
-          const stocks = await fetchLiveFnOStocks();
-          if (stocks.length > 0) {
-            markProxyOnline();
-            const gainers = [...stocks].filter(s => s.changePercent > 0).sort((a, b) => b.changePercent - a.changePercent).slice(0, 5);
-            const losers = [...stocks].filter(s => s.changePercent < 0).sort((a, b) => a.changePercent - b.changePercent).slice(0, 5);
-            const mostActive = [...stocks].sort((a, b) => (b.volume || 0) - (a.volume || 0)).slice(0, 10).map(s => ({
-              ...s, oi: s.openInterest || 0, oiChange: s.oiChange || 0,
-              oiInterpretation: getOIInterpretation(s.changePercent, s.oiChange || 0),
-            }));
-            const hasOI = stocks.some(s => (s.openInterest || 0) > 0);
-            const source = hasOI ? "nse" as const : "tradingview" as const;
-            return { gainers, losers, mostActive, allStocks: stocks, isLive: true, source };
-          }
-        } catch (e) { markProxyOffline(); console.warn("F&O stocks fetch failed:", e); }
+      const catalog = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(
+        null,
+        "dhan",
+        { operation: "listInstruments" },
+      );
+      const activeFutures = catalog
+        .filter((instrument) =>
+          instrument.exchangeSegment === "NSE_FNO" &&
+          instrument.instrumentType.toUpperCase() === "FUTSTK" &&
+          Boolean(instrument.expiryDate) &&
+          Date.parse(instrument.expiryDate ?? "") >= Date.now()
+        )
+        .sort((left, right) => (left.expiryDate ?? "").localeCompare(right.expiryDate ?? ""));
+      const futuresBySymbol = new Map<string, TerminalMarketDataInstrument>();
+      for (const future of activeFutures) {
+        if (!futuresBySymbol.has(future.symbol)) futuresBySymbol.set(future.symbol, future);
       }
-      // Try local DB price snapshots
-      const dbPrices = await getCachedPricesOnce();
-      if (dbPrices.length > 0) {
-        const dbStocks: FnOStockData[] = dbPrices
-          .filter(p => p.ltp > 0 && p.symbol)
-          .map(p => ({
-            symbol: p.symbol,
-            ltp: p.ltp,
-            change: p.change,
-            changePercent: p.changePercent,
-            open: p.open,
-            high: p.high,
-            low: p.low,
-            previousClose: p.close,
-            volume: p.volume,
-            totalTradedVolume: p.volume,
-            openInterest: p.oi,
-            oiChange: 0,
-          }));
-        if (dbStocks.length > 0) {
-          const gainers = [...dbStocks].filter(s => s.changePercent > 0).sort((a, b) => b.changePercent - a.changePercent).slice(0, 5);
-          const losers = [...dbStocks].filter(s => s.changePercent < 0).sort((a, b) => a.changePercent - b.changePercent).slice(0, 5);
-          const mostActive = [...dbStocks].sort((a, b) => (b.volume || 0) - (a.volume || 0)).slice(0, 10).map(s => ({
-            ...s, oi: s.openInterest || 0, oiChange: s.oiChange || 0,
-            oiInterpretation: getOIInterpretation(s.changePercent, s.oiChange || 0),
-          }));
-          return { gainers, losers, mostActive, allStocks: dbStocks, isLive: false, source: "database" as const };
-        }
+      const cashInstruments = catalog.filter((instrument) =>
+        instrument.exchangeSegment === "NSE_EQ" &&
+        instrument.instrumentType.toUpperCase() === "EQUITY" &&
+        futuresBySymbol.has(instrument.symbol)
+      );
+      const futures = [...futuresBySymbol.values()];
+      const instruments = [...cashInstruments, ...futures];
+      const quotes: TerminalMarketDataQuote[] = [];
+      for (let offset = 0; offset < instruments.length; offset += 50) {
+        const batch = await requestTerminalMarketData<TerminalMarketDataQuote[]>(
+          null,
+          "dhan",
+          { operation: "getQuotes", instruments: instruments.slice(offset, offset + 50) },
+        );
+        quotes.push(...batch);
       }
-      // NO MOCK — return empty
-      return { gainers: [], losers: [], mostActive: [], allStocks: [] as FnOStockData[], isLive: false, source: "none" as const };
+      const quoteBySymbol = new Map(quotes.map((quote) => [`${quote.exchange}:${quote.tradingSymbol}`, quote]));
+      const stocks: FnOStockData[] = cashInstruments.flatMap((instrument) => {
+        const quote = quoteBySymbol.get(`${instrument.exchange}:${instrument.tradingSymbol}`);
+        const future = futuresBySymbol.get(instrument.symbol);
+        const futureQuote = future ? quoteBySymbol.get(`${future.exchange}:${future.tradingSymbol}`) : undefined;
+        if (!quote || quote.change === null || quote.changePercent === null ||
+            quote.open === null || quote.high === null || quote.low === null ||
+            quote.previousClose === null || quote.volume === null) return [];
+        return [{
+          symbol: instrument.symbol,
+          ltp: quote.ltp,
+          change: quote.change,
+          changePercent: quote.changePercent,
+          open: quote.open,
+          high: quote.high,
+          low: quote.low,
+          previousClose: quote.previousClose,
+          volume: quote.volume,
+          totalTradedVolume: quote.volume,
+          ...(futureQuote?.openInterest == null ? {} : { openInterest: futureQuote.openInterest }),
+        }];
+      });
+      const gainers = [...stocks].filter((stock) => stock.changePercent > 0).sort((a, b) => b.changePercent - a.changePercent).slice(0, 5);
+      const losers = [...stocks].filter((stock) => stock.changePercent < 0).sort((a, b) => a.changePercent - b.changePercent).slice(0, 5);
+      const mostActive = [...stocks].sort((a, b) => b.volume - a.volume).slice(0, 10).map((stock) => ({
+        ...stock,
+        oi: stock.openInterest ?? 0,
+        oiChange: stock.oiChange ?? 0,
+        oiInterpretation: getOIInterpretation(stock.changePercent, stock.oiChange ?? 0),
+      }));
+      return {
+        gainers,
+        losers,
+        mostActive,
+        allStocks: stocks,
+        isLive: Boolean(marketStatus.data?.isLive && marketStatus.data.isOpen && stocks.length > 0),
+        source: "dhan" as const,
+      };
     },
-    refetchInterval: (query) => query.state.data?.isLive ? 30000 : 120000,
+    refetchInterval: marketStatus.data?.isOpen ? 30_000 : 120_000,
     staleTime: 15000,
-    retry: 1,
+    retry: 2,
   });
 }
 
 // ── Hook: Candle history for charts ──
-export function useStoredCandles(symbol: string, interval: string = "5") {
-  const KNOWN_INDEX_MAP: Record<string, string> = {
-    NIFTY: "13",
-    BANKNIFTY: "25",
-    FINNIFTY: "27",
-    MIDCPNIFTY: "442",
-    INDIAVIX: "26",
-  };
-
+export function useStoredCandles(symbol: string, interval: string = "5m") {
   return useQuery({
     queryKey: ["stored-candles", symbol, interval],
     queryFn: async () => {
-      const secId = KNOWN_INDEX_MAP[symbol.toUpperCase()] || symbol;
-      const history = await getCandleHistory(secId, interval);
-      if (!history?.candles?.length) return null;
+      const instruments = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(
+        null,
+        "dhan",
+        { operation: "searchInstruments", query: symbol.trim().replace(/_/g, " ") },
+      );
+      const normalizedSymbol = symbol.trim().toUpperCase();
+      const acceptedNames = new Set([
+        normalizedSymbol,
+        ...(normalizedSymbol === "NIFTY" ? ["NIFTY 50"] : []),
+        ...(normalizedSymbol === "BANKNIFTY" ? ["NIFTY BANK"] : []),
+        ...(normalizedSymbol === "FINNIFTY" ? ["NIFTY FIN SERVICE"] : []),
+        ...(normalizedSymbol === "MIDCPNIFTY" ? ["NIFTY MID SELECT"] : []),
+      ]);
+      const instrument = instruments.find((candidate) =>
+        acceptedNames.has(candidate.symbol.trim().toUpperCase()) ||
+        acceptedNames.has(candidate.tradingSymbol.trim().toUpperCase())
+      );
+      if (!instrument) return null;
+      const history = await getCandleHistory(instrument.providerInstrumentId, interval);
+      if (history?.provider !== "dhan" || !history.candles.length) return null;
 
       return {
         symbol: history.symbol,
@@ -459,16 +472,6 @@ function getOIInterpretation(changePercent: number, oiChange: number): string {
 }
 
 export function resetProxyStatus() { proxyStatus = "unknown"; proxyCheckTime = 0; }
-
-/**
- * Invalidate the local price cache so next fetch
- * re-reads from IndexedDB (call after DB update).
- */
-export function invalidateLocalPriceCache() {
-  cachedPrices = null;
-  cachedPricesLoaded = false;
-  cachedPricesPromise = null;
-}
 
 
 // ── Hook: Proxy Health ──

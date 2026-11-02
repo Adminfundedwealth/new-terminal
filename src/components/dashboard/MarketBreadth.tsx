@@ -3,7 +3,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { useAllIndices, useFnOStocks, useMarketStatus } from "@/hooks/useMarketData";
-import { useWebSocketVix } from "@/hooks/useWebSocket";
 import {
   TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight,
   BarChart3, Activity, Gauge, Loader2
@@ -12,20 +11,19 @@ import {
 export function MarketBreadth() {
   const { data: indexData } = useAllIndices();
   const { data: marketStatus } = useMarketStatus();
-  const { vix: wsVix } = useWebSocketVix();
   const { data: fnoData } = useFnOStocks();
 
   const advances = indexData?.advances ?? 0;
   const declines = indexData?.declines ?? 0;
   const unchanged = indexData?.unchanged ?? 0;
   const total = advances + declines + unchanged;
-  const isLive = indexData?.isLive || false;
-  const dataStatus = isLive
-    ? marketStatus?.isOpen === true ? "POLLING" : marketStatus?.isOpen === false ? "CLOSED" : null
+  const isLive = Boolean(indexData?.isLive);
+  const dataStatus = indexData?.vix
+    ? marketStatus?.isOpen === true ? isLive ? "LIVE" : "POLLING" : marketStatus?.isOpen === false ? "CLOSED" : null
     : null;
   
-  const vix = wsVix?.value ?? indexData?.vix?.value ?? null;
-  const vixChange = wsVix?.changePercent ?? indexData?.vix?.changePercent ?? null;
+  const vix = indexData?.vix?.value ?? null;
+  const vixChange = indexData?.vix?.changePercent ?? null;
 
   // Sector strength from available data
   const sectors = indexData?.sectors || [];
