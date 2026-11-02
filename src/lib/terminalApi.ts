@@ -649,7 +649,7 @@ export async function requestTerminalMarketData<T>(
       method: "POST",
       credentials: "omit",
       cache: "no-store",
-      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      headers: { Accept: "application/json", "Content-Type": "text/plain;charset=UTF-8" },
       body: JSON.stringify(operation),
     });
     return readMarketDataResponse<T>(response);

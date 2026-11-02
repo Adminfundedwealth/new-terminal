@@ -88,6 +88,7 @@ describe("Main Terminal market-data contract", () => {
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(new URL(url, "http://main.test").pathname).toBe("/api/public/market-data");
     expect(new Headers(init.headers).get("Authorization")).toBeNull();
+    expect(new Headers(init.headers).get("Content-Type")).toBe("text/plain;charset=UTF-8");
     expect(init.credentials).toBe("omit");
     expect(JSON.parse(String(init.body))).toEqual({ operation: "listInstruments" });
   });
