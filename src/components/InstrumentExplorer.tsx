@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Search, Star, TrendingUp, TrendingDown, Radio, Loader2, BarChart3, ExternalLink, X, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,7 @@ import { normalizeCanonicalPosition, uniqueCanonicalPositions } from "@/componen
 import { isWatchlisted } from "@/lib/watchlist";
 import { useLiveOptionChain } from "@/hooks/useMarketData";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
-import { fetchCentralMarketQuotes } from "@/lib/centralMarketQuotes";
+import { centralMarketQuoteKey, fetchCentralMarketQuotes } from "@/lib/centralMarketQuotes";
 import { classifyInstrument, isProductionInstrument } from "@/lib/instrumentClassification";
 import { getPreferredMarketAdapter } from "@/lib/brokerRouter";
 import {
@@ -128,11 +128,24 @@ export function InstrumentExplorer({
   const [contextUnderlying, setContextUnderlying] = useState(initialUnderlying ?? "NIFTY");
   const [contextExpiry, setContextExpiry] = useState<string | undefined>(initialExpiry);
   const { instruments } = useInstrumentLookup();
-  const rowInstruments = rows.flatMap((row) => row.instrument ? [row.instrument] : []);
+  const rowInstruments = useMemo(() => rows.flatMap((row) => row.instrument ? [row.instrument] : []), [rows]);
   const workspaceInstruments = rowInstruments.length > 0 ? rowInstruments : instruments;
   const marketDataProvider = resolveTerminalMarketDataProvider(activeAccountProvider) ?? "dhan";
   const marketDataAccountId = marketDataProvider === "dhan" ? null : activeAccountId;
   const canLoadMarketData = marketDataProvider === "dhan" || Boolean(activeAccountId);
+  const resolveRowInstrument = useCallback((row: ExplorerRow) => {
+    const chartSymbol = row.chartSymbol ?? row.symbol;
+    return row.instrument ?? workspaceInstruments.find((candidate) =>
+      candidate.tradingSymbol.toUpperCase() === chartSymbol.toUpperCase() ||
+      candidate.symbol.toUpperCase() === chartSymbol.toUpperCase()
+    );
+  }, [workspaceInstruments]);
+  const quoteKeyForRow = useCallback((row: ExplorerRow) => {
+    const instrument = resolveRowInstrument(row);
+    return marketDataProvider === "dhan" && instrument
+      ? centralMarketQuoteKey(instrument)
+      : row.chartSymbol ?? row.symbol;
+  }, [marketDataProvider, resolveRowInstrument]);
   const chartInstrument = workspaceInstruments.find((instrument) => instrument.tradingSymbol.toUpperCase() === (chartSymbol ?? "").toUpperCase());
   const chartInstrumentToken = chartInstrument?.provider === "zerodha"
     ? chartInstrument.providerInstrumentId || chartInstrument.securityId
@@ -161,18 +174,14 @@ export function InstrumentExplorer({
       asset,
       marketDataAccountId,
       marketDataProvider,
-      visibleRows.map((row) => row.instrument?.providerInstrumentId ?? row.instrument?.securityId ?? row.chartSymbol ?? row.symbol),
+      visibleRows.map(quoteKeyForRow),
     ],
     enabled: Boolean(visibleRows.length > 0 && canLoadMarketData),
     queryFn: async () => {
       if (marketDataProvider === "dhan") {
         return fetchCentralMarketQuotes(visibleRows.map((row) => {
-          const chartSymbol = row.chartSymbol ?? row.symbol;
-          const instrument = row.instrument ?? workspaceInstruments.find((candidate) =>
-            candidate.tradingSymbol.toUpperCase() === chartSymbol.toUpperCase() ||
-            candidate.symbol.toUpperCase() === chartSymbol.toUpperCase()
-          );
-          return { key: chartSymbol, instrument };
+          const instrument = resolveRowInstrument(row);
+          return { key: quoteKeyForRow(row), instrument };
         }));
       }
 
@@ -183,10 +192,7 @@ export function InstrumentExplorer({
         const batch = visibleRows.slice(offset, offset + 10);
         const results = await Promise.allSettled(batch.map(async (row) => {
           const chartSymbol = row.chartSymbol ?? row.symbol;
-          const instrument = row.instrument ?? workspaceInstruments.find((candidate) =>
-            candidate.tradingSymbol.toUpperCase() === chartSymbol.toUpperCase() ||
-            candidate.symbol.toUpperCase() === chartSymbol.toUpperCase()
-          );
+          const instrument = resolveRowInstrument(row);
           if (!instrument) throw new Error(`Terminal OS could not resolve ${chartSymbol}.`);
           const quote = await requestTerminalMarketData<TerminalMarketDataQuote>(
             marketDataAccountId,
@@ -213,7 +219,7 @@ export function InstrumentExplorer({
       : visibleQuotesQuery.data?.errors[0] ?? (visibleQuotesQuery.error instanceof Error ? visibleQuotesQuery.error.message : null);
 
   const displayedRows = useMemo(() => visibleRows.map((row) => {
-    const quote = visibleQuotesQuery.data?.quotes[row.chartSymbol ?? row.symbol];
+    const quote = visibleQuotesQuery.data?.quotes[quoteKeyForRow(row)];
     if (!quote || !Number.isFinite(quote.ltp) || quote.ltp <= 0) return row;
     const quoteAge = Date.now() - Date.parse(quote.timestamp);
     return {
@@ -228,7 +234,7 @@ export function InstrumentExplorer({
       oi: quote.openInterest,
       isLive: Number.isFinite(quoteAge) && quoteAge >= 0 && quoteAge <= 60_000,
     };
-  }), [visibleRows, visibleQuotesQuery.data]);
+  }), [visibleRows, visibleQuotesQuery.data, quoteKeyForRow]);
 
   const ticketInstrument = useMemo(() => {
     const matches = workspaceInstruments.filter((instrument) => {

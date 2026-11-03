@@ -228,7 +228,7 @@ describe("InstrumentExplorer stock workspace", () => {
     ]);
     expect(screen.queryByText("NSE_EQ")).not.toBeInTheDocument();
     expect(screen.queryByText("500490")).not.toBeInTheDocument();
-    const quoteQueryKey = ["terminal-explorer-quotes", "stocks", null, "dhan", ["500490"]];
+    const quoteQueryKey = ["terminal-explorer-quotes", "stocks", null, "dhan", ["NSE_EQ:500490"]];
     await waitFor(() => {
       expect(requestTerminalMarketDataMock).toHaveBeenCalledWith(null, "dhan", expect.objectContaining({
         operation: "getQuotes",
@@ -237,7 +237,7 @@ describe("InstrumentExplorer stock workspace", () => {
       expect(queryClient.getQueryState(quoteQueryKey)?.status).toBe("success");
     });
     expect(queryClient.getQueryData(quoteQueryKey)).toMatchObject({
-      quotes: { ABB: { ltp: 7060 } },
+      quotes: { "NSE_EQ:500490": { ltp: 7060 } },
     });
     expect(screen.getByText("₹7,060.00")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open ABB stock chart" })).toBeInTheDocument();

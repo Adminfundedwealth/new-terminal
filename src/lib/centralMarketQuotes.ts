@@ -11,6 +11,10 @@ export interface CentralMarketQuoteTarget {
   instrument?: Instrument;
 }
 
+export function centralMarketQuoteKey(instrument: Instrument): string {
+  return `${instrument.exchangeSegment}:${instrument.providerInstrumentId || instrument.securityId}`;
+}
+
 const RATE_LIMIT_RETRY_DELAY_MS = 1_000;
 const MAX_INSTRUMENTS_PER_REQUEST = 50;
 
