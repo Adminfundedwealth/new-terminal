@@ -100,6 +100,25 @@ describe("central market quotes", () => {
     ]);
   });
 
+  it("keeps available quotes when Dhan omits an instrument from a batch", async () => {
+    vi.mocked(requestTerminalMarketData).mockResolvedValue([
+      quote("2885", 1207.7, "RELIANCE"),
+    ] as never);
+
+    const result = await fetchCentralMarketQuotes([
+      { key: "RELIANCE", instrument: instrument() },
+      { key: "MISSING", instrument: instrument({
+        securityId: "999",
+        symbol: "MISSING",
+        tradingSymbol: "MISSING",
+      }) },
+    ]);
+
+    expect(result.quotes.RELIANCE).toMatchObject({ ltp: 1207.7, tradingSymbol: "RELIANCE" });
+    expect(result.quotes.MISSING).toBeUndefined();
+    expect(result.errors).toEqual(["Central Dhan returned no quote for MISSING."]);
+  });
+
   it("retries a global Dhan quote batch once after rate limiting", async () => {
     vi.mocked(requestTerminalMarketData)
       .mockRejectedValueOnce(new TerminalMarketDataError("RATE_LIMITED", 429))
