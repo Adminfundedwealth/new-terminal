@@ -158,6 +158,18 @@ describe("InstrumentExplorer stock workspace", () => {
   }) {
     requestTerminalMarketDataMock.mockImplementation(async (_accountId, _provider, operation) => {
       if (operation.operation === "searchInstruments") return [globalTmpvInstrument];
+      if (operation.operation === "getQuotes") {
+        return operation.instruments.flatMap((instrument) => {
+          const quote = quotesByInstrument[instrument.providerInstrumentId];
+          return quote ? [{
+            ...quote,
+            provider: "dhan",
+            symbol: instrument.symbol,
+            tradingSymbol: instrument.tradingSymbol,
+            exchange: instrument.exchange,
+          }] : [];
+        });
+      }
       if (operation.operation === "getQuote") {
         return quotesByInstrument[operation.instrument.providerInstrumentId] ?? null;
       }
@@ -219,8 +231,8 @@ describe("InstrumentExplorer stock workspace", () => {
     const quoteQueryKey = ["terminal-explorer-quotes", "stocks", null, "dhan", ["500490"]];
     await waitFor(() => {
       expect(requestTerminalMarketDataMock).toHaveBeenCalledWith(null, "dhan", expect.objectContaining({
-        operation: "getQuote",
-        instrument: expect.objectContaining({ providerInstrumentId: "500490" }),
+        operation: "getQuotes",
+        instruments: [expect.objectContaining({ providerInstrumentId: "500490" })],
       }));
       expect(queryClient.getQueryState(quoteQueryKey)?.status).toBe("success");
     });

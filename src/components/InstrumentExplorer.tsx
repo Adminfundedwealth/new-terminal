@@ -11,6 +11,7 @@ import { normalizeCanonicalPosition, uniqueCanonicalPositions } from "@/componen
 import { isWatchlisted } from "@/lib/watchlist";
 import { useLiveOptionChain } from "@/hooks/useMarketData";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
+import { fetchCentralMarketQuotes } from "@/lib/centralMarketQuotes";
 import { classifyInstrument, isProductionInstrument } from "@/lib/instrumentClassification";
 import { getPreferredMarketAdapter } from "@/lib/brokerRouter";
 import {
@@ -164,6 +165,17 @@ export function InstrumentExplorer({
     ],
     enabled: Boolean(visibleRows.length > 0 && canLoadMarketData),
     queryFn: async () => {
+      if (marketDataProvider === "dhan") {
+        return fetchCentralMarketQuotes(visibleRows.map((row) => {
+          const chartSymbol = row.chartSymbol ?? row.symbol;
+          const instrument = row.instrument ?? workspaceInstruments.find((candidate) =>
+            candidate.tradingSymbol.toUpperCase() === chartSymbol.toUpperCase() ||
+            candidate.symbol.toUpperCase() === chartSymbol.toUpperCase()
+          );
+          return { key: chartSymbol, instrument };
+        }));
+      }
+
       const quotes: Record<string, TerminalMarketDataQuote> = {};
       const errors: string[] = [];
       if (!marketDataAccountId && marketDataProvider !== "dhan") throw new Error("Select a FundedWealth trading account to load account-specific quotes.");
