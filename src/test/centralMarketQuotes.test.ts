@@ -71,11 +71,15 @@ describe("central market quotes", () => {
       }) },
     ]);
 
-    expect(requestTerminalMarketData).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(requestTerminalMarketData).mock.calls.map(([accountId, provider]) => [accountId, provider])).toEqual([
-      [null, "dhan"],
-      [null, "dhan"],
-    ]);
+    expect(requestTerminalMarketData).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(requestTerminalMarketData).mock.calls[0].slice(0, 2)).toEqual([null, "dhan"]);
+    expect(vi.mocked(requestTerminalMarketData).mock.calls[0][2]).toMatchObject({
+      operation: "getQuotes",
+      instruments: expect.arrayContaining([
+        expect.objectContaining({ exchangeSegment: "NSE_EQ", providerInstrumentId: "2885" }),
+        expect.objectContaining({ exchangeSegment: "IDX_I", providerInstrumentId: "13" }),
+      ]),
+    });
     expect(result.errors).toEqual([]);
     expect(result.quotes.RELIANCE).toMatchObject({ provider: "dhan", ltp: 1207.7, tradingSymbol: "RELIANCE" });
     expect(result.quotes.NIFTY).toMatchObject({ provider: "dhan", ltp: 25000, exchange: "NSE" });
@@ -98,9 +102,11 @@ describe("central market quotes", () => {
 
   it("retries a global Dhan quote batch once after rate limiting", async () => {
     vi.mocked(requestTerminalMarketData)
-      .mockResolvedValueOnce([quote("2885", 1207.7, "RELIANCE")] as never)
       .mockRejectedValueOnce(new TerminalMarketDataError("RATE_LIMITED", 429))
-      .mockResolvedValueOnce([quote("13", 25000, "NIFTY")] as never);
+      .mockResolvedValueOnce([
+        quote("2885", 1207.7, "RELIANCE"),
+        quote("13", 25000, "NIFTY"),
+      ] as never);
 
     const result = await fetchCentralMarketQuotes([
       { key: "RELIANCE", instrument: instrument() },
@@ -112,8 +118,37 @@ describe("central market quotes", () => {
       }) },
     ]);
 
-    expect(requestTerminalMarketData).toHaveBeenCalledTimes(3);
+    expect(requestTerminalMarketData).toHaveBeenCalledTimes(2);
     expect(result.quotes).toMatchObject({ RELIANCE: { ltp: 1207.7 }, NIFTY: { ltp: 25000 } });
+    expect(result.errors).toEqual([]);
+  });
+
+  it("sends a maximum of 50 instruments in each request", async () => {
+    vi.mocked(requestTerminalMarketData).mockImplementation(async (_accountId, _provider, request) => {
+      if (request.operation !== "getQuotes") return [];
+      return request.instruments.map((item) =>
+        quote(item.providerInstrumentId, 1200, item.tradingSymbol)
+      ) as never;
+    });
+
+    const targets = Array.from({ length: 51 }, (_, index) => {
+      const id = String(1000 + index);
+      return {
+        key: `SYMBOL${index}`,
+        instrument: instrument({
+          securityId: id,
+          symbol: `SYMBOL${index}`,
+          tradingSymbol: `SYMBOL${index}`,
+        }),
+      };
+    });
+    const result = await fetchCentralMarketQuotes(targets);
+
+    expect(requestTerminalMarketData).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(requestTerminalMarketData).mock.calls.map(([, , request]) =>
+      request.operation === "getQuotes" ? request.instruments.length : 0
+    )).toEqual([50, 1]);
+    expect(Object.keys(result.quotes)).toHaveLength(51);
     expect(result.errors).toEqual([]);
   });
 
