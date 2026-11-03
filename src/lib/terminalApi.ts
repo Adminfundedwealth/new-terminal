@@ -583,7 +583,7 @@ const MARKET_DATA_ERROR_MESSAGES: Record<TerminalMarketDataErrorCode, string> = 
   ACCOUNT_FORBIDDEN: "This trading account is not available for market data.",
   ACCOUNT_INACTIVE: "This trading account is inactive.",
   INVALID_PROVIDER_ACCOUNT: "The selected provider is not configured for this account.",
-  MISSING_CREDENTIALS: "Broker credentials are not configured for this account.",
+  MISSING_CREDENTIALS: "The global market-data service is not configured.",
   CREDENTIAL_STORAGE_ERROR: "Broker credentials could not be loaded securely.",
   INVALID_CREDENTIALS: "Broker authentication failed.",
   RATE_LIMITED: "The broker is rate limiting market-data requests. Try again shortly.",

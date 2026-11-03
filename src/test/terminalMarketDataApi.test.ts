@@ -301,4 +301,18 @@ describe("Main Terminal market-data contract", () => {
     expect(failure).toMatchObject({ code, status });
     expect((failure as Error).message).not.toContain("raw secret text");
   });
+
+  it("describes missing global credentials without implying customer-account ownership", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+      error: { code: "MISSING_CREDENTIALS" },
+    }), { status: 503 }));
+
+    const failure = await requestTerminalMarketData(null, "dhan", { operation: "listInstruments" })
+      .catch((reason: unknown) => reason);
+
+    expect(failure).toMatchObject({
+      code: "MISSING_CREDENTIALS",
+      message: "The global market-data service is not configured.",
+    });
+  });
 });
