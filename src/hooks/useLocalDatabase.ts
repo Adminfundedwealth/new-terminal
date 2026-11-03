@@ -199,13 +199,15 @@ export function useInstrumentLookup() {
         .map(toLocalMarketDataInstrument);
       if (instruments.length === 0) throw new Error("Terminal OS returned an empty Dhan instrument catalog.");
       const BATCH_SIZE = 2000;
-      try {
-        for (let i = 0; i < instruments.length; i += BATCH_SIZE) {
-          await saveInstruments(instruments.slice(i, i + BATCH_SIZE));
+      void (async () => {
+        try {
+          for (let i = 0; i < instruments.length; i += BATCH_SIZE) {
+            await saveInstruments(instruments.slice(i, i + BATCH_SIZE));
+          }
+        } catch (error) {
+          console.error("Founder Dhan instruments could not be cached locally:", error);
         }
-      } catch (error) {
-        console.error("Founder Dhan instruments could not be cached locally:", error);
-      }
+      })();
       return instruments;
     },
     retry: false,

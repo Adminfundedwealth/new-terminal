@@ -76,6 +76,31 @@ describe("useInstrumentLookup Founder-global Dhan catalog", () => {
     expect(result.current.loadError).toBeNull();
   });
 
+  it("makes the global instrument catalog available before IndexedDB batches finish", async () => {
+    let finishCacheWrite: (() => void) | undefined;
+    vi.mocked(saveInstruments).mockImplementationOnce(() => new Promise<void>((resolve) => {
+      finishCacheWrite = resolve;
+    }));
+    requestTerminalMarketDataMock.mockResolvedValue([{
+      provider: "dhan",
+      providerInstrumentId: "2885",
+      symbol: "RELIANCE INDUSTRIES LTD",
+      tradingSymbol: "RELIANCE",
+      exchange: "NSE",
+      exchangeSegment: "NSE_EQ",
+      instrumentType: "EQUITY",
+    }]);
+
+    const { result } = renderLookup();
+
+    await waitFor(() => expect(result.current.isLoaded).toBe(true));
+    expect(result.current.instruments).toMatchObject([
+      { securityId: "2885", tradingSymbol: "RELIANCE", provider: "dhan" },
+    ]);
+    expect(saveInstruments).toHaveBeenCalled();
+    finishCacheWrite?.();
+  });
+
   it("fills missing cash equities from the official Dhan master when Terminal OS only lists derivatives and indices", async () => {
     requestTerminalMarketDataMock.mockResolvedValue([{
       provider: "dhan",
