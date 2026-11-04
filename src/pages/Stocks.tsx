@@ -4,7 +4,7 @@ import { useAccountContext } from "@/hooks/useAccountContext";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { InstrumentExplorer } from "@/components/InstrumentExplorer";
 import { getSavedWatchlist, saveWatchlist } from "@/lib/watchlist";
-import { classifyInstrument, isCashEquityListing, isProductionInstrument } from "@/lib/instrumentClassification";
+import { isNseCashEquityListing, isProductionInstrument } from "@/lib/instrumentClassification";
 
 export default function Stocks() {
   const [searchParams] = useSearchParams();
@@ -22,8 +22,7 @@ export default function Stocks() {
     return instruments
       .filter((instrument) =>
         isProductionInstrument(instrument) &&
-        classifyInstrument(instrument) === "stocks" &&
-        isCashEquityListing(instrument)
+        isNseCashEquityListing(instrument)
       )
       .sort((a, b) => a.symbol.localeCompare(b.symbol) || a.tradingSymbol.localeCompare(b.tradingSymbol))
       .map((instrument) => ({

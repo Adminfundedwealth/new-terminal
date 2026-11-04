@@ -73,6 +73,10 @@ export function isCashEquityListing(instrument: Instrument): boolean {
   return true;
 }
 
+export function isNseCashEquityListing(instrument: Instrument): boolean {
+  return normalized(instrument.exchangeSegment) === "NSE_EQ" && isCashEquityListing(instrument);
+}
+
 export function isCashEquitySymbol(symbol: string | undefined): boolean {
   if (!symbol) return false;
   return !/(?:\b(?:GOI|GOVT(?:\.?\s+OF\s+INDIA)?|GOVERNMENT\s+OF\s+INDIA|TBILL|T[- ]?BILL|TREASURY\s+(?:BILL|NOTE)|GILT|GSEC|SOVEREIGN|BOND|NCD|DEB(?:ENTURE)?|STRPP|SR(?:\d+|(?:\.\s*|\s+)[A-Z0-9]+)|ZERO\s+COUPON)\b|\d+(?:\.\d+)?%)/i.test(symbol);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalIndexSymbol, classifyInstrument, isCashEquityListing, isProductionInstrument, isTradableContract, validateInstrumentForOrder } from "@/lib/instrumentClassification";
+import { canonicalIndexSymbol, classifyInstrument, isCashEquityListing, isNseCashEquityListing, isProductionInstrument, isTradableContract, validateInstrumentForOrder } from "@/lib/instrumentClassification";
 import type { Instrument } from "@/lib/localDatabase";
 
 const instrument = (overrides: Partial<Instrument>): Instrument => ({
@@ -55,6 +55,24 @@ describe("instrument classification", () => {
     expect(isCashEquityListing(instrument({ symbol: "3M INDIA LTD", tradingSymbol: "3MINDIA" }))).toBe(true);
     expect(isCashEquityListing(instrument({ symbol: "GOI T-BILL 182D-01/04/27", tradingSymbol: "GOITBILL182D" }))).toBe(false);
     expect(isCashEquityListing(instrument({ symbol: "GOI T-BILL 182D-01/04/27", tradingSymbol: "GOITBILL182D", series: "EQ" }))).toBe(false);
+  });
+
+  it("limits the NSE Stocks directory to NSE cash-equity listings", () => {
+    expect(isNseCashEquityListing(instrument({ exchange: "NSE", series: "EQ" }))).toBe(true);
+    expect(isNseCashEquityListing(instrument({
+      symbol: "AGUL",
+      tradingSymbol: "AGUL",
+      exchange: "BSE",
+      exchangeSegment: "BSE_EQ",
+      series: "A",
+    }))).toBe(false);
+    expect(isCashEquityListing(instrument({
+      symbol: "AGUL",
+      tradingSymbol: "AGUL",
+      exchange: "BSE",
+      exchangeSegment: "BSE_EQ",
+      series: "A",
+    }))).toBe(true);
   });
 
   it("resolves gateway index trading symbols to their chart symbols", () => {
