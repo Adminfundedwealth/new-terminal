@@ -27,7 +27,9 @@ import {
   type DatabaseStats,
   type Instrument,
 } from "@/lib/localDatabase";
-import { classifyInstrument, type InstrumentCategory } from "@/lib/instrumentClassification";
+import { classifyInstrument, isCashEquityListing, type InstrumentCategory } from "@/lib/instrumentClassification";
+import { normalizeInstrumentMaster } from "@/lib/instrumentMaster";
+import { fetchDhanInstrumentMaster } from "@/lib/marketApi";
 import {
   requestTerminalMarketData,
   type TerminalMarketDataInstrument,
@@ -198,6 +200,15 @@ export function useInstrumentLookup() {
         .filter((instrument) => instrument.providerInstrumentId && instrument.symbol && instrument.tradingSymbol)
         .map(toLocalMarketDataInstrument);
       if (instruments.length === 0) throw new Error("Terminal OS returned an empty Dhan instrument catalog.");
+      if (!instruments.some((instrument) => classifyInstrument(instrument) === "stocks" && isCashEquityListing(instrument))) {
+        const officialMaster = normalizeInstrumentMaster(await fetchDhanInstrumentMaster(), "dhan").instruments;
+        const knownIds = new Set(instruments.map((instrument) => `${instrument.exchangeSegment}:${instrument.securityId}`));
+        instruments.push(...officialMaster.filter((instrument) =>
+          classifyInstrument(instrument) === "stocks" &&
+          isCashEquityListing(instrument) &&
+          !knownIds.has(`${instrument.exchangeSegment}:${instrument.securityId}`)
+        ));
+      }
       const BATCH_SIZE = 2000;
       void (async () => {
         try {
@@ -216,7 +227,7 @@ export function useInstrumentLookup() {
 
   const cachedDhanInstruments = localInstruments.filter((instrument) => instrument.provider === "dhan");
   const allInstruments = gatewayQuery.data ?? cachedDhanInstruments;
-  const isLoaded = localLoaded && gatewayQuery.isFetched;
+  const isLoaded = localLoaded && (gatewayQuery.isFetched || cachedDhanInstruments.length > 0);
   const loadError = gatewayQuery.error instanceof Error
     ? gatewayQuery.error.message
     : null;
