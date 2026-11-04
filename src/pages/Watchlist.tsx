@@ -14,13 +14,11 @@ import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { canonicalIndexSymbol, classifyInstrument, isCashEquityListing } from "@/lib/instrumentClassification";
 import { fetchCentralMarketQuotes } from "@/lib/centralMarketQuotes";
 import { findWatchlistInstrument } from "@/lib/watchlistInstrument";
-import { DEFAULT_WATCHLIST_SYMBOLS } from "@/lib/defaultWatchlist";
 import { useQuery } from "@tanstack/react-query";
 
 const STORAGE_KEY = "optionsdesk_watchlist";
 const DEFAULT_WATCHLIST = [...new Set([
   "NIFTY", "BANKNIFTY", "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN", "TATAMOTORS", "BAJFINANCE", "ADANIENT", "LT", "KOTAKBANK", "ITC", "HINDUNILVR",
-  ...DEFAULT_WATCHLIST_SYMBOLS,
 ])];
 const INDEX_SYMBOLS = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX", "NIFTY_MIDCAP_50", "SENSEX"]);
 

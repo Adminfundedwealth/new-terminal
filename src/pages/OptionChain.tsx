@@ -24,6 +24,7 @@ import { classifyInstrument } from "@/lib/instrumentClassification";
 import {
   requestTerminalMarketData,
   resolveTerminalMarketDataProvider,
+  toTerminalMarketDataInstrument,
   type TerminalMarketDataOptionChain,
 } from "@/lib/terminalApi";
 
@@ -323,7 +324,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
   const marketDataProvider = resolveTerminalMarketDataProvider(
     accounts.find((account) => account.id === activeAccountId)?.broker_provider,
   );
-  const centralUnderlyingInstrument = useMemo(() => {
+  const chartInstrument = useMemo(() => {
     const normalizedSymbol = symbol.trim().toUpperCase();
     const candidates = masterInstruments.filter((instrument) =>
       (instrument.symbol.toUpperCase() === normalizedSymbol || instrument.tradingSymbol.toUpperCase() === normalizedSymbol) &&
@@ -331,9 +332,11 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
       instrument.provider === "dhan"
     );
     const preferredSegment = INDEX_SYMBOLS.has(normalizedSymbol) ? "IDX_I" : "NSE_EQ";
-    const match = candidates.find((instrument) => instrument.exchangeSegment === preferredSegment) ?? candidates[0];
-    return match ? { securityId: match.securityId, exchangeSegment: match.exchangeSegment } : undefined;
+    return candidates.find((instrument) => instrument.exchangeSegment === preferredSegment) ?? candidates[0];
   }, [masterInstruments, symbol]);
+  const centralUnderlyingInstrument = chartInstrument
+    ? { securityId: chartInstrument.securityId, exchangeSegment: chartInstrument.exchangeSegment }
+    : undefined;
   const { data, isLoading, refetch, error } = useLiveOptionChain(symbol, selectedExpiry, true, centralUnderlyingInstrument);
   const isChainLoading = isLoading || (!activeAccountId && !isMasterLoaded);
 
@@ -692,7 +695,12 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
       {/* Price Chart (collapsible) */}
       {showChart && (
-        <StockChart symbol={symbol} inline height={280} />
+        <StockChart
+          symbol={symbol}
+          inline
+          height={280}
+          instrument={chartInstrument ? toTerminalMarketDataInstrument(chartInstrument, "dhan") : undefined}
+        />
       )}
 
       {/* Expiry selector */}

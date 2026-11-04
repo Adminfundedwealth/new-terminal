@@ -147,9 +147,10 @@ async function fetchGatewayHistorical(
   symbol: string,
   range: string,
   instrumentToken?: string,
+  selectedInstrument?: TerminalMarketDataInstrument,
 ): Promise<OHLCVCandle[]> {
   const scopedAccountId = provider === "dhan" ? null : accountId;
-  const instrument = await findGatewayInstrument(scopedAccountId, provider, symbol, instrumentToken);
+  const instrument = selectedInstrument ?? await findGatewayInstrument(scopedAccountId, provider, symbol, instrumentToken);
   if (!instrument) throw new Error(`Dhan's official instrument catalog does not contain ${symbol}.`);
   const { interval, daysBack } = rangeToParams(range);
   const now = new Date();
@@ -179,9 +180,10 @@ async function fetchHistorical(
   accountId: string | null,
   provider: "dhan" | "kite" | null,
   instrumentToken?: string,
+  selectedInstrument?: TerminalMarketDataInstrument,
 ): Promise<OHLCVCandle[]> {
   if (provider === "dhan" || (accountId && provider)) {
-    return fetchGatewayHistorical(accountId, provider ?? "dhan", symbol, range, instrumentToken);
+    return fetchGatewayHistorical(accountId, provider ?? "dhan", symbol, range, instrumentToken, selectedInstrument);
   }
   return [];
 }
@@ -189,14 +191,28 @@ async function fetchHistorical(
 /**
  * React Query hook for chart data. Fetches OHLCV candles from Dhan API.
  */
-export function useChartData(symbol: string, range: string = "3M", enabled: boolean = true, instrumentToken?: string) {
+export function useChartData(
+  symbol: string,
+  range: string = "3M",
+  enabled: boolean = true,
+  instrumentToken?: string,
+  selectedInstrument?: TerminalMarketDataInstrument,
+) {
   const { activeAccountId, accounts } = useAccountContext();
   const activeAccount = accounts.find((account) => account.id === activeAccountId);
   const provider = resolveTerminalMarketDataProvider(activeAccount?.broker_provider);
 
   return useQuery({
-    queryKey: ["chart-data", "global-dhan", symbol, range, instrumentToken],
-    queryFn: () => fetchHistorical(symbol, range, activeAccountId, provider, instrumentToken),
+    queryKey: [
+      "chart-data",
+      "global-dhan",
+      symbol,
+      range,
+      instrumentToken,
+      selectedInstrument?.exchangeSegment,
+      selectedInstrument?.providerInstrumentId,
+    ],
+    queryFn: () => fetchHistorical(symbol, range, activeAccountId, provider, instrumentToken, selectedInstrument),
     enabled: !!symbol && enabled,
     staleTime: 5 * 60 * 1000, // 5 min cache
     refetchOnWindowFocus: false,

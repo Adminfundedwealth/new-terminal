@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { BarChart3, Loader2, X, CandlestickChart, LineChart } from "lucide-react";
+import type { TerminalMarketDataInstrument } from "@/lib/terminalApi";
 
 const TIME_RANGES = ["1m", "5m", "15m", "1W", "1M", "3M", "6M", "1Y"] as const;
 type TimeRange = (typeof TIME_RANGES)[number];
@@ -26,6 +27,7 @@ interface StockChartProps {
   unavailableMessage?: string;
   /** Kite token for a selected derivative contract. */
   instrumentToken?: string;
+  instrument?: TerminalMarketDataInstrument;
   /** If provided, renders as a Sheet (drawer) */
   asSheet?: boolean;
   open?: boolean;
@@ -39,6 +41,7 @@ function ChartCore({
   candleOnly = false,
   unavailableMessage,
   instrumentToken,
+  instrument,
 }: {
   symbol: string;
   height?: number;
@@ -46,12 +49,13 @@ function ChartCore({
   candleOnly?: boolean;
   unavailableMessage?: string;
   instrumentToken?: string;
+  instrument?: TerminalMarketDataInstrument;
 }) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const [range, setRange] = useState<TimeRange>("3M");
   const [chartType, setChartType] = useState<"candle" | "line">("candle");
-  const { data: candles, isLoading, error } = useChartData(symbol, range, true, instrumentToken);
+  const { data: candles, isLoading, error } = useChartData(symbol, range, true, instrumentToken, instrument);
   const isDark = useIsDark();
 
   const buildChart = useCallback(() => {
@@ -282,6 +286,7 @@ export function StockChart({
   candleOnly = false,
   unavailableMessage,
   instrumentToken,
+  instrument,
   asSheet = false,
   open = false,
   onOpenChange,
@@ -297,7 +302,7 @@ export function StockChart({
             </SheetTitle>
           </SheetHeader>
           <div className="mt-3">
-            <ChartCore symbol={symbol} height={380} unavailableMessage={unavailableMessage} instrumentToken={instrumentToken} />
+            <ChartCore symbol={symbol} height={380} unavailableMessage={unavailableMessage} instrumentToken={instrumentToken} instrument={instrument} />
           </div>
         </SheetContent>
       </Sheet>
@@ -305,7 +310,7 @@ export function StockChart({
   }
 
   if (inline) {
-    return <ChartCore symbol={symbol} height={height} fill={fill} candleOnly={candleOnly} unavailableMessage={unavailableMessage} instrumentToken={instrumentToken} />;
+    return <ChartCore symbol={symbol} height={height} fill={fill} candleOnly={candleOnly} unavailableMessage={unavailableMessage} instrumentToken={instrumentToken} instrument={instrument} />;
   }
 
   return (
@@ -317,7 +322,7 @@ export function StockChart({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <ChartCore symbol={symbol} height={height} unavailableMessage={unavailableMessage} instrumentToken={instrumentToken} />
+        <ChartCore symbol={symbol} height={height} unavailableMessage={unavailableMessage} instrumentToken={instrumentToken} instrument={instrument} />
       </CardContent>
     </Card>
   );

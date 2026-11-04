@@ -6,6 +6,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/hooks/useMarketData", () => ({
   useMarketStatus: () => ({ data: { isOpen: true } }),
 }));
+vi.mock("@/lib/centralMarketQuotes", () => ({
+  fetchCentralMarketQuotes: vi.fn().mockResolvedValue({ quotes: {}, errors: [] }),
+}));
 vi.mock("@/hooks/useLocalDatabase", () => ({
   useInstrumentLookup: () => ({
     instruments: [

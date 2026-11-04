@@ -145,7 +145,10 @@ describe("Founder-global Dhan chart history gateway", () => {
     });
 
     const { result } = renderHook(() => useChartData("NIFTY", "1W"), { wrapper });
-    await waitFor(() => expect(result.current.data).toHaveLength(1));
+    await waitFor(() => expect(result.current.data, JSON.stringify({
+      error: result.current.error,
+      requests: gatewayMocks.requestMarketData.mock.calls.map(([, , operation]) => operation),
+    })).toHaveLength(1));
 
     expect(gatewayMocks.requestMarketData).toHaveBeenCalledWith(null, "dhan", {
       operation: "searchInstruments",
@@ -190,5 +193,43 @@ describe("Founder-global Dhan chart history gateway", () => {
       query: "RELIANCE",
     });
     expect(result.current.data?.[0]).toMatchObject({ open: 100, high: 105, low: 99, close: 103, volume: 10 });
+  });
+
+  it("uses the selected catalog instrument without a second symbol search", async () => {
+    gatewayMocks.accountContext.mockReturnValue({ activeAccountId: null, accounts: [] });
+    gatewayMocks.requestMarketData.mockResolvedValue([{
+      timestamp: "2026-09-28T09:15:00.000Z",
+      open: 100,
+      high: 105,
+      low: 99,
+      close: 103,
+      volume: 10,
+    }]);
+    const instrument = {
+      provider: "dhan",
+      providerInstrumentId: "2885",
+      symbol: "RELIANCE INDUSTRIES LTD",
+      tradingSymbol: "RELIANCE",
+      exchange: "NSE",
+      exchangeSegment: "NSE_EQ",
+      instrumentType: "EQUITY",
+      series: "EQ",
+    } as const;
+
+    const { result } = renderHook(
+      () => useChartData("RELIANCE", "3M", true, undefined, instrument),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.data).toHaveLength(1));
+
+    expect(gatewayMocks.requestMarketData).toHaveBeenCalledTimes(1);
+    expect(gatewayMocks.requestMarketData).toHaveBeenCalledWith(null, "dhan", expect.objectContaining({
+      operation: "getHistoricalCandles",
+      instrument: expect.objectContaining({
+        providerInstrumentId: "2885",
+        exchangeSegment: "NSE_EQ",
+      }),
+      interval: "day",
+    }));
   });
 });

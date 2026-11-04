@@ -147,6 +147,9 @@ export function InstrumentExplorer({
       : row.chartSymbol ?? row.symbol;
   }, [marketDataProvider, resolveRowInstrument]);
   const chartInstrument = workspaceInstruments.find((instrument) => instrument.tradingSymbol.toUpperCase() === (chartSymbol ?? "").toUpperCase());
+  const chartMarketDataInstrument = chartInstrument?.provider === "dhan"
+    ? toTerminalMarketDataInstrument(chartInstrument, "dhan")
+    : undefined;
   const chartInstrumentToken = chartInstrument?.provider === "zerodha"
     ? chartInstrument.providerInstrumentId || chartInstrument.securityId
     : chartSymbol === initialChartSymbol ? initialInstrumentToken : undefined;
@@ -187,7 +190,7 @@ export function InstrumentExplorer({
 
       const quotes: Record<string, TerminalMarketDataQuote> = {};
       const errors: string[] = [];
-      if (!marketDataAccountId && marketDataProvider !== "dhan") throw new Error("Select a FundedWealth trading account to load account-specific quotes.");
+      if (!marketDataAccountId) throw new Error("Select a FundedWealth trading account to load account-specific quotes.");
       for (let offset = 0; offset < visibleRows.length; offset += 10) {
         const batch = visibleRows.slice(offset, offset + 10);
         const results = await Promise.allSettled(batch.map(async (row) => {
@@ -1021,6 +1024,7 @@ export function InstrumentExplorer({
                       fill
                       candleOnly={activeTab === "Markets"}
                       instrumentToken={chartInstrumentToken}
+                      instrument={chartMarketDataInstrument}
                       unavailableMessage={workspaceContext === "stocks" ? chartUnavailableMessage : undefined}
                     />
                   </div>
