@@ -110,6 +110,7 @@ $status = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
 curl_close($curl);
 
 if ($curlError !== 0 || $body === false) {
+    header('X-SSO-Proxy-Error-Code: ' . $curlError);
     http_response_code(502);
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store');
