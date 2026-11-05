@@ -54,14 +54,14 @@ describe("Watchlist instrument chart navigation", () => {
 
   it("opens an index in the index chart workspace", async () => {
     renderWatchlist();
-    fireEvent.click(screen.getByRole("button", { name: "View chart for NIFTY" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open NIFTY chart" }));
 
     await waitFor(() => expect(screen.getByTestId("current-location")).toHaveTextContent("/indices?symbol=NIFTY"));
   });
 
   it("opens a stock in the stock chart workspace", async () => {
     renderWatchlist();
-    fireEvent.click(screen.getByRole("button", { name: "View chart for RELIANCE" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open RELIANCE chart" }));
 
     await waitFor(() => expect(screen.getByTestId("current-location")).toHaveTextContent("/stocks?symbol=RELIANCE"));
   });
@@ -70,9 +70,9 @@ describe("Watchlist instrument chart navigation", () => {
     localStorage.setItem("optionsdesk_watchlist", JSON.stringify(["NIFTY", "RELIANCE", "AAFS27C"]));
     renderWatchlist();
 
-    expect(screen.getByRole("button", { name: "View chart for NIFTY" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "View chart for RELIANCE" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "View chart for AAFS27C" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open NIFTY chart" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open RELIANCE chart" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open AAFS27C chart" })).not.toBeInTheDocument();
     expect(screen.getByText(/2 supported symbols/)).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("No supported cash-equity or index instrument found for 1 watchlist symbol: AAFS27C");
   });

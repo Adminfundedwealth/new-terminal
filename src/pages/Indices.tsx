@@ -4,7 +4,8 @@ import { useAccountContext } from "@/hooks/useAccountContext";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { InstrumentExplorer } from "@/components/InstrumentExplorer";
 import { getSavedWatchlist, saveWatchlist } from "@/lib/watchlist";
-import { canonicalIndexSymbol, classifyInstrument, isProductionInstrument } from "@/lib/instrumentClassification";
+import { classifyInstrument, isProductionInstrument } from "@/lib/instrumentClassification";
+import { curatedIndexForInstrument, CURATED_INDICES } from "@/lib/curatedMarketLists";
 
 export default function Indices() {
   const navigate = useNavigate();
@@ -13,19 +14,29 @@ export default function Indices() {
   const activeAccountProvider = accounts.find((account) => account.id === activeAccountId)?.broker_provider;
   const [watchedSymbols, setWatchedSymbols] = useState<string[]>(() => getSavedWatchlist());
   const { instruments, isLoaded, loadError } = useInstrumentLookup();
-  const initialChartSymbol = searchParams.get("symbol") ?? undefined;
+  const requestedChartSymbol = searchParams.get("symbol") ?? undefined;
 
   const rows = useMemo(() => {
-    const seen = new Set<string>();
-    return instruments.flatMap((instrument) => {
-      if (!isProductionInstrument(instrument) || classifyInstrument(instrument) !== "indices") return [];
-      const chartSymbol = canonicalIndexSymbol(instrument.symbol);
-      if (seen.has(chartSymbol)) return [];
-      seen.add(chartSymbol);
+    const instrumentsByCuratedSymbol = new Map<string, typeof instruments[number]>();
+    for (const instrument of instruments) {
+      if (
+        !isProductionInstrument(instrument) ||
+        classifyInstrument(instrument) !== "indices" ||
+        instrument.instrumentType.toUpperCase() !== "INDEX"
+      ) continue;
+      const curatedIndex = curatedIndexForInstrument(instrument.tradingSymbol, instrument.symbol, instrument.displayName);
+      if (curatedIndex && !instrumentsByCuratedSymbol.has(curatedIndex.symbol)) {
+        instrumentsByCuratedSymbol.set(curatedIndex.symbol, instrument);
+      }
+    }
+
+    return CURATED_INDICES.flatMap((index) => {
+      const instrument = instrumentsByCuratedSymbol.get(index.symbol);
+      if (!instrument) return [];
       return [{
-        symbol: chartSymbol,
-        chartSymbol,
-        label: instrument.tradingSymbol,
+        symbol: index.symbol,
+        chartSymbol: instrument.tradingSymbol,
+        label: index.name,
         ltp: null,
         change: null,
         changePercent: null,
@@ -34,10 +45,19 @@ export default function Indices() {
         low: null,
         volume: null,
         instrument,
-        searchText: `${chartSymbol} ${instrument.symbol} ${instrument.tradingSymbol}`,
+        searchText: `${index.symbol} ${index.name} ${instrument.symbol} ${instrument.tradingSymbol}`,
       }];
-    }).sort((a, b) => a.symbol.localeCompare(b.symbol));
+    });
   }, [instruments]);
+
+  const missingIndices = CURATED_INDICES.filter((index) => !rows.some((row) => row.symbol === index.symbol));
+  const instrumentMasterWarning = missingIndices.length
+    ? `Instrument master did not resolve: ${missingIndices.map((index) => index.symbol).join(", ")}`
+    : null;
+  const requestedIndex = requestedChartSymbol ? curatedIndexForInstrument(requestedChartSymbol) : undefined;
+  const initialChartSymbol = requestedIndex
+    ? rows.find((row) => row.symbol === requestedIndex.symbol)?.chartSymbol ?? requestedChartSymbol
+    : requestedChartSymbol;
 
   const handleWatchlistToggle = (symbol: string) => {
     const next = watchedSymbols.includes(symbol) ? watchedSymbols.filter((entry) => entry !== symbol) : [...watchedSymbols, symbol];
@@ -59,7 +79,7 @@ export default function Indices() {
         activeAccountProvider={activeAccountProvider}
         hasNoAccount={hasNoAccount}
         isAccountLoading={isAccountLoading}
-        loadError={loadError}
+        loadError={loadError ?? instrumentMasterWarning}
         initialChartSymbol={initialChartSymbol}
         onTradeOpen={(symbol) => navigate(`/option-chain?symbol=${symbol}`)}
         footerLabel="indices"

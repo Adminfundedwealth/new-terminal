@@ -1,4 +1,5 @@
 import type { Instrument } from "./localDatabase";
+import { curatedIndexForSymbol } from "./curatedMarketLists";
 
 export type InstrumentCategory = "stocks" | "indices" | "futures" | "options";
 
@@ -40,7 +41,9 @@ export function classifyInstrument(instrument: Instrument): InstrumentCategory |
 
 export function canonicalIndexSymbol(symbol: string): string {
   const key = normalized(symbol).replace(/[^A-Z0-9]/g, "");
-  return INDEX_SYMBOL_ALIASES[key] ?? symbol;
+  const legacyAlias = INDEX_SYMBOL_ALIASES[key];
+  if (legacyAlias) return legacyAlias;
+  return curatedIndexForSymbol(symbol)?.symbol ?? symbol;
 }
 
 export function isProductionInstrument(instrument: Instrument | Partial<Instrument>): boolean {

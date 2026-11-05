@@ -3,8 +3,9 @@ import { useSearchParams } from "react-router-dom";
 import { useAccountContext } from "@/hooks/useAccountContext";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { InstrumentExplorer } from "@/components/InstrumentExplorer";
-import { getSavedWatchlist, saveWatchlist } from "@/lib/watchlist";
 import { isNseCashEquityListing, isProductionInstrument } from "@/lib/instrumentClassification";
+import { canonicalCuratedStockSymbol, curatedStockForInstrument, CURATED_STOCKS } from "@/lib/curatedMarketLists";
+import { getSavedWatchlist, saveWatchlist } from "@/lib/watchlist";
 
 export default function Stocks() {
   const [searchParams] = useSearchParams();
@@ -13,22 +14,32 @@ export default function Stocks() {
   const { activeAccountId, accounts, hasNoAccount, isLoading: isAccountLoading } = useAccountContext();
   const activeAccountProvider = accounts.find((account) => account.id === activeAccountId)?.broker_provider;
   const initialWorkspaceContext = searchParams.get("workspace") === "options" ? "options" : undefined;
-  const initialChartSymbol = searchParams.get("symbol") ?? searchParams.get("contract") ?? undefined;
+  const requestedChartSymbol = searchParams.get("symbol") ?? searchParams.get("contract") ?? undefined;
   const initialUnderlying = searchParams.get("underlying") ?? undefined;
   const initialExpiry = searchParams.get("expiry") ?? undefined;
   const initialInstrumentToken = searchParams.get("instrumentToken") ?? undefined;
 
   const rows = useMemo(() => {
-    return instruments
-      .filter((instrument) =>
-        isProductionInstrument(instrument) &&
-        isNseCashEquityListing(instrument)
-      )
-      .sort((a, b) => a.symbol.localeCompare(b.symbol) || a.tradingSymbol.localeCompare(b.tradingSymbol))
-      .map((instrument) => ({
-        symbol: instrument.symbol,
-        chartSymbol: instrument.tradingSymbol,
-        label: instrument.tradingSymbol,
+    const instrumentsByCuratedSymbol = new Map<string, typeof instruments[number]>();
+    for (const instrument of instruments) {
+      if (
+        !isProductionInstrument(instrument) ||
+        !isNseCashEquityListing(instrument)
+      ) continue;
+      const curatedStock = curatedStockForInstrument(instrument.tradingSymbol, instrument.symbol);
+      if (curatedStock && !instrumentsByCuratedSymbol.has(curatedStock.symbol)) {
+        instrumentsByCuratedSymbol.set(curatedStock.symbol, instrument);
+      }
+    }
+
+    return CURATED_STOCKS.flatMap((stock) => {
+      const instrument = instrumentsByCuratedSymbol.get(stock.symbol);
+      if (!instrument) return [];
+      const symbol = instrument.tradingSymbol;
+      return [{
+        symbol,
+        chartSymbol: symbol,
+        label: stock.name,
         ltp: null,
         change: null,
         changePercent: null,
@@ -37,9 +48,20 @@ export default function Stocks() {
         low: null,
         volume: null,
         instrument,
-        searchText: `${instrument.symbol} ${instrument.tradingSymbol}`,
-      }));
+        searchText: `${stock.symbol} ${symbol} ${stock.name} ${instrument.symbol}`,
+      }];
+    });
   }, [instruments]);
+
+  const resolvedInitialChartSymbol = requestedChartSymbol
+    ? canonicalCuratedStockSymbol(requestedChartSymbol)
+    : undefined;
+  const missingStocks = CURATED_STOCKS.filter((stock) =>
+    !rows.some((row) => curatedStockForInstrument(row.chartSymbol)?.symbol === stock.symbol)
+  );
+  const instrumentMasterWarning = missingStocks.length
+    ? `Instrument master did not resolve: ${missingStocks.map((stock) => stock.symbol).join(", ")}`
+    : null;
 
   const handleWatchlistToggle = (symbol: string) => {
     const next = watchedSymbols.includes(symbol) ? watchedSymbols.filter((entry) => entry !== symbol) : [...watchedSymbols, symbol];
@@ -61,9 +83,9 @@ export default function Stocks() {
         activeAccountProvider={activeAccountProvider}
         hasNoAccount={hasNoAccount}
         isAccountLoading={isAccountLoading}
-        loadError={loadError}
+        loadError={loadError ?? instrumentMasterWarning}
         initialWorkspaceContext={initialWorkspaceContext}
-        initialChartSymbol={initialChartSymbol}
+        initialChartSymbol={resolvedInitialChartSymbol}
         initialUnderlying={initialUnderlying}
         initialExpiry={initialExpiry}
         initialInstrumentToken={initialInstrumentToken}

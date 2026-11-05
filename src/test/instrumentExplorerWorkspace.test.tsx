@@ -224,7 +224,7 @@ describe("InstrumentExplorer stock workspace", () => {
     );
 
     expect(screen.getAllByRole("columnheader").map((header) => header.textContent?.trim())).toEqual([
-      "SYMBOL", "LTP", "CHG", "CHG%", "OPEN", "HIGH", "LOW", "VOLUME", "CHART", "ACTIONS",
+      "SYMBOL", "LTP", "CHG", "CHG%", "OPEN", "HIGH", "LOW", "VOLUME", "OI", "OI Chg", "CHART", "ACTIONS",
     ]);
     expect(screen.queryByText("NSE_EQ")).not.toBeInTheDocument();
     expect(screen.queryByText("500490")).not.toBeInTheDocument();

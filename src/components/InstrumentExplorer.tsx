@@ -14,6 +14,7 @@ import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { centralMarketQuoteKey, fetchCentralMarketQuotes } from "@/lib/centralMarketQuotes";
 import { classifyInstrument, isProductionInstrument } from "@/lib/instrumentClassification";
 import { getPreferredMarketAdapter } from "@/lib/brokerRouter";
+import { rankRowsByVolume } from "@/lib/curatedMarketLists";
 import {
   createClientOrderId,
   createTerminalOrder,
@@ -164,10 +165,11 @@ export function InstrumentExplorer({
   }, [rows, search]);
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / EXPLORER_PAGE_SIZE));
   const safePage = Math.min(currentPage, pageCount - 1);
-  const visibleRows = useMemo(
+  const pageRows = useMemo(
     () => filteredRows.slice(safePage * EXPLORER_PAGE_SIZE, (safePage + 1) * EXPLORER_PAGE_SIZE),
     [filteredRows, safePage],
   );
+  const quoteRows = asset === "stocks" ? rows : pageRows;
 
   useEffect(() => setCurrentPage(0), [search]);
 
@@ -177,12 +179,12 @@ export function InstrumentExplorer({
       asset,
       marketDataAccountId,
       marketDataProvider,
-      visibleRows.map(quoteKeyForRow),
+      quoteRows.map(quoteKeyForRow),
     ],
-    enabled: Boolean(visibleRows.length > 0 && canLoadMarketData),
+    enabled: Boolean(quoteRows.length > 0 && canLoadMarketData),
     queryFn: async () => {
       if (marketDataProvider === "dhan") {
-        return fetchCentralMarketQuotes(visibleRows.map((row) => {
+        return fetchCentralMarketQuotes(quoteRows.map((row) => {
           const instrument = resolveRowInstrument(row);
           return { key: quoteKeyForRow(row), instrument };
         }));
@@ -190,9 +192,9 @@ export function InstrumentExplorer({
 
       const quotes: Record<string, TerminalMarketDataQuote> = {};
       const errors: string[] = [];
-      if (!marketDataAccountId) throw new Error("Select a FundedWealth trading account to load account-specific quotes.");
-      for (let offset = 0; offset < visibleRows.length; offset += 10) {
-        const batch = visibleRows.slice(offset, offset + 10);
+      if (!marketDataAccountId && marketDataProvider !== "dhan") throw new Error("Select a FundedWealth trading account to load account-specific quotes.");
+      for (let offset = 0; offset < quoteRows.length; offset += 10) {
+        const batch = quoteRows.slice(offset, offset + 10);
         const results = await Promise.allSettled(batch.map(async (row) => {
           const chartSymbol = row.chartSymbol ?? row.symbol;
           const instrument = resolveRowInstrument(row);
@@ -212,7 +214,7 @@ export function InstrumentExplorer({
       return { quotes, errors: [...new Set(errors)] };
     },
     staleTime: 5_000,
-    refetchInterval: 30_000,
+    refetchInterval: asset === "stocks" ? 60_000 : 30_000,
     retry: false,
   });
   const marketDataNotice = !activeAccountId && isAccountLoading && marketDataProvider !== "dhan"
@@ -220,6 +222,19 @@ export function InstrumentExplorer({
     : !activeAccountId && marketDataProvider !== "dhan"
       ? "Select a FundedWealth trading account to load account-specific market data."
       : visibleQuotesQuery.data?.errors[0] ?? (visibleQuotesQuery.error instanceof Error ? visibleQuotesQuery.error.message : null);
+
+  const rankedRows = useMemo(() => {
+    if (asset !== "stocks") return filteredRows;
+    const quotesBySymbol = Object.fromEntries(filteredRows.map((row) => [
+      row.chartSymbol ?? row.symbol,
+      visibleQuotesQuery.data?.quotes[quoteKeyForRow(row)],
+    ]));
+    return rankRowsByVolume(filteredRows, quotesBySymbol);
+  }, [asset, filteredRows, visibleQuotesQuery.data, quoteKeyForRow]);
+  const visibleRows = useMemo(
+    () => rankedRows.slice(safePage * EXPLORER_PAGE_SIZE, (safePage + 1) * EXPLORER_PAGE_SIZE),
+    [rankedRows, safePage],
+  );
 
   const displayedRows = useMemo(() => visibleRows.map((row) => {
     const quote = visibleQuotesQuery.data?.quotes[quoteKeyForRow(row)];
@@ -682,6 +697,8 @@ export function InstrumentExplorer({
                       <TableHead className="text-right">{asset === "stocks" ? "HIGH" : "High"}</TableHead>
                       <TableHead className="text-right">{asset === "stocks" ? "LOW" : "Low"}</TableHead>
                       {asset !== "indices" && <TableHead className="text-right">{asset === "stocks" ? "VOLUME" : "Volume"}</TableHead>}
+                      {asset === "stocks" && <TableHead className="text-right" title="Cash-equity open interest is shown only when the active provider supplies it.">OI</TableHead>}
+                      {asset === "stocks" && <TableHead className="text-right" title="Cash-equity open-interest change is shown only when the active provider supplies it.">OI Chg</TableHead>}
                       {asset === "futures" && <TableHead className="text-right">OI</TableHead>}
                       {asset === "futures" && <TableHead className="text-right">OI Chg</TableHead>}
                       <TableHead className="text-center w-[90px]">{asset === "stocks" ? "CHART" : "Chart"}</TableHead>
@@ -755,6 +772,8 @@ export function InstrumentExplorer({
                           <TableCell className="text-right text-muted-foreground">{formatNumber(row.low)}</TableCell>
 
                           {asset !== "indices" && <TableCell className="text-right text-muted-foreground">{formatCompact(row.volume)}</TableCell>}
+                          {asset === "stocks" && <TableCell className="text-right" title={row.oi == null ? "Open interest was not provided for this cash-equity quote." : undefined}>{formatCompact(row.oi)}</TableCell>}
+                          {asset === "stocks" && <TableCell className="text-right" title="Open-interest change was not provided for this cash-equity quote.">—</TableCell>}
                           {asset === "futures" && <TableCell className="text-right">{formatCompact(row.oi)}</TableCell>}
                           {asset === "futures" && <TableCell className={`text-right ${((row.oiChange ?? 0) >= 0 ? "text-bullish" : "text-bearish")}`}>{row.oiChange == null || row.oiChange === 0 ? "—" : `${row.oiChange >= 0 ? "+" : ""}${formatCompact(row.oiChange)}`}</TableCell>}
 
