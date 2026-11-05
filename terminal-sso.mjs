@@ -183,6 +183,32 @@ function readExchangeCookie(cookieHeader, secret) {
   }
 }
 
+async function consumeHandoff(token, secret, env, fetchImpl, replayStore) {
+  const handoff = readHandoff(token, secret);
+  if (!handoff) {
+    throw Object.assign(new Error("The SSO handoff is invalid or expired."), { status: 401 });
+  }
+
+  const config = getSupabaseConfig(env);
+  const accountQuery = new URLSearchParams({
+    select: "id,owner_user_id",
+    id: `eq.${handoff.accountId}`,
+    owner_user_id: `eq.${handoff.ownerUserId}`,
+    status: "eq.active",
+    is_active: "eq.true",
+    limit: "1",
+  });
+  const accounts = await callSupabase(fetchImpl, config, `/rest/v1/trading_accounts?${accountQuery}`);
+  if (!Array.isArray(accounts) || accounts.length !== 1) {
+    throw Object.assign(new Error("The terminal account is no longer active or authorized."), { status: 403 });
+  }
+
+  if (!await replayStore.consume(handoff.jti, handoff.expiresAt)) {
+    throw Object.assign(new Error("The SSO handoff is invalid, expired, or already used."), { status: 401 });
+  }
+  return handoff;
+}
+
 export function createTerminalSsoHandlers({
   fetchImpl = fetch,
   env = process.env,
@@ -277,29 +303,7 @@ export function createTerminalSsoHandlers({
       const token = form.get("token");
       if (!token || token.length > 2048) return jsonResponse(400, { error: "A valid SSO handoff is required." });
 
-      const config = getSupabaseConfig(env);
-      const handoff = readHandoff(token, sharedKey);
-      if (!handoff) {
-        return jsonResponse(401, { error: "The SSO handoff is invalid or expired." });
-      }
-
-      const accountQuery = new URLSearchParams({
-        select: "id,owner_user_id",
-        id: `eq.${handoff.accountId}`,
-        owner_user_id: `eq.${handoff.ownerUserId}`,
-        status: "eq.active",
-        is_active: "eq.true",
-        limit: "1",
-      });
-      const accounts = await callSupabase(fetchImpl, config, `/rest/v1/trading_accounts?${accountQuery}`);
-      if (!Array.isArray(accounts) || accounts.length !== 1) {
-        return jsonResponse(403, { error: "The terminal account is no longer active or authorized." });
-      }
-
-      const consumed = await replayStore.consume(handoff.jti, handoff.expiresAt);
-      if (!consumed) {
-        return jsonResponse(401, { error: "The SSO handoff is invalid, expired, or already used." });
-      }
+      const handoff = await consumeHandoff(token, sharedKey, env, fetchImpl, replayStore);
 
       const expiresAt = Date.now() + 90_000;
       return {
@@ -314,6 +318,44 @@ export function createTerminalSsoHandlers({
     } catch (error) {
       const status = Number.isInteger(error?.status) ? error.status : 500;
       return jsonResponse(status, { error: status < 500 ? error.message : "Terminal SSO callback failed." });
+    }
+  }
+
+  async function browserCallback(req) {
+    const corsHeaders = req.headers.origin === CHART_ORIGIN
+      ? { "Access-Control-Allow-Origin": CHART_ORIGIN, "Vary": "Origin", "Cache-Control": "no-store" }
+      : {};
+    if (req.headers.origin !== CHART_ORIGIN) {
+      return jsonResponse(403, { error: "The SSO callback origin is not allowed." });
+    }
+
+    const sharedKey = env.SSO_API_KEY || env.SSO_SHARED_SECRET;
+    if (!sharedKey) {
+      return jsonResponse(503, { error: "Terminal SSO service is not configured." }, corsHeaders);
+    }
+
+    try {
+      const contentType = String(req.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase();
+      if (contentType !== "application/x-www-form-urlencoded") {
+        return jsonResponse(415, { error: "Expected a form-encoded SSO handoff." }, corsHeaders);
+      }
+
+      const form = new URLSearchParams(await readBody(req));
+      const token = form.get("token");
+      if (!token || token.length > 2048) {
+        return jsonResponse(400, { error: "A valid SSO handoff is required." }, corsHeaders);
+      }
+
+      const handoff = await consumeHandoff(token, sharedKey, env, fetchImpl, replayStore);
+      return jsonResponse(200, {
+        tokenHash: handoff.tokenHash,
+        accountId: handoff.accountId,
+      }, corsHeaders);
+    } catch (error) {
+      const status = Number.isInteger(error?.status) ? error.status : 500;
+      return jsonResponse(status, {
+        error: status < 500 ? error.message : "Terminal SSO callback failed.",
+      }, corsHeaders);
     }
   }
 
@@ -346,5 +388,5 @@ export function createTerminalSsoHandlers({
     });
   }
 
-  return { generate, callback, exchange };
+  return { generate, callback, browserCallback, exchange };
 }

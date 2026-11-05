@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { BrandSplash } from "@/components/BrandSplash";
 import { supabase } from "@/integrations/supabase/client";
-import { setActiveAccount } from "@/lib/terminalApi";
+import { fetchTerminalAccounts, setActiveAccount } from "@/lib/terminalApi";
 
 let completionAttempt: Promise<void> | null = null;
 
@@ -26,6 +26,11 @@ async function completeTerminalSso() {
   });
   if (error) throw new Error("The terminal could not verify the one-time sign-in. Launch the terminal again.");
 
+  const accounts = await fetchTerminalAccounts();
+  if (!accounts.data.some((account) => account.id === exchange.accountId && account.status === "active")) {
+    throw new Error("The terminal account is no longer active or belongs to a different user. Launch the terminal again.");
+  }
+
   await setActiveAccount(exchange.accountId);
 }
 
@@ -34,7 +39,9 @@ export default function TerminalSsoComplete() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    completionAttempt ??= completeTerminalSso();
+    completionAttempt ??= completeTerminalSso().finally(() => {
+      completionAttempt = null;
+    });
     let mounted = true;
     void completionAttempt.then(
       () => {

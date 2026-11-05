@@ -1314,6 +1314,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Authorization, Content-Type, x-dhan-client-id, x-dhan-access-token",
 };
+const CHART_ORIGIN = "https://charts.fundedwealth.com";
 const terminalSso = createTerminalSsoHandlers();
 const terminalAccountLink = createTerminalAccountLinkHandlers();
 
@@ -1359,12 +1360,28 @@ function requireApiSecret(req) {
 // ══════════════════════════════════════════════
 
 const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://localhost:${PORT}`);
+
+  if (req.method === "OPTIONS" && url.pathname === "/auth/sso/browser") {
+    if (req.headers.origin !== CHART_ORIGIN) {
+      res.writeHead(403, { "Cache-Control": "no-store" });
+      return res.end();
+    }
+    res.writeHead(204, {
+      "Access-Control-Allow-Origin": CHART_ORIGIN,
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Cache-Control": "no-store",
+      "Vary": "Origin",
+    });
+    return res.end();
+  }
+
   if (req.method === "OPTIONS") {
     res.writeHead(204, CORS_HEADERS);
     return res.end();
   }
 
-  const url = new URL(req.url, `http://localhost:${PORT}`);
   const params = url.searchParams;
 
   res.setHeader("Content-Type", "application/json");
@@ -1379,6 +1396,12 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === "/auth/sso" && req.method === "POST") {
       const result = await terminalSso.callback(req);
+      res.writeHead(result.status, result.headers);
+      res.end(result.body);
+      return;
+    }
+    if (url.pathname === "/auth/sso/browser" && req.method === "POST") {
+      const result = await terminalSso.browserCallback(req);
       res.writeHead(result.status, result.headers);
       res.end(result.body);
       return;

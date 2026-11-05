@@ -152,6 +152,42 @@ test("validates the signed handoff and exchanges it for an existing-user Supabas
   assert.equal(rejected.status, 401);
 });
 
+test("browser callback is origin-bound and consumes the handoff once", async () => {
+  const { fetchImpl } = makeFetch();
+  const handlers = createTerminalSsoHandlers({
+    fetchImpl,
+    env: { SSO_API_KEY: secret, SUPABASE_URL: "https://db.example.test", SUPABASE_SECRET_KEY: "service-key" },
+    replayStore: makeReplayStore(),
+  });
+  const token = await generateToken(handlers);
+  const body = `token=${encodeURIComponent(token)}`;
+
+  const rejectedOrigin = await handlers.browserCallback(request(body, {
+    origin: "https://attacker.example",
+    "content-type": "application/x-www-form-urlencoded",
+  }));
+  assert.equal(rejectedOrigin.status, 403);
+
+  const callback = await handlers.browserCallback(request(body, {
+    origin: "https://charts.fundedwealth.com",
+    "content-type": "application/x-www-form-urlencoded",
+  }));
+  assert.equal(callback.status, 200);
+  assert.equal(callback.headers["Access-Control-Allow-Origin"], "https://charts.fundedwealth.com");
+  assert.equal(callback.headers["Cache-Control"], "no-store");
+  assert.deepEqual(JSON.parse(callback.body), {
+    tokenHash: "one-time-supabase-token-hash",
+    accountId: account.id,
+  });
+  assert.equal(callback.headers["Set-Cookie"], undefined);
+
+  const replay = await handlers.browserCallback(request(body, {
+    origin: "https://charts.fundedwealth.com",
+    "content-type": "application/x-www-form-urlencoded",
+  }));
+  assert.equal(replay.status, 401);
+});
+
 test("rejects expired handoffs before they can be consumed", async () => {
   const { fetchImpl, calls } = makeFetch();
   const handlers = createTerminalSsoHandlers({
