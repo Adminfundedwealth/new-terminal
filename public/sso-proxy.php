@@ -106,11 +106,15 @@ if ($route === 'sso') {
 
 $body = curl_exec($curl);
 $curlError = curl_errno($curl);
-$status = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
+$curlInfo = curl_getinfo($curl);
+$status = (int) ($curlInfo['http_code'] ?? 0);
 curl_close($curl);
 
 if ($curlError !== 0 || $body === false) {
     header('X-SSO-Proxy-Error-Code: ' . $curlError);
+    header('X-SSO-Proxy-DNS-Time-ms: ' . (int) round(($curlInfo['namelookup_time'] ?? 0) * 1000));
+    header('X-SSO-Proxy-Connect-Time-ms: ' . (int) round(($curlInfo['connect_time'] ?? 0) * 1000));
+    header('X-SSO-Proxy-Total-Time-ms: ' . (int) round(($curlInfo['total_time'] ?? 0) * 1000));
     http_response_code(502);
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store');
