@@ -80,6 +80,7 @@ curl_setopt_array($curl, [
     CURLOPT_FOLLOWLOCATION => false,
     CURLOPT_CONNECTTIMEOUT_MS => 3000,
     CURLOPT_TIMEOUT_MS => 10000,
+    CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4,
     CURLOPT_HEADERFUNCTION => static function ($handle, $line) use (&$responseHeaders) {
         $length = strlen($line);
         $parts = explode(':', $line, 2);
