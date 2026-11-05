@@ -1,7 +1,9 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 const CHART_ORIGIN = "https://charts.fundedwealth.com";
 const HANDOFF_TTL_SECONDS = 60;
+const HANDOFF_ISSUER = "fundedwealth-dashboard";
+const HANDOFF_AUDIENCE = "fundedwealth-terminal";
 const EXCHANGE_COOKIE = "fw_sso_exchange";
 const MAX_BODY_BYTES = 8192;
 
@@ -51,6 +53,46 @@ function getSupabaseConfig(env) {
   return { baseUrl, serviceKey };
 }
 
+function createRedisReplayStore(redisUrl) {
+  let clientPromise;
+
+  async function getClient() {
+    if (!redisUrl) {
+      throw Object.assign(new Error("Terminal SSO replay store is not configured."), { status: 503 });
+    }
+    if (!clientPromise) {
+      clientPromise = import("redis").then(({ createClient }) => {
+        const client = createClient({ url: redisUrl, socket: { connectTimeout: 5000 } });
+        client.on("error", (error) => {
+          console.error("[Terminal SSO] Redis replay store error", { name: error?.name ?? "Error" });
+        });
+        return client.connect().then(() => client);
+      }).catch((error) => {
+        clientPromise = undefined;
+        throw Object.assign(new Error("Terminal SSO replay store is unavailable."), { status: 503, cause: error });
+      });
+    }
+    return clientPromise;
+  }
+
+  return {
+    async consume(jti, expiresAt) {
+      const ttlSeconds = Math.ceil((expiresAt - Date.now()) / 1000);
+      if (ttlSeconds <= 0) return false;
+
+      const client = await getClient();
+      try {
+        return await client.set(`fundedwealth:sso:handoff:${jti}`, "1", {
+          NX: true,
+          EX: ttlSeconds,
+        }) === "OK";
+      } catch (error) {
+        throw Object.assign(new Error("Terminal SSO replay store is unavailable."), { status: 503, cause: error });
+      }
+    },
+  };
+}
+
 function signHandoff(payload, secret) {
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const signature = createHmac("sha256", secret).update(encoded).digest("base64url");
@@ -71,6 +113,9 @@ function readHandoff(token, secret) {
     if (typeof payload.tokenHash !== "string" || !payload.tokenHash ||
         typeof payload.accountId !== "string" || !payload.accountId ||
         typeof payload.ownerUserId !== "string" || !payload.ownerUserId ||
+        typeof payload.jti !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(payload.jti) ||
+        payload.iss !== HANDOFF_ISSUER || payload.aud !== HANDOFF_AUDIENCE ||
         !Number.isFinite(payload.expiresAt) || payload.expiresAt <= Date.now()) return null;
     return payload;
   } catch {
@@ -138,7 +183,11 @@ function readExchangeCookie(cookieHeader, secret) {
   }
 }
 
-export function createTerminalSsoHandlers({ fetchImpl = fetch, env = process.env } = {}) {
+export function createTerminalSsoHandlers({
+  fetchImpl = fetch,
+  env = process.env,
+  replayStore = createRedisReplayStore(env.REDIS_URL),
+} = {}) {
   async function generate(req) {
     const sharedKey = env.SSO_API_KEY || env.SSO_SHARED_SECRET;
     if (!sharedKey) return jsonResponse(503, { error: "Terminal SSO service is not configured." });
@@ -200,6 +249,9 @@ export function createTerminalSsoHandlers({ fetchImpl = fetch, env = process.env
       }
 
       const token = signHandoff({
+        jti: randomUUID(),
+        iss: HANDOFF_ISSUER,
+        aud: HANDOFF_AUDIENCE,
         tokenHash,
         accountId: account.id,
         ownerUserId: account.owner_user_id,
@@ -242,6 +294,11 @@ export function createTerminalSsoHandlers({ fetchImpl = fetch, env = process.env
       const accounts = await callSupabase(fetchImpl, config, `/rest/v1/trading_accounts?${accountQuery}`);
       if (!Array.isArray(accounts) || accounts.length !== 1) {
         return jsonResponse(403, { error: "The terminal account is no longer active or authorized." });
+      }
+
+      const consumed = await replayStore.consume(handoff.jti, handoff.expiresAt);
+      if (!consumed) {
+        return jsonResponse(401, { error: "The SSO handoff is invalid, expired, or already used." });
       }
 
       const expiresAt = Date.now() + 90_000;
