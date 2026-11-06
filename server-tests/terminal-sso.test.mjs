@@ -81,11 +81,44 @@ test("creates a one-time handoff only for the authenticated server caller", asyn
   const handoff = JSON.parse(Buffer.from(body.token.split(".")[0], "base64url").toString("utf8"));
   assert.equal(handoff.iss, "fundedwealth-dashboard");
   assert.equal(handoff.aud, "fundedwealth-terminal");
+  assert.equal(handoff.accountId, account.id);
   assert.match(handoff.jti, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
   assert.ok(handoff.expiresAt > Date.now());
+  const accountLookup = new URL(calls.find(({ url }) => url.includes("/trading_accounts?")).url);
+  assert.equal(accountLookup.searchParams.get("external_account_id"), "eq.external-account-1");
   assert.ok(calls.some(({ url, init }) => url.includes("/auth/v1/admin/generate_link") && init.method === "POST"));
   assert.equal(calls[0].init.headers.apikey, "service-role-key");
   assert.equal(calls[0].init.headers.Authorization, "Bearer service-role-key");
+});
+
+test("logs upstream SSO failure details without account or credential values", async () => {
+  const accountId = "private-external-account";
+  const errors = [];
+  const originalError = console.error;
+  console.error = (...args) => errors.push(args);
+
+  try {
+    const handlers = createTerminalSsoHandlers({
+      fetchImpl: async () => Response.json({ error: "private response text" }, { status: 500 }),
+      env: {
+        SSO_API_KEY: secret,
+        SUPABASE_URL: "https://db.example.test",
+        SUPABASE_SERVICE_ROLE_KEY: "test-service-role-key",
+      },
+    });
+    const result = await handlers.generate(request(JSON.stringify({ accountId }), {
+      "x-sso-api-key": secret,
+    }));
+
+    assert.equal(result.status, 502);
+  } finally {
+    console.error = originalError;
+  }
+
+  const diagnostics = JSON.stringify(errors);
+  assert.match(diagnostics, /upstreamStatus/);
+  assert.match(diagnostics, /trading_accounts/);
+  assert.doesNotMatch(diagnostics, /private-external-account|private response text|test-service-role-key|test-only-shared-key/);
 });
 
 test("rejects a mapping whose owner identity cannot be resolved", async () => {

@@ -123,6 +123,13 @@ function readHandoff(token, secret) {
   }
 }
 
+function safeUpstreamPath(path) {
+  return path.split("?")[0].replace(
+    /\/auth\/v1\/admin\/users\/[^/]+$/,
+    "/auth/v1/admin/users/[id]",
+  );
+}
+
 async function callSupabase(fetchImpl, config, path, init = {}) {
   let response;
   const headers = {
@@ -138,11 +145,20 @@ async function callSupabase(fetchImpl, config, path, init = {}) {
       headers,
       signal: AbortSignal.timeout(8000),
     });
-  } catch {
-    throw Object.assign(new Error("Terminal SSO database request failed."), { status: 503 });
+  } catch (error) {
+    const causeCode = error?.cause?.code ?? error?.code;
+    throw Object.assign(new Error("Terminal SSO database request failed."), {
+      status: 503,
+      ...(typeof causeCode === "string" && /^[A-Z0-9_]+$/.test(causeCode) ? { causeCode } : {}),
+      upstreamPath: safeUpstreamPath(path),
+    });
   }
   if (!response.ok) {
-    throw Object.assign(new Error("Terminal SSO database request failed."), { status: 502 });
+    throw Object.assign(new Error("Terminal SSO database request failed."), {
+      status: 502,
+      upstreamStatus: response.status,
+      upstreamPath: safeUpstreamPath(path),
+    });
   }
   const responseBody = await response.text();
   return responseBody ? JSON.parse(responseBody) : null;
@@ -216,11 +232,16 @@ export function createTerminalSsoHandlers({
 } = {}) {
   async function generate(req) {
     const sharedKey = env.SSO_API_KEY || env.SSO_SHARED_SECRET;
-    if (!sharedKey) return jsonResponse(503, { error: "Terminal SSO service is not configured." });
+    if (!sharedKey) {
+      console.error("[Terminal SSO] SSO API key is not configured");
+      return jsonResponse(503, { error: "Terminal SSO service is not configured." });
+    }
     if (!equalSecret(req.headers["x-sso-api-key"], sharedKey)) {
+      console.error("[Terminal SSO] SSO API key was rejected");
       return jsonResponse(401, { error: "Unauthorized" });
     }
 
+    const startedAt = Date.now();
     try {
       const body = JSON.parse(await readBody(req));
       const externalAccountId = typeof body.accountId === "string" ? body.accountId.trim() : "";
@@ -286,6 +307,15 @@ export function createTerminalSsoHandlers({
       return jsonResponse(200, { success: true, token, expiresIn: HANDOFF_TTL_SECONDS });
     } catch (error) {
       const status = Number.isInteger(error?.status) ? error.status : 500;
+      const causeCode = error?.causeCode;
+      console.error(`[Terminal SSO] Handoff generation failed ${JSON.stringify({
+        status,
+        durationMs: Date.now() - startedAt,
+        errorName: typeof error?.name === "string" ? error.name : "UnknownError",
+        ...(typeof causeCode === "string" && /^[A-Z0-9_]+$/.test(causeCode) ? { causeCode } : {}),
+        ...(Number.isInteger(error?.upstreamStatus) ? { upstreamStatus: error.upstreamStatus } : {}),
+        ...(typeof error?.upstreamPath === "string" ? { upstreamPath: error.upstreamPath } : {}),
+      })}`);
       return jsonResponse(status, { error: status < 500 ? error.message : "Terminal SSO generation failed." });
     }
   }
