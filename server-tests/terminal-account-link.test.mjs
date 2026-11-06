@@ -5,6 +5,7 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import {
   canonicalizeLegacyInstantFundedRules,
+  canonicalizeLegacyFlashFundedRules,
   canonicalFundedWealthProductCode,
   createTerminalAccountLinkHandlers,
   createTerminalAccountLinkWorkflow,
@@ -102,6 +103,28 @@ test("maps account-size-prefixed FundedWealth step plans to canonical terminal p
   assert.equal(canonicalFundedWealthProductCode("500k-instant"), "INSTANT");
 });
 
+test("ensures funded and passed accounts while refusing breached accounts", async () => {
+  for (const status of ["funded", "passed"]) {
+    const { store } = makeStore();
+    const workflow = createTerminalAccountLinkWorkflow(store);
+    const result = await workflow.ensure({
+      ...source,
+      challenge: { ...source.challenge, status },
+    });
+    assert.equal(result.created, true);
+  }
+
+  const { store } = makeStore();
+  const workflow = createTerminalAccountLinkWorkflow(store);
+  await assert.rejects(
+    () => workflow.ensure({
+      ...source,
+      challenge: { ...source.challenge, status: "breached" },
+    }),
+    /eligible challenge/,
+  );
+});
+
 test("matches canonical nested 1-Step rules and rejects versions with different challenge limits", () => {
   const activeVersion = {
     status: "active",
@@ -159,6 +182,15 @@ test("matches funded Flash and Instant rules without relaxing any challenge limi
       minimum_trading_days: 7,
     },
   };
+  const twoStepRules = {
+    evaluation_rules: {
+      max_drawdown_percent: 8,
+      daily_drawdown_percent: 3,
+      profit_target_percent: 8,
+      max_risk_per_trade_percent: 1.5,
+      minimum_trading_days: 5,
+    },
+  };
 
   assert.equal(isCompatibleFundedWealthRuleVersion(
     { rules: flashRules },
@@ -175,6 +207,20 @@ test("matches funded Flash and Instant rules without relaxing any challenge limi
     fundedSource("flash", { profitTargetPct: 0, dailyLossLimitPct: 3, maxDrawdownPct: 4, minTradingDays: 0 }),
     "FUNDED",
   ), false);
+  assert.equal(isCompatibleFundedWealthRuleVersion(
+    { rules: twoStepRules },
+    {
+      challenge: {
+        ...source.challenge,
+        plan: "50k-2step",
+        profitTargetPct: 8,
+        dailyLossLimitPct: 3,
+        maxDrawdownPct: 8,
+        minTradingDays: 5,
+      },
+    },
+    "CHALLENGE",
+  ), true);
 });
 
 test("repairs only the seeded legacy Instant funded rules shape", () => {
@@ -210,10 +256,54 @@ test("repairs only the seeded legacy Instant funded rules shape", () => {
     max_risk_per_trade_percent: 1,
     minimum_trading_days: 7,
   });
+
   assert.equal(isCompatibleFundedWealthRuleVersion({ rules: repairedRules }, instantSource, "FUNDED"), true);
   assert.equal(canonicalizeLegacyInstantFundedRules({
     ...legacyVersion,
     rules: { ...legacyVersion.rules, max_drawdown_percent: 6 },
+  }), null);
+});
+
+test("repairs only the seeded legacy Flash funded rules shape", () => {
+  const legacyVersion = {
+    status: "active",
+    rules: {
+      plan_name: "FLASH",
+      duration_hours: 24,
+      max_loss_per_trade_percent: 2,
+      max_drawdown_percent: 4,
+      profit_split_percent: 80,
+      consistency_requirement_percent: 15,
+      payout_threshold_percent: 3,
+      evaluation_rules: null,
+      funded_rules: null,
+    },
+  };
+  const repairedRules = canonicalizeLegacyFlashFundedRules(legacyVersion);
+  const flashSource = {
+    ...source,
+    challenge: {
+      ...source.challenge,
+      type: "funded",
+      plan: "250k-flash",
+      profitTargetPct: 0,
+      dailyLossLimitPct: 2,
+      maxDrawdownPct: 4,
+      minTradingDays: 0,
+    },
+  };
+
+  assert.deepEqual(repairedRules.funded_rules, {
+    max_drawdown_percent: 4,
+    daily_drawdown_percent: 2,
+    profit_target_percent: 0,
+    max_risk_per_trade_percent: 2,
+    minimum_trading_days: 0,
+  });
+  assert.equal(isCompatibleFundedWealthRuleVersion({ rules: repairedRules }, flashSource, "FUNDED"), true);
+  assert.equal(canonicalizeLegacyFlashFundedRules({
+    ...legacyVersion,
+    rules: { ...legacyVersion.rules, max_drawdown_percent: 5 },
   }), null);
 });
 
@@ -254,7 +344,8 @@ test("trusted Instant linking publishes the audited canonical rule before creati
     account: { ...source.account, accountCode: "FW-INSTANT-ACCOUNT", balance: 1_000_000 },
     challenge: {
       ...source.challenge,
-      type: "funded",
+      type: "evaluation_phase1",
+      status: "funded",
       plan: "10L Instant",
       initialBalance: 1_000_000,
       currentBalance: 1_000_000,
@@ -362,6 +453,144 @@ test("trusted Instant linking publishes the audited canonical rule before creati
   });
 });
 
+test("repairs an existing Flash mapping through the rule workflow without duplicating the account", async () => {
+  const identity = { id: "55555555-5555-4555-8555-555555555555", email: source.customer.email };
+  const product = { id: "77777777-7777-4777-8777-777777777777", code: "FLASH", status: "active" };
+  const phase = { id: "88888888-8888-4888-8888-888888888888", product_id: product.id, code: "FUNDED", status: "active" };
+  const legacyRule = {
+    id: "99999999-9999-4999-8999-999999999999",
+    version: "v1",
+    status: "active",
+    rules: {
+      plan_name: "FLASH",
+      duration_hours: 24,
+      max_loss_per_trade_percent: 2,
+      max_drawdown_percent: 4,
+      profit_split_percent: 80,
+      consistency_requirement_percent: 15,
+      payout_threshold_percent: 3,
+      evaluation_rules: null,
+      funded_rules: null,
+    },
+  };
+  const flashSource = {
+    ...source,
+    account: { ...source.account, accountCode: "FW-FLASH-ACCOUNT", balance: 100_000 },
+    challenge: {
+      ...source.challenge,
+      type: "funded",
+      status: "funded",
+      plan: "250k-flash",
+      profitTargetPct: 0,
+      dailyLossLimitPct: 2,
+      maxDrawdownPct: 4,
+      minTradingDays: 0,
+    },
+  };
+  let canonicalRule = null;
+  const existingAccount = {
+    id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    owner_user_id: identity.id,
+    external_account_id: flashSource.account.id,
+    account_code: flashSource.account.accountCode,
+    account_type: flashSource.challenge.plan,
+    status: "active",
+    is_active: true,
+    product_id: product.id,
+    phase_id: phase.id,
+    rule_version_id: legacyRule.id,
+  };
+  const ruleActions = [];
+  let accountInserts = 0;
+
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url);
+    const params = parsed.searchParams;
+    const method = init.method ?? "GET";
+    let body = [];
+
+    if (parsed.pathname === "/auth/v1/admin/users") {
+      body = [identity];
+    } else if (parsed.pathname === "/rest/v1/products") {
+      body = [product];
+    } else if (parsed.pathname === "/rest/v1/account_phases") {
+      body = [phase];
+    } else if (parsed.pathname === "/rest/v1/rule_versions" && method === "GET") {
+      if (params.get("version") === "eq.v2") {
+        body = canonicalRule ? [canonicalRule] : [];
+      } else if (params.get("id") === `eq.${legacyRule.id}`) {
+        body = [legacyRule];
+      } else {
+        body = [legacyRule, ...(canonicalRule?.status === "active" ? [canonicalRule] : [])];
+      }
+    } else if (parsed.pathname === "/rest/v1/rpc/manage_rule_configuration" && method === "POST") {
+      const requestBody = JSON.parse(init.body).request;
+      ruleActions.push(requestBody.action);
+      assert.equal(requestBody.actor_email, "account-linker@fundedwealth.com");
+      if (requestBody.action === "create_rule_version") {
+        canonicalRule = {
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          version: requestBody.version,
+          status: "draft",
+          rules: requestBody.rules,
+        };
+      } else if (requestBody.action === "publish_rule_version") {
+        canonicalRule.status = "active";
+      } else if (requestBody.action === "apply_rule_version") {
+        existingAccount.rule_version_id = requestBody.id;
+        body = { account: existingAccount, rule_version: canonicalRule };
+        return Response.json(body);
+      } else {
+        assert.fail(`Unexpected rule management action: ${requestBody.action}`);
+      }
+      body = { rule_version: canonicalRule };
+    } else if (parsed.pathname === "/rest/v1/trading_accounts") {
+      if (method === "POST") {
+        accountInserts += 1;
+        return new Response("", { status: 201 });
+      }
+      body = existingAccount.owner_user_id === identity.id &&
+        existingAccount.external_account_id === flashSource.account.id &&
+        (!params.has("account_code") || existingAccount.account_code === flashSource.account.accountCode)
+        ? [existingAccount]
+        : [];
+    } else if (parsed.pathname === "/rest/v1/terminal_activity" && method === "POST") {
+      return new Response("", { status: 201 });
+    }
+
+    return Response.json(body);
+  };
+
+  const handlers = createTerminalAccountLinkHandlers({
+    env: {
+      SSO_API_KEY: secret,
+      SUPABASE_URL: "https://terminal.example.test",
+      SUPABASE_SERVICE_ROLE_KEY: "service-role-test-key",
+    },
+    fetchImpl,
+  });
+  const response = await handlers.handle(request(
+    { mode: "ensure", source: flashSource },
+    { "x-sso-api-key": secret },
+  ));
+  const result = JSON.parse(response.body);
+
+  assert.equal(response.status, 200, JSON.stringify(result));
+  assert.equal(result.result.created, false);
+  assert.equal(result.result.accountId, existingAccount.id);
+  assert.deepEqual(ruleActions, ["create_rule_version", "publish_rule_version", "apply_rule_version"]);
+  assert.equal(canonicalRule.status, "active");
+  assert.equal(existingAccount.rule_version_id, canonicalRule.id);
+  assert.equal(accountInserts, 0);
+  assert.deepEqual(canonicalRule.rules.funded_rules, {
+    max_drawdown_percent: 4,
+    daily_drawdown_percent: 2,
+    profit_target_percent: 0,
+    max_risk_per_trade_percent: 2,
+    minimum_trading_days: 0,
+  });
+});
+
 test("keeps the rule-management RPC restricted to service_role after removing the legacy JWT-claim gate", () => {
   const migration = readFileSync(resolve(
     "supabase/migrations/20261028000100_service_role_rule_control.sql",
@@ -447,7 +676,7 @@ test("trusted provisioning ensure preflights and audits idempotent mapping creat
   assert.equal(calls.invites, 1);
   assert.equal(calls.creates, 1);
   assert.equal(calls.audits, 2);
-  assert.deepEqual(calls.inspectOptions, [{ repairLegacyInstantRules: true }]);
+  assert.deepEqual(calls.inspectOptions, [{ repairLegacyFundedRules: true }]);
 });
 
 test("accepts legacy accounts only with the trusted ownership-verified marker", async () => {

@@ -1,16 +1,10 @@
 import { timingSafeEqual } from "node:crypto";
+import { getFundedWealthPlanRules } from "./src/lib/fundedwealthPlanRules.js";
 
 const MAX_BODY_BYTES = 16384;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RULE_CONTROL_ACTOR_EMAIL = "account-linker@fundedwealth.com";
-const INSTANT_FUNDED_RULES = Object.freeze({
-  max_drawdown_percent: 5,
-  daily_drawdown_percent: 3,
-  profit_target_percent: 0,
-  max_risk_per_trade_percent: 1,
-  minimum_trading_days: 7,
-});
 
 function jsonResponse(status, body) {
   return {
@@ -64,8 +58,8 @@ function validateSource(source) {
       provisioning?.tradingAccountId !== account.id || provisioning?.challengeAccountId !== challenge.id ||
       (provisioning?.traderId && provisioning.traderId !== account.traderId) ||
       account.traderId !== challenge.traderId || account.status !== "active" ||
-      challenge.status !== "active") {
-    throw Object.assign(new Error("The verified FundedWealth account, owner, active challenge, and provisioning or ownership record do not agree."), { status: 409 });
+      !["active", "funded", "passed"].includes(String(challenge.status ?? "").trim().toLowerCase())) {
+    throw Object.assign(new Error("The verified FundedWealth account, owner, eligible challenge, and provisioning or ownership record do not agree."), { status: 409 });
   }
 
   for (const value of [
@@ -115,21 +109,42 @@ export function isCompatibleFundedWealthRuleVersion(ruleVersion, source, phaseCo
     Number(planRules.max_risk_per_trade_percent) > 0;
 }
 
-export function canonicalizeLegacyInstantFundedRules(ruleVersion) {
+function canonicalizeLegacyFundedRules(ruleVersion, productCode) {
   const rules = ruleVersion?.rules;
-  if (ruleVersion?.status !== "active" || rules?.plan_name !== "INSTANT" ||
-      Number(rules.max_drawdown_percent) !== 5 ||
-      Number(rules.daily_drawdown_percent) !== 3 ||
-      Number(rules.trading_days) !== 7 ||
-      rules.profit_target_percent !== null ||
-      rules.funded_rules != null) {
+  const expectedRules = getFundedWealthPlanRules(productCode)?.funded_rules;
+  const isLegacyFlash = productCode === "FLASH" &&
+    rules?.plan_name === "FLASH" &&
+    Number(rules.duration_hours) === 24 &&
+    Number(rules.max_loss_per_trade_percent) === 2 &&
+    Number(rules.max_drawdown_percent) === 4 &&
+    Number(rules.profit_split_percent) === 80 &&
+    Number(rules.consistency_requirement_percent) === 15 &&
+    Number(rules.payout_threshold_percent) === 3 &&
+    rules.daily_drawdown_percent == null &&
+    rules.profit_target_percent == null &&
+    rules.trading_days == null &&
+    rules.evaluation_rules == null &&
+    rules.funded_rules == null;
+  const isLegacyInstant = productCode === "INSTANT" &&
+    rules?.plan_name === "INSTANT" &&
+    Number(rules.max_drawdown_percent) === 5 &&
+    Number(rules.daily_drawdown_percent) === 3 &&
+    Number(rules.trading_days) === 7 &&
+    rules.profit_target_percent === null &&
+    rules.funded_rules == null;
+  if (ruleVersion?.status !== "active" || !expectedRules || (!isLegacyFlash && !isLegacyInstant)) {
     return null;
   }
 
-  return {
-    ...rules,
-    funded_rules: { ...INSTANT_FUNDED_RULES },
-  };
+  return { ...rules, funded_rules: { ...expectedRules } };
+}
+
+export function canonicalizeLegacyFlashFundedRules(ruleVersion) {
+  return canonicalizeLegacyFundedRules(ruleVersion, "FLASH");
+}
+
+export function canonicalizeLegacyInstantFundedRules(ruleVersion) {
+  return canonicalizeLegacyFundedRules(ruleVersion, "INSTANT");
 }
 
 function makeSupabaseStore({ fetchImpl, env }) {
@@ -193,11 +208,13 @@ function makeSupabaseStore({ fetchImpl, env }) {
     if (!result?.rule_version) {
       throw Object.assign(new Error("Terminal rule management returned an invalid result."), { status: 502 });
     }
-    return result.rule_version;
+    return result.account
+      ? { ...result.rule_version, account: result.account }
+      : result.rule_version;
   }
 
-  async function publishInstantFundedRuleVersion(product, phase, legacyRuleVersion, source) {
-    const rules = canonicalizeLegacyInstantFundedRules(legacyRuleVersion);
+  async function publishCanonicalFundedRuleVersion(product, phase, legacyRuleVersion, source) {
+    const rules = canonicalizeLegacyFundedRules(legacyRuleVersion, product.code);
     if (!rules || !isCompatibleFundedWealthRuleVersion({ rules }, source, "FUNDED")) {
       return null;
     }
@@ -210,9 +227,9 @@ function makeSupabaseStore({ fetchImpl, env }) {
       limit: "2",
     });
     let [ruleVersion] = await rows("rule_versions", query);
-    if (ruleVersion && (ruleVersion.rules?.plan_name !== "INSTANT" ||
+    if (ruleVersion && (ruleVersion.rules?.plan_name !== product.code ||
         !isCompatibleFundedWealthRuleVersion(ruleVersion, source, "FUNDED"))) {
-      throw Object.assign(new Error("The canonical Instant funded rule version conflicts with an existing Terminal rule."), { status: 409 });
+      throw Object.assign(new Error("The canonical funded rule version conflicts with an existing Terminal rule."), { status: 409 });
     }
 
     if (!ruleVersion) {
@@ -226,7 +243,7 @@ function makeSupabaseStore({ fetchImpl, env }) {
         });
       } catch (error) {
         const [concurrentVersion] = await rows("rule_versions", query);
-        if (!concurrentVersion || concurrentVersion.rules?.plan_name !== "INSTANT" ||
+        if (!concurrentVersion || concurrentVersion.rules?.plan_name !== product.code ||
             !isCompatibleFundedWealthRuleVersion(concurrentVersion, source, "FUNDED")) {
           throw error;
         }
@@ -242,7 +259,7 @@ function makeSupabaseStore({ fetchImpl, env }) {
     }
     if (ruleVersion.status !== "active" ||
         !isCompatibleFundedWealthRuleVersion(ruleVersion, source, "FUNDED")) {
-      throw Object.assign(new Error("The canonical Instant funded rule version could not be verified as active."), { status: 409 });
+      throw Object.assign(new Error("The canonical funded rule version could not be verified as active."), { status: 409 });
     }
     return ruleVersion;
   }
@@ -276,7 +293,7 @@ function makeSupabaseStore({ fetchImpl, env }) {
     return { byExternalId, byCode };
   }
 
-  async function inspect(source, { repairLegacyInstantRules = false } = {}) {
+  async function inspect(source, { repairLegacyFundedRules = false } = {}) {
     const [identity, accounts] = await Promise.all([
       findIdentity(source.customer.email),
       findAccounts(source.account.id, source.account.accountCode),
@@ -301,7 +318,7 @@ function makeSupabaseStore({ fetchImpl, env }) {
       throw Object.assign(new Error("An existing terminal account conflicts with the verified customer or account state."), { status: 409 });
     }
 
-    const catalog = await ensureCatalog(source, { repairLegacyInstantRules });
+    const catalog = await ensureCatalog(source, { repairLegacyFundedRules });
     let product = null;
     let phase = null;
     let ruleVersion = null;
@@ -330,10 +347,10 @@ function makeSupabaseStore({ fetchImpl, env }) {
         throw Object.assign(new Error("An existing terminal account has incomplete or conflicting verified account data."), { status: 409 });
       }
       if ((existing.rule_version_id ?? null) !== (catalog.ruleVersion?.id ?? null)) {
-        const canRepairLegacyAssignment = repairLegacyInstantRules &&
-          catalog.product.code === "INSTANT" && catalog.phase.code === "FUNDED" &&
+        const canRepairLegacyAssignment = repairLegacyFundedRules &&
+          catalog.phase.code === "FUNDED" &&
           ruleVersion?.status === "active" &&
-          canonicalizeLegacyInstantFundedRules(ruleVersion) !== null &&
+          canonicalizeLegacyFundedRules(ruleVersion, catalog.product.code) !== null &&
           isCompatibleFundedWealthRuleVersion(catalog.ruleVersion, source, "FUNDED");
         if (!canRepairLegacyAssignment) {
           throw Object.assign(new Error("An existing terminal account has incomplete or conflicting verified account data."), { status: 409 });
@@ -371,9 +388,12 @@ function makeSupabaseStore({ fetchImpl, env }) {
     };
   }
 
-  async function ensureCatalog(source, { repairLegacyInstantRules = false } = {}) {
+  async function ensureCatalog(source, { repairLegacyFundedRules = false } = {}) {
     const productCode = canonicalFundedWealthProductCode(source.challenge.plan);
-    const phaseCode = source.challenge.type === "funded" ? "FUNDED" : "CHALLENGE";
+    const challengeStatus = String(source.challenge.status ?? "").trim().toLowerCase();
+    const phaseCode = source.challenge.type === "funded" || challengeStatus === "funded"
+      ? "FUNDED"
+      : "CHALLENGE";
 
     const products = await rows("products", new URLSearchParams({
       select: "id,code,name,status",
@@ -405,10 +425,10 @@ function makeSupabaseStore({ fetchImpl, env }) {
     }));
     let matchingRules = activeRules.filter((ruleVersion) =>
       isCompatibleFundedWealthRuleVersion(ruleVersion, source, phaseCode));
-    if (matchingRules.length === 0 && repairLegacyInstantRules &&
-        product.code === "INSTANT" && phaseCode === "FUNDED" &&
+    if (matchingRules.length === 0 && repairLegacyFundedRules &&
+        ["FLASH", "INSTANT"].includes(product.code) && phaseCode === "FUNDED" &&
         activeRules.length === 1) {
-      const repaired = await publishInstantFundedRuleVersion(product, phase, activeRules[0], source);
+      const repaired = await publishCanonicalFundedRuleVersion(product, phase, activeRules[0], source);
       if (repaired) {
         activeRules = [...activeRules, repaired];
         matchingRules = [repaired];
@@ -592,7 +612,7 @@ export function createTerminalAccountLinkWorkflow(store) {
 
   async function link(source, actor) {
     const validated = validateSource(source);
-    const plan = await store.inspect(validated, { repairLegacyInstantRules: true });
+    const plan = await store.inspect(validated, { repairLegacyFundedRules: true });
     if (plan.accountAction === "already_linked") {
       try {
         await store.writeAudit(validated, plan.identity, plan.account, actor, "already_linked");

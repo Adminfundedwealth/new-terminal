@@ -10,6 +10,13 @@ export const FUNDEDWEALTH_PLAN_RULES = {
             profit_split_percent: 80,
             consistency_requirement_percent: 15,
             payout_threshold_percent: 3,
+            funded_rules: {
+                max_drawdown_percent: 4,
+                daily_drawdown_percent: 2,
+                profit_target_percent: 0,
+                max_risk_per_trade_percent: 2,
+                minimum_trading_days: 0,
+            },
         },
     },
     INSTANT: {
@@ -24,6 +31,13 @@ export const FUNDEDWEALTH_PLAN_RULES = {
             trading_days: 7,
             consistency_requirement_percent: 15,
             leverage_ratio: 50,
+            funded_rules: {
+                max_drawdown_percent: 5,
+                daily_drawdown_percent: 3,
+                profit_target_percent: 0,
+                max_risk_per_trade_percent: 1,
+                minimum_trading_days: 7,
+            },
         },
     },
     "1-STEP": {
