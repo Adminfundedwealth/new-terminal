@@ -1,10 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAccountContext } from "@/hooks/useAccountContext";
-import { normalizeCandlePayload } from "@/lib/historicalData";
+import { canonicalizeCandle } from "@/lib/historicalData";
 import {
   requestTerminalMarketData,
   resolveTerminalMarketDataProvider,
-  TerminalMarketDataError,
   type TerminalMarketDataCandle,
   type TerminalMarketDataInstrument,
 } from "@/lib/terminalApi";
@@ -48,101 +47,43 @@ export interface OHLCVCandle {
   volume?: number;
 }
 
-// ── Security ID lookup: indices + top F&O stocks ──
-// Hardcoded to avoid downloading the 30MB instrument master CSV for every sparkline.
-// Dhan security IDs for NSE equity stocks (from api-scrip-master.csv).
-const SECURITY_MAP: Record<string, { secId: string; exchSeg: string; instrument: string }> = {
-  // ─── Indices ───
-  NIFTY:       { secId: "13",    exchSeg: "IDX_I",  instrument: "INDEX" },
-  BANKNIFTY:   { secId: "25",    exchSeg: "IDX_I",  instrument: "INDEX" },
-  FINNIFTY:    { secId: "27",    exchSeg: "IDX_I",  instrument: "INDEX" },
-  MIDCPNIFTY:  { secId: "442",   exchSeg: "IDX_I",  instrument: "INDEX" },
-  NIFTY_MIDCAP_50: { secId: "NIFTY_MIDCAP_50", exchSeg: "IDX_I", instrument: "INDEX" },
-  INDIAVIX:    { secId: "26",    exchSeg: "IDX_I",  instrument: "INDEX" },
-  SENSEX:      { secId: "1",     exchSeg: "IDX_I",  instrument: "INDEX" },
-  // ─── NIFTY 50 Stocks ───
-  RELIANCE:    { secId: "2885",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  TCS:         { secId: "11536", exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  HDFCBANK:    { secId: "1333",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  INFY:        { secId: "1594",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  ICICIBANK:   { secId: "4963",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  HINDUNILVR:  { secId: "1394",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  ITC:         { secId: "1660",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  SBIN:        { secId: "3045",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  BHARTIARTL:  { secId: "10604", exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  KOTAKBANK:   { secId: "1922",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  LT:          { secId: "11483", exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  AXISBANK:    { secId: "5900",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  ASIANPAINT:  { secId: "236",   exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  MARUTI:      { secId: "10999", exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  TITAN:       { secId: "3506",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  SUNPHARMA:   { secId: "3351",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  BAJFINANCE:  { secId: "317",   exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  BAJFINSV:    { secId: "16669", exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  WIPRO:       { secId: "3787",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  HCLTECH:     { secId: "7229",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  TATAMOTORS:  { secId: "3456",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  TATASTEEL:   { secId: "3499",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  NTPC:        { secId: "11630", exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  POWERGRID:   { secId: "14977", exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  ONGC:        { secId: "2475",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  JSWSTEEL:    { secId: "11723", exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  M_M:         { secId: "2031",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  ADANIENT:    { secId: "25",    exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  ADANIPORTS:  { secId: "15083", exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  ULTRACEMCO:  { secId: "11532", exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  TECHM:       { secId: "13538", exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  INDUSINDBK:  { secId: "5258",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  DRREDDY:     { secId: "881",   exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  CIPLA:       { secId: "694",   exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  EICHERMOT:   { secId: "910",   exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  DIVISLAB:    { secId: "10940", exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  BPCL:        { secId: "526",   exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  COALINDIA:   { secId: "20374", exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  GRASIM:      { secId: "1232",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  APOLLOHOSP:  { secId: "157",   exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  HEROMOTOCO:  { secId: "1348",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  TATACONSUM:  { secId: "3432",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  SBILIFE:     { secId: "21808", exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  BRITANNIA:   { secId: "547",   exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  NESTLEIND:   { secId: "17963", exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  BAJAJ_AUTO:  { secId: "16669", exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  HDFCLIFE:    { secId: "467",   exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  VEDL:        { secId: "3063",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  HINDALCO:    { secId: "1363",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  BANKBARODA:  { secId: "4668",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  PNB:         { secId: "10666", exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  DLF:         { secId: "14732", exchSeg: "NSE_EQ", instrument: "EQUITY" },
-  TRENT:       { secId: "1964",  exchSeg: "NSE_EQ", instrument: "EQUITY" },
-};
-
-// Alias: M&M uses underscore in our map
-if (!SECURITY_MAP["M&M"]) SECURITY_MAP["M&M"] = SECURITY_MAP["M_M"];
-
 export function resolveKiteHistoricalToken(symbol: string, instrumentToken?: string): string | undefined {
   return instrumentToken?.trim() || KITE_INDEX_TOKEN_MAP[symbol.toUpperCase()];
 }
 
 // ── Map a UI time range to candle interval + lookback days ──
-function rangeToParams(range: string): { interval: string; daysBack: number } {
+interface HistoricalRangeParams {
+  interval: string;
+  daysBack: number;
+  aggregateMinutes?: number;
+}
+
+function rangeToParams(range: string): HistoricalRangeParams {
   switch (range) {
     case "1W": return { interval: "15", daysBack: 10 };
     case "1M": return { interval: "60", daysBack: 31 };
     case "3M": return { interval: "D", daysBack: 92 };
     case "6M": return { interval: "D", daysBack: 183 };
     case "1Y": return { interval: "D", daysBack: 365 };
+    case "1m": return { interval: "1", daysBack: 5 };
+    case "3m": return { interval: "1", daysBack: 5, aggregateMinutes: 3 };
+    case "5m": return { interval: "5", daysBack: 30 };
+    case "15m": return { interval: "15", daysBack: 90 };
+    case "30m": return { interval: "15", daysBack: 90, aggregateMinutes: 30 };
+    case "1H": return { interval: "60", daysBack: 180 };
+    case "1D": return { interval: "D", daysBack: 365 };
     default:   return { interval: "D", daysBack: 92 };
   }
 }
 
 interface ColumnarCandleData {
-  open?: number[];
-  high?: number[];
-  low?: number[];
-  close?: number[];
-  volume?: number[];
-  timestamp?: (number | string)[];
-  start_Time?: (number | string)[];
+  open?: (number | null)[];
+  high?: (number | null)[];
+  low?: (number | null)[];
+  close?: (number | null)[];
+  volume?: (number | null)[];
+  timestamp?: (number | string | null)[];
+  start_Time?: (number | string | null)[];
 }
 
 /**
@@ -151,21 +92,52 @@ interface ColumnarCandleData {
  * Exported for unit testing.
  */
 export function parseColumnarCandles(rawData: ColumnarCandleData | null | undefined): OHLCVCandle[] {
-  const normalized = normalizeCandlePayload(rawData as any, {
-    instrumentId: "chart-data",
-    symbol: "UNKNOWN",
-    exchange: "NSE",
-    interval: "D",
-  });
-
-  return normalized.map((candle) => ({
-    time: candle.timestamp,
-    open: candle.open,
-    high: candle.high,
-    low: candle.low,
-    close: candle.close,
-    volume: candle.volume,
-  }));
+  if (!rawData || !Array.isArray(rawData.close) || rawData.close.length === 0) return [];
+  const candles: OHLCVCandle[] = [];
+  const timestamps = rawData.timestamp ?? rawData.start_Time ?? [];
+  for (let index = 0; index < rawData.close.length; index += 1) {
+    const close = rawData.close[index];
+    if (close === null) continue;
+    const open = rawData.open?.[index];
+    const high = rawData.high?.[index];
+    const low = rawData.low?.[index];
+    const volume = rawData.volume?.[index];
+    const sourceTimestamp = timestamps[index];
+    if (open == null || high == null || low == null || volume == null || sourceTimestamp == null) {
+      throw new Error("Historical market data omitted a required candle field.");
+    }
+    let timestamp: number;
+    if (typeof sourceTimestamp === "number") {
+      timestamp = sourceTimestamp > 1e12 ? Math.floor(sourceTimestamp / 1000) : Math.floor(sourceTimestamp);
+    } else if (/^\d+(?:\.\d+)?$/.test(sourceTimestamp.trim())) {
+      const numericTimestamp = Number(sourceTimestamp);
+      timestamp = numericTimestamp > 1e12 ? Math.floor(numericTimestamp / 1000) : Math.floor(numericTimestamp);
+    } else {
+      const milliseconds = Date.parse(sourceTimestamp);
+      timestamp = Number.isFinite(milliseconds) ? Math.floor(milliseconds / 1000) : NaN;
+    }
+    const candle = canonicalizeCandle({
+      instrumentId: "chart-data",
+      timestamp,
+      open,
+      high,
+      low,
+      close,
+      volume,
+      interval: "D",
+      exchange: "NSE",
+      symbol: "UNKNOWN",
+    });
+    candles.push({
+      time: candle.timestamp,
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close,
+      volume: candle.volume,
+    });
+  }
+  return candles.sort((left, right) => left.time - right.time);
 }
 
 function normalizeInstrumentName(value: string): string {
@@ -189,12 +161,6 @@ async function findGatewayInstrument(
     if (tokenMatch) return tokenMatch;
   }
 
-  const dhanToken = provider === "dhan" ? SECURITY_MAP[normalizedSymbol]?.secId : undefined;
-  if (dhanToken) {
-    const knownMatch = search.find((instrument) => instrument.providerInstrumentId === dhanToken);
-    if (knownMatch) return knownMatch;
-  }
-
   const acceptedNames = new Set([
     normalizedSymbol,
     ...(provider === "kite" ? KITE_HISTORICAL_SYMBOL_ALIASES[normalizedSymbol] ?? [] : []),
@@ -206,13 +172,54 @@ async function findGatewayInstrument(
 }
 
 function toChartCandles(candles: TerminalMarketDataCandle[]): OHLCVCandle[] {
-  return candles.flatMap((candle) => {
+  return candles.map((candle) => {
     const time = typeof candle.timestamp === "number"
       ? Math.floor(candle.timestamp > 1e12 ? candle.timestamp / 1000 : candle.timestamp)
       : Math.floor(Date.parse(candle.timestamp) / 1000);
-    if (!Number.isFinite(time)) return [];
-    return [{ time, open: candle.open, high: candle.high, low: candle.low, close: candle.close, volume: candle.volume }];
+    const values = [candle.open, candle.high, candle.low, candle.close, candle.volume];
+    if (
+      !Number.isFinite(time) ||
+      values.some((value) => !Number.isFinite(value)) ||
+      candle.high < Math.max(candle.open, candle.close) ||
+      candle.low > Math.min(candle.open, candle.close) ||
+      candle.volume < 0
+    ) {
+      throw new Error("Historical market data contained an invalid candle.");
+    }
+    return { time, open: candle.open, high: candle.high, low: candle.low, close: candle.close, volume: candle.volume };
   });
+}
+
+function aggregateCandles(candles: OHLCVCandle[], intervalMinutes: number): OHLCVCandle[] {
+  const intervalSeconds = intervalMinutes * 60;
+  const buckets = new Map<number, OHLCVCandle>();
+  for (const candle of candles) {
+    const istSeconds = candle.time + 330 * 60;
+    const localDay = Math.floor(istSeconds / 86400);
+    const minuteOfDay = Math.floor((istSeconds % 86400) / 60);
+    const sessionOpenMinute = 9 * 60 + 15;
+    const bucketMinute = minuteOfDay < sessionOpenMinute
+      ? minuteOfDay
+      : sessionOpenMinute + Math.floor((minuteOfDay - sessionOpenMinute) / intervalMinutes) * intervalMinutes;
+    const bucketTime = localDay * 86400 + bucketMinute * 60 - 330 * 60;
+    const current = buckets.get(bucketTime);
+    if (current) {
+      current.high = Math.max(current.high, candle.high);
+      current.low = Math.min(current.low, candle.low);
+      current.close = candle.close;
+      current.volume = (current.volume ?? 0) + (candle.volume ?? 0);
+    } else {
+      buckets.set(bucketTime, {
+        time: bucketTime,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume,
+      });
+    }
+  }
+  return [...buckets.values()].sort((left, right) => left.time - right.time);
 }
 
 async function fetchGatewayHistorical(
@@ -224,15 +231,16 @@ async function fetchGatewayHistorical(
 ): Promise<OHLCVCandle[]> {
   const scopedAccountId = provider === "dhan" ? null : accountId;
   const instrument = await findGatewayInstrument(scopedAccountId, provider, symbol, instrumentToken);
-  if (!instrument) return [];
-  const { interval, daysBack } = rangeToParams(range);
+  if (!instrument) throw new Error(`The canonical Dhan instrument could not be resolved for ${symbol}.`);
+  const rangeParams = rangeToParams(range);
+  const { interval, daysBack } = rangeParams;
   const now = new Date();
   const from = new Date(now);
   from.setDate(from.getDate() - daysBack);
   const apiInterval = interval === "D"
     ? "day"
     : provider === "kite"
-      ? interval === "15" ? "15minute" : "60minute"
+      ? `${interval}minute`
       : `${interval}m`;
   const result = await requestTerminalMarketData<TerminalMarketDataCandle[]>(scopedAccountId, provider, {
     operation: "getHistoricalCandles",
@@ -241,7 +249,10 @@ async function fetchGatewayHistorical(
     fromDate: from.toISOString().split("T")[0],
     toDate: now.toISOString().split("T")[0],
   });
-  return toChartCandles(result);
+  const candles = toChartCandles(result);
+  return rangeParams.aggregateMinutes
+    ? aggregateCandles(candles, rangeParams.aggregateMinutes)
+    : candles;
 }
 
 /** Fetch OHLCV candles through Terminal OS using Founder-global Dhan credentials. */
@@ -253,14 +264,8 @@ async function fetchHistorical(
   instrumentToken?: string,
 ): Promise<OHLCVCandle[]> {
   if (provider === "dhan" || (accountId && provider)) {
-    try {
-      const candles = await fetchGatewayHistorical(accountId, provider ?? "dhan", symbol, range, instrumentToken);
-      if (candles.length > 0) return candles;
-    } catch (error) {
-      if (!(error instanceof TerminalMarketDataError) || error.code !== "MISSING_CREDENTIALS") throw error;
-    }
+    return fetchGatewayHistorical(accountId, provider ?? "dhan", symbol, range, instrumentToken);
   }
-
   return [];
 }
 

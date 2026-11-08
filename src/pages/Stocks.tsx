@@ -5,6 +5,7 @@ import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { InstrumentExplorer } from "@/components/InstrumentExplorer";
 import { getSavedWatchlist, saveWatchlist } from "@/lib/watchlist";
 import { classifyInstrument, isCashEquityListing, isProductionInstrument } from "@/lib/instrumentClassification";
+import { resolveSelectedOptionFromParams } from "@/lib/selectedOptionContract";
 
 export default function Stocks() {
   const [searchParams] = useSearchParams();
@@ -12,11 +13,21 @@ export default function Stocks() {
   const { instruments, isLoaded, loadError } = useInstrumentLookup();
   const { activeAccountId, accounts, hasNoAccount, isLoading: isAccountLoading } = useAccountContext();
   const activeAccountProvider = accounts.find((account) => account.id === activeAccountId)?.broker_provider;
-  const initialWorkspaceContext = searchParams.get("workspace") === "options" ? "options" : undefined;
-  const initialChartSymbol = searchParams.get("symbol") ?? searchParams.get("contract") ?? undefined;
-  const initialUnderlying = searchParams.get("underlying") ?? undefined;
-  const initialExpiry = searchParams.get("expiry") ?? undefined;
-  const initialInstrumentToken = searchParams.get("instrumentToken") ?? undefined;
+  const isOptionWorkspaceRequest = searchParams.get("workspace") === "options";
+  const selectedOptionInstrument = useMemo(
+    () => isOptionWorkspaceRequest ? resolveSelectedOptionFromParams(instruments, searchParams) : undefined,
+    [instruments, isOptionWorkspaceRequest, searchParams],
+  );
+  const requestedOrderSide = searchParams.get("side")?.toUpperCase();
+  const initialOrderSide = selectedOptionInstrument && (requestedOrderSide === "BUY" || requestedOrderSide === "SELL")
+    ? requestedOrderSide
+    : undefined;
+  const initialWorkspaceContext = selectedOptionInstrument ? "options" : undefined;
+  const initialChartSymbol = selectedOptionInstrument?.tradingSymbol
+    ?? (isOptionWorkspaceRequest ? undefined : searchParams.get("symbol") ?? searchParams.get("contract") ?? undefined);
+  const initialUnderlying = selectedOptionInstrument?.symbol ?? undefined;
+  const initialExpiry = selectedOptionInstrument?.expiryDate ?? undefined;
+  const initialInstrumentToken = selectedOptionInstrument?.providerInstrumentId ?? selectedOptionInstrument?.securityId;
 
   const rows = useMemo(() => {
     return instruments
@@ -68,9 +79,16 @@ export default function Stocks() {
         initialUnderlying={initialUnderlying}
         initialExpiry={initialExpiry}
         initialInstrumentToken={initialInstrumentToken}
+        initialOptionSecurityId={selectedOptionInstrument?.securityId}
+        initialOrderSide={initialOrderSide}
         footerLabel="stocks"
         searchPlaceholder="Search stocks..."
       />
+      {isOptionWorkspaceRequest && !selectedOptionInstrument && (
+        <p className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-600" role="status">
+          The selected option contract is no longer available in the loaded instrument master. Return to Option Chain and select the contract again.
+        </p>
+      )}
     </main>
   );
 }

@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries, type IChartApi, type Time } from "lightweight-charts";
 import { useChartData } from "@/hooks/useChartData";
+import type { OHLCVCandle } from "@/hooks/useChartData";
 import { useIsDark, getChartColors } from "@/hooks/useIsDark";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,9 +9,66 @@ import { Badge } from "@/components/ui/badge";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { BarChart3, Loader2, X, CandlestickChart, LineChart } from "lucide-react";
+import {
+  resolveTerminalMarketDataProvider,
+  subscribeToTerminalMarketDataStream,
+  type TerminalMarketDataQuote,
+} from "@/lib/terminalApi";
+import { useAccountContext } from "@/hooks/useAccountContext";
 
 const TIME_RANGES = ["1W", "1M", "3M", "6M", "1Y"] as const;
-type TimeRange = (typeof TIME_RANGES)[number];
+const OPTION_TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "1H", "1D"] as const;
+type TimeRange = (typeof TIME_RANGES)[number] | (typeof OPTION_TIMEFRAMES)[number];
+
+function calculateEMA(candles: OHLCVCandle[], period: number): { time: Time; value: number }[] {
+  if (candles.length === 0) return [];
+  const smoothing = 2 / (period + 1);
+  let value = candles[0].close;
+  return candles.map((candle, index) => {
+    value = index === 0 ? candle.close : candle.close * smoothing + value * (1 - smoothing);
+    return { time: candle.time as Time, value };
+  });
+}
+
+function calculateVWAP(candles: OHLCVCandle[]): { time: Time; value: number }[] {
+  let currentDay: number | undefined;
+  let cumulativeValue = 0;
+  let cumulativeVolume = 0;
+  const result: { time: Time; value: number }[] = [];
+  for (const candle of candles) {
+    const day = Math.floor((candle.time + 330 * 60) / 86400);
+    if (day !== currentDay) {
+      currentDay = day;
+      cumulativeValue = 0;
+      cumulativeVolume = 0;
+    }
+    const volume = candle.volume ?? 0;
+    cumulativeValue += ((candle.high + candle.low + candle.close) / 3) * volume;
+    cumulativeVolume += volume;
+    if (cumulativeVolume > 0) result.push({ time: candle.time as Time, value: cumulativeValue / cumulativeVolume });
+  }
+  return result;
+}
+
+function calculateRSI(candles: OHLCVCandle[], period: number): { time: Time; value: number }[] {
+  if (candles.length <= period) return [];
+  let averageGain = 0;
+  let averageLoss = 0;
+  for (let index = 1; index <= period; index += 1) {
+    const change = candles[index].close - candles[index - 1].close;
+    averageGain += Math.max(change, 0) / period;
+    averageLoss += Math.max(-change, 0) / period;
+  }
+  const valueAt = (gain: number, loss: number) => loss === 0 ? (gain === 0 ? 50 : 100) : 100 - 100 / (1 + gain / loss);
+  const result: { time: Time; value: number }[] = [{ time: candles[period].time as Time, value: valueAt(averageGain, averageLoss) }];
+  for (let index = period + 1; index < candles.length; index += 1) {
+    const change = candles[index].close - candles[index - 1].close;
+    averageGain = (averageGain * (period - 1) + Math.max(change, 0)) / period;
+    averageLoss = (averageLoss * (period - 1) + Math.max(-change, 0)) / period;
+    result.push({ time: candles[index].time as Time, value: valueAt(averageGain, averageLoss) });
+  }
+  return result;
+}
 
 interface StockChartProps {
   symbol: string;
@@ -26,6 +84,8 @@ interface StockChartProps {
   unavailableMessage?: string;
   /** Kite token for a selected derivative contract. */
   instrumentToken?: string;
+  /** Show intraday derivative intervals and the selected Dhan contract stream. */
+  optionContract?: boolean;
   /** If provided, renders as a Sheet (drawer) */
   asSheet?: boolean;
   open?: boolean;
@@ -39,6 +99,7 @@ function ChartCore({
   candleOnly = false,
   unavailableMessage,
   instrumentToken,
+  optionContract = false,
 }: {
   symbol: string;
   height?: number;
@@ -46,13 +107,44 @@ function ChartCore({
   candleOnly?: boolean;
   unavailableMessage?: string;
   instrumentToken?: string;
+  optionContract?: boolean;
 }) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const [range, setRange] = useState<TimeRange>("3M");
+  const [range, setRange] = useState<TimeRange>(optionContract ? "5m" : "3M");
   const [chartType, setChartType] = useState<"candle" | "line">("candle");
+  const [indicators, setIndicators] = useState({ ema: false, vwap: false, rsi: false });
+  const [liveQuote, setLiveQuote] = useState<TerminalMarketDataQuote | null>(null);
   const { data: candles, isLoading, error } = useChartData(symbol, range, true, instrumentToken);
+  const { activeAccountId, accounts } = useAccountContext();
+  const provider = resolveTerminalMarketDataProvider(
+    accounts.find((account) => account.id === activeAccountId)?.broker_provider,
+  );
   const isDark = useIsDark();
+
+  useEffect(() => {
+    setRange(optionContract ? "5m" : "3M");
+  }, [optionContract]);
+
+  useEffect(() => {
+    setLiveQuote(null);
+    if (!optionContract || provider !== "dhan" || !instrumentToken) return;
+
+    return subscribeToTerminalMarketDataStream(null, "dhan", [symbol], ({ quote }) => {
+      const quoteInstrumentId = quote.providerInstrumentId ?? quote.securityId;
+      const timestamp = Date.parse(quote.timestamp);
+      if (
+        quote.provider !== "dhan" ||
+        quote.tradingSymbol !== symbol ||
+        quoteInstrumentId !== instrumentToken ||
+        !Number.isFinite(quote.ltp) ||
+        quote.ltp <= 0 ||
+        !Number.isFinite(timestamp) ||
+        timestamp > Date.now()
+      ) return;
+      setLiveQuote(quote);
+    });
+  }, [instrumentToken, optionContract, provider, symbol]);
 
   const buildChart = useCallback(() => {
     if (!chartContainerRef.current || !candles || candles.length === 0) return;
@@ -91,10 +183,10 @@ function ChartCore({
       },
       timeScale: {
         borderVisible: false,
-        timeVisible: range === "1W",
+        timeVisible: optionContract ? range !== "1D" : range === "1W",
         secondsVisible: false,
         rightOffset: 3,
-        minBarSpacing: range === "1W" ? 3 : 4,
+        minBarSpacing: optionContract ? 3 : range === "1W" ? 3 : 4,
       },
       handleScroll: { mouseWheel: true, pressedMouseMove: true },
       handleScale: { mouseWheel: true, pinch: true },
@@ -137,6 +229,21 @@ function ChartCore({
       );
     }
 
+    if (optionContract && indicators.ema) {
+      const emaSeries = chart.addSeries(LineSeries, { color: "#38bdf8", lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+      emaSeries.setData(calculateEMA(candles, 20));
+    }
+    if (optionContract && indicators.vwap) {
+      const vwapSeries = chart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+      vwapSeries.setData(calculateVWAP(candles));
+    }
+    if (optionContract && indicators.rsi) {
+      const rsiPane = chart.addPane();
+      rsiPane.setHeight(90);
+      const rsiSeries = rsiPane.addSeries(LineSeries, { color: "#c084fc", lineWidth: 2, priceLineVisible: false, lastValueVisible: true, autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }) });
+      rsiSeries.setData(calculateRSI(candles, 14));
+    }
+
     // Volume histogram — tinted to match the theme's bullish/bearish palette
     const volumeData = candles
       .filter((c) => c.volume && c.volume > 0)
@@ -174,7 +281,7 @@ function ChartCore({
       chart.remove();
       chartRef.current = null;
     };
-  }, [candles, height, fill, candleOnly, chartType, range, isDark]);
+  }, [candles, height, fill, candleOnly, chartType, range, isDark, optionContract, indicators]);
 
   useEffect(() => {
     const cleanup = buildChart();
@@ -187,6 +294,12 @@ function ChartCore({
     lastCandle && firstCandle
       ? ((lastCandle.close - firstCandle.close) / firstCandle.close) * 100
       : 0;
+  const displayedPrice = liveQuote?.ltp ?? lastCandle?.close;
+  const displayedChange = liveQuote?.change;
+  const displayedChangePercent = liveQuote
+    ? liveQuote.changePercent
+    : optionContract ? null : priceChange;
+  const ranges = optionContract ? OPTION_TIMEFRAMES : TIME_RANGES;
 
   return (
     <div className={fill ? "flex h-full min-h-0 flex-col space-y-2" : "space-y-2"}>
@@ -199,7 +312,7 @@ function ChartCore({
             onValueChange={(v) => v && setRange(v as TimeRange)}
             className="bg-muted rounded-md p-0.5"
           >
-            {TIME_RANGES.map((r) => (
+            {ranges.map((r) => (
               <ToggleGroupItem
                 key={r}
                 value={r}
@@ -223,23 +336,44 @@ function ChartCore({
               <LineChart className="h-3.5 w-3.5" />
             </ToggleGroupItem>
           </ToggleGroup>
+          {optionContract && (
+            <div className="flex items-center gap-1" aria-label="Chart indicators">
+              {(["ema", "vwap", "rsi"] as const).map((indicator) => (
+                <Button
+                  key={indicator}
+                  type="button"
+                  size="sm"
+                  variant={indicators[indicator] ? "secondary" : "ghost"}
+                  aria-pressed={indicators[indicator]}
+                  className="h-6 px-2 text-[10px] uppercase"
+                  onClick={() => setIndicators((current) => ({ ...current, [indicator]: !current[indicator] }))}
+                >
+                  {indicator}
+                </Button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
-          {lastCandle && (
+          {displayedPrice != null && (
             <>
               <span className="text-xs font-mono font-semibold">
-                ₹{lastCandle.close.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+                ₹{displayedPrice.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
               </span>
-              <Badge
-                variant="outline"
-                className={`text-[11px] font-mono ${priceChange >= 0 ? "text-bullish border-bullish/30" : "text-bearish border-bearish/30"}`}
-              >
-                {priceChange >= 0 ? "+" : ""}
-                {priceChange.toFixed(2)}%
-              </Badge>
+              {displayedChangePercent != null && (
+                <Badge
+                  variant="outline"
+                  className={`text-[11px] font-mono ${displayedChangePercent >= 0 ? "text-bullish border-bullish/30" : "text-bearish border-bearish/30"}`}
+                >
+                  {displayedChange != null && `${displayedChange >= 0 ? "+" : ""}${displayedChange.toFixed(2)} · `}
+                  {displayedChangePercent >= 0 ? "+" : ""}
+                  {displayedChangePercent.toFixed(2)}%
+                </Badge>
+              )}
             </>
           )}
+          {optionContract && liveQuote && <Badge variant="outline" className="text-[10px] text-bullish border-bullish/30">LIVE</Badge>}
           {isLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
         </div>
       </div>
@@ -254,13 +388,13 @@ function ChartCore({
             </div>
           </div>
         )}
-        {error && !candles && (
+        {error && (
           <div className="flex items-center justify-center h-[200px] text-sm text-muted-foreground">
-            Chart data unavailable. Start the proxy server for live data.
+            {error instanceof Error ? error.message : "Chart data could not be loaded."}
           </div>
         )}
         <div ref={chartContainerRef} className={`w-full rounded-lg overflow-hidden ${fill ? "min-h-0 flex-1" : ""}`} />
-        {candles && candles.length === 0 && !isLoading && (
+        {candles && candles.length === 0 && !isLoading && !error && (
           <div className="flex items-center justify-center h-[200px] text-sm text-muted-foreground">
             {unavailableMessage ?? `No historical data available for ${symbol}`}
           </div>
@@ -282,6 +416,7 @@ export function StockChart({
   candleOnly = false,
   unavailableMessage,
   instrumentToken,
+  optionContract = false,
   asSheet = false,
   open = false,
   onOpenChange,
@@ -297,7 +432,7 @@ export function StockChart({
             </SheetTitle>
           </SheetHeader>
           <div className="mt-3">
-            <ChartCore symbol={symbol} height={380} unavailableMessage={unavailableMessage} instrumentToken={instrumentToken} />
+            <ChartCore symbol={symbol} height={380} unavailableMessage={unavailableMessage} instrumentToken={instrumentToken} optionContract={optionContract} />
           </div>
         </SheetContent>
       </Sheet>
@@ -305,7 +440,7 @@ export function StockChart({
   }
 
   if (inline) {
-    return <ChartCore symbol={symbol} height={height} fill={fill} candleOnly={candleOnly} unavailableMessage={unavailableMessage} instrumentToken={instrumentToken} />;
+    return <ChartCore symbol={symbol} height={height} fill={fill} candleOnly={candleOnly} unavailableMessage={unavailableMessage} instrumentToken={instrumentToken} optionContract={optionContract} />;
   }
 
   return (
@@ -317,7 +452,7 @@ export function StockChart({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <ChartCore symbol={symbol} height={height} unavailableMessage={unavailableMessage} instrumentToken={instrumentToken} />
+        <ChartCore symbol={symbol} height={height} unavailableMessage={unavailableMessage} instrumentToken={instrumentToken} optionContract={optionContract} />
       </CardContent>
     </Card>
   );

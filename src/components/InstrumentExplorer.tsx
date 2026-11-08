@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Search, Star, TrendingUp, TrendingDown, Radio, Loader2, BarChart3, ExternalLink, X, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -9,9 +9,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { StockChart } from "@/components/StockChart";
 import { normalizeCanonicalPosition, uniqueCanonicalPositions } from "@/components/CustomerPositionTable";
 import { isWatchlisted } from "@/lib/watchlist";
-import { useLiveOptionChain } from "@/hooks/useMarketData";
+import { useLiveOptionChain, useMarketStatus } from "@/hooks/useMarketData";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { classifyInstrument, isProductionInstrument } from "@/lib/instrumentClassification";
+import { fetchCentralMarketQuotes } from "@/lib/centralMarketQuotes";
+import { findWatchlistInstrument } from "@/lib/watchlistInstrument";
 import { getPreferredMarketAdapter } from "@/lib/brokerRouter";
 import {
   createClientOrderId,
@@ -20,6 +22,7 @@ import {
   modifyTerminalPositionProtection,
   requestTerminalMarketData,
   resolveTerminalMarketDataProvider,
+  subscribeToTerminalMarketDataStream,
   toTerminalMarketDataInstrument,
   type TerminalMarketDataQuote,
 } from "@/lib/terminalApi";
@@ -46,7 +49,11 @@ export interface ExplorerRow {
   volume: number | null;
   oi?: number | null;
   oiChange?: number | null;
+  bid?: number | null;
+  ask?: number | null;
   isLive?: boolean;
+  quoteStatus?: "LIVE" | "DELAYED" | "LAST TRADED PRICE" | "OFFLINE";
+  updatedAt?: string;
   searchText?: string;
 }
 
@@ -63,6 +70,8 @@ interface ExplorerProps {
   onTradeOpen?: (symbol: string) => void;
   activeAccountId?: string | null;
   activeAccountProvider?: string | null;
+  availableMargin?: number | null;
+  isReadOnlyAccount?: boolean;
   hasNoAccount?: boolean;
   isAccountLoading?: boolean;
   searchPlaceholder?: string;
@@ -71,15 +80,17 @@ interface ExplorerProps {
   initialUnderlying?: string;
   initialExpiry?: string;
   initialInstrumentToken?: string;
+  initialOptionSecurityId?: string;
+  initialOrderSide?: "BUY" | "SELL";
 }
 
 function formatNumber(value: number | null | undefined, digits = 2) {
-  if (value == null || Number.isNaN(value) || !Number.isFinite(value) || value === 0) return "—";
+  if (value == null || Number.isNaN(value) || !Number.isFinite(value)) return "—";
   return value.toLocaleString("en-IN", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
 function formatCompact(value: number | null | undefined) {
-  if (value == null || Number.isNaN(value) || !Number.isFinite(value) || value <= 0) return "—";
+  if (value == null || Number.isNaN(value) || !Number.isFinite(value)) return "—";
   if (value >= 100000) return `${(value / 100000).toFixed(1)}L`;
   if (value >= 1000) return `${(value / 1000).toFixed(1)}K`;
   return value.toLocaleString("en-IN");
@@ -97,6 +108,8 @@ export function InstrumentExplorer({
   onTradeOpen,
   activeAccountId,
   activeAccountProvider,
+  availableMargin,
+  isReadOnlyAccount = false,
   isAccountLoading,
   loadError,
   searchPlaceholder,
@@ -105,6 +118,8 @@ export function InstrumentExplorer({
   initialUnderlying,
   initialExpiry,
   initialInstrumentToken,
+  initialOptionSecurityId,
+  initialOrderSide,
 }: ExplorerProps) {
   const [search, setSearch] = useState("");
   const [currentPage, setCurrentPage] = useState(0);
@@ -112,6 +127,7 @@ export function InstrumentExplorer({
   const [activeTab, setActiveTab] = useState("Charts");
   const [workspaceContext, setWorkspaceContext] = useState<"stocks" | "options" | "futures">(initialWorkspaceContext ?? (asset === "futures" ? "futures" : "stocks"));
   const [ticketSide, setTicketSide] = useState<"BUY" | "SELL" | null>(null);
+  const [ticketPreview, setTicketPreview] = useState(false);
   const [orderType, setOrderType] = useState<"MARKET" | "LIMIT" | "STOP" | "STOP-LIMIT">("MARKET");
   const [quantity, setQuantity] = useState("1");
   const [limitPrice, setLimitPrice] = useState("");
@@ -124,16 +140,34 @@ export function InstrumentExplorer({
   const [stopLossTicks, setStopLossTicks] = useState("25");
   const [ticketState, setTicketState] = useState<"idle" | "submitting" | "submitted" | "error">("idle");
   const [ticketMessage, setTicketMessage] = useState("");
+  const [realtimeQuotes, setRealtimeQuotes] = useState<Record<string, TerminalMarketDataQuote>>({});
+  const [quoteClock, setQuoteClock] = useState(() => Date.now());
+  const { data: marketStatus } = useMarketStatus();
+
+  useEffect(() => {
+    const timer = setInterval(() => setQuoteClock(Date.now()), 5_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    setTicketSide(null);
+    setTicketPreview(false);
+    setTicketState("idle");
+    setTicketMessage("");
+  }, [activeAccountId]);
   const [contextUnderlying, setContextUnderlying] = useState(initialUnderlying ?? "NIFTY");
   const [contextExpiry, setContextExpiry] = useState<string | undefined>(initialExpiry);
   const { instruments } = useInstrumentLookup();
   const rowInstruments = rows.flatMap((row) => row.instrument ? [row.instrument] : []);
   const workspaceInstruments = rowInstruments.length > 0 ? rowInstruments : instruments;
-  const marketDataProvider = resolveTerminalMarketDataProvider(activeAccountProvider) ?? "dhan";
-  const marketDataAccountId = marketDataProvider === "dhan" ? null : activeAccountId;
-  const canLoadMarketData = marketDataProvider === "dhan" || Boolean(activeAccountId);
-  const chartInstrument = workspaceInstruments.find((instrument) => instrument.tradingSymbol.toUpperCase() === (chartSymbol ?? "").toUpperCase());
-  const chartInstrumentToken = chartInstrument?.provider === "zerodha"
+  const marketDataProvider = resolveTerminalMarketDataProvider(activeAccountProvider);
+  const derivativeInstruments = useMemo(
+    () => instruments.filter((instrument) => isProductionInstrument(instrument) && ["options", "futures"].includes(classifyInstrument(instrument) ?? "")),
+    [instruments],
+  );
+  const chartInstrument = (workspaceContext === "options" ? instruments : workspaceInstruments)
+    .find((instrument) => instrument.tradingSymbol.toUpperCase() === (chartSymbol ?? "").toUpperCase());
+  const chartInstrumentToken = chartInstrument?.provider === "zerodha" || chartInstrument?.provider === "dhan"
     ? chartInstrument.providerInstrumentId || chartInstrument.securityId
     : chartSymbol === initialChartSymbol ? initialInstrumentToken : undefined;
 
@@ -147,28 +181,33 @@ export function InstrumentExplorer({
   }, [rows, search]);
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / EXPLORER_PAGE_SIZE));
   const safePage = Math.min(currentPage, pageCount - 1);
-  const visibleRows = useMemo(
-    () => filteredRows.slice(safePage * EXPLORER_PAGE_SIZE, (safePage + 1) * EXPLORER_PAGE_SIZE),
-    [filteredRows, safePage],
-  );
-
   useEffect(() => setCurrentPage(0), [search]);
 
   const visibleQuotesQuery = useQuery({
     queryKey: [
       "terminal-explorer-quotes",
       asset,
-      marketDataAccountId,
+      activeAccountId,
       marketDataProvider,
-      visibleRows.map((row) => row.instrument?.providerInstrumentId ?? row.instrument?.securityId ?? row.chartSymbol ?? row.symbol),
+      filteredRows.map((row) => row.instrument?.providerInstrumentId ?? row.instrument?.securityId ?? row.chartSymbol ?? row.symbol),
     ],
-    enabled: Boolean(visibleRows.length > 0 && canLoadMarketData),
+    enabled: Boolean(filteredRows.length > 0 && (
+      (activeAccountId && marketDataProvider) ||
+      (!activeAccountId && !isAccountLoading)
+    )),
     queryFn: async () => {
       const quotes: Record<string, TerminalMarketDataQuote> = {};
+      if (!activeAccountId || marketDataProvider === "dhan") {
+        return fetchCentralMarketQuotes(filteredRows.map((row) => ({
+          key: row.chartSymbol ?? row.symbol,
+          instrument: row.instrument,
+        })));
+      }
+
       const errors: string[] = [];
-      if (!marketDataAccountId && marketDataProvider !== "dhan") throw new Error("Select a FundedWealth trading account to load account-specific quotes.");
-      for (let offset = 0; offset < visibleRows.length; offset += 10) {
-        const batch = visibleRows.slice(offset, offset + 10);
+      if (!marketDataProvider) throw new Error("The selected account has no supported market-data provider.");
+      for (let offset = 0; offset < filteredRows.length; offset += 10) {
+        const batch = filteredRows.slice(offset, offset + 10);
         const results = await Promise.allSettled(batch.map(async (row) => {
           const chartSymbol = row.chartSymbol ?? row.symbol;
           const instrument = row.instrument ?? workspaceInstruments.find((candidate) =>
@@ -177,7 +216,7 @@ export function InstrumentExplorer({
           );
           if (!instrument) throw new Error(`Terminal OS could not resolve ${chartSymbol}.`);
           const quote = await requestTerminalMarketData<TerminalMarketDataQuote>(
-            marketDataAccountId,
+            activeAccountId,
             marketDataProvider,
             { operation: "getQuote", instrument: toTerminalMarketDataInstrument(instrument, marketDataProvider) },
           );
@@ -194,16 +233,32 @@ export function InstrumentExplorer({
     refetchInterval: 30_000,
     retry: false,
   });
-  const marketDataNotice = !activeAccountId && isAccountLoading && marketDataProvider !== "dhan"
+  const marketDataNotice = !activeAccountId && isAccountLoading
     ? null
-    : !activeAccountId && marketDataProvider !== "dhan"
-      ? "Select a FundedWealth trading account to load account-specific market data."
+    : activeAccountId && !marketDataProvider
+      ? "Account-specific market data is unavailable for the selected account."
       : visibleQuotesQuery.data?.errors[0] ?? (visibleQuotesQuery.error instanceof Error ? visibleQuotesQuery.error.message : null);
+  const centralChartInstrument = chartSymbol
+    ? findWatchlistInstrument(instruments, chartSymbol)
+    : undefined;
 
-  const displayedRows = useMemo(() => visibleRows.map((row) => {
-    const quote = visibleQuotesQuery.data?.quotes[row.chartSymbol ?? row.symbol];
+  const displayedRows = useMemo(() => {
+    const quotedRows = filteredRows.map((row) => {
+    const key = row.chartSymbol ?? row.symbol;
+    const polledQuote = visibleQuotesQuery.data?.quotes[key];
+    const realtimeQuote = realtimeQuotes[key];
+    const polledTimestamp = polledQuote ? Date.parse(polledQuote.timestamp) : Number.NEGATIVE_INFINITY;
+    const realtimeTimestamp = realtimeQuote ? Date.parse(realtimeQuote.timestamp) : Number.NEGATIVE_INFINITY;
+    const quote = realtimeTimestamp >= polledTimestamp ? realtimeQuote : polledQuote;
     if (!quote || !Number.isFinite(quote.ltp) || quote.ltp <= 0) return row;
-    const quoteAge = Date.now() - Date.parse(quote.timestamp);
+    const realtimeAge = realtimeQuote ? quoteClock - Date.parse(realtimeQuote.timestamp) : Number.POSITIVE_INFINITY;
+    const hasFreshDhanTick = realtimeQuote?.provider === "dhan" &&
+      Number.isFinite(realtimeAge) && realtimeAge >= 0 && realtimeAge <= 60_000;
+    const quoteStatus = marketStatus?.isOpen === false
+      ? "LAST TRADED PRICE"
+      : marketStatus?.isOpen === true && marketStatus.isLive === true && hasFreshDhanTick
+        ? "LIVE"
+        : "DELAYED";
     return {
       ...row,
       ltp: quote.ltp,
@@ -214,13 +269,92 @@ export function InstrumentExplorer({
       low: quote.low,
       volume: quote.volume,
       oi: quote.openInterest,
-      isLive: Number.isFinite(quoteAge) && quoteAge >= 0 && quoteAge <= 60_000,
+      isLive: quoteStatus === "LIVE",
+      quoteStatus,
+      updatedAt: quote.timestamp,
     };
-  }), [visibleRows, visibleQuotesQuery.data]);
+    });
+    if (asset !== "stocks") return quotedRows;
+    return quotedRows.sort((left, right) =>
+      (right.volume ?? -1) - (left.volume ?? -1) || left.symbol.localeCompare(right.symbol)
+    );
+  }, [asset, filteredRows, marketStatus?.isLive, marketStatus?.isOpen, quoteClock, realtimeQuotes, visibleQuotesQuery.data]);
+  const pageRows = useMemo(
+    () => displayedRows.slice(safePage * EXPLORER_PAGE_SIZE, (safePage + 1) * EXPLORER_PAGE_SIZE),
+    [displayedRows, safePage],
+  );
+  const realtimeTargets = useMemo(
+    () => pageRows.flatMap((row) => {
+      const instrument = row.instrument;
+      return instrument?.provider === "dhan" &&
+        /^\d+$/.test(instrument.securityId) &&
+        instrument.providerInstrumentId === instrument.securityId
+        ? [instrument]
+        : [];
+    }),
+    [pageRows],
+  );
+  const realtimeIdentityKey = useMemo(
+    () => realtimeTargets
+      .map((instrument) => `${instrument.exchangeSegment}:${instrument.securityId}:${instrument.tradingSymbol}`)
+      .sort()
+      .join(","),
+    [realtimeTargets],
+  );
+  const realtimeSymbolsKey = useMemo(
+    () => [...new Set(realtimeTargets.map((instrument) => instrument.tradingSymbol))].sort().join(","),
+    [realtimeTargets],
+  );
+  const realtimeTargetsRef = useRef(realtimeTargets);
+  useEffect(() => {
+    realtimeTargetsRef.current = realtimeTargets;
+  }, [realtimeTargets]);
+  useEffect(() => {
+    setRealtimeQuotes({});
+    if (
+      !realtimeIdentityKey ||
+      (activeAccountId ? marketDataProvider !== "dhan" : isAccountLoading)
+    ) return;
+
+    return subscribeToTerminalMarketDataStream(
+      null,
+      "dhan",
+      realtimeSymbolsKey.split(","),
+      (event) => {
+        const instrument = realtimeTargetsRef.current.find((candidate) =>
+          candidate.exchange === event.quote.exchange &&
+          candidate.tradingSymbol === event.quote.tradingSymbol &&
+          (!event.quote.providerInstrumentId && !event.quote.securityId ||
+            (event.quote.providerInstrumentId ?? event.quote.securityId) === candidate.providerInstrumentId),
+        );
+        const timestamp = Date.parse(event.quote.timestamp);
+        if (
+          !instrument ||
+          event.quote.provider !== "dhan" ||
+          !Number.isFinite(event.quote.ltp) ||
+          event.quote.ltp <= 0 ||
+          !Number.isFinite(timestamp) ||
+          timestamp > Date.now()
+        ) return;
+        setQuoteClock(Date.now());
+        setRealtimeQuotes((current) => ({
+          ...current,
+          [instrument.tradingSymbol]: event.quote,
+        }));
+      },
+    );
+  }, [activeAccountId, isAccountLoading, marketDataProvider, realtimeIdentityKey, realtimeSymbolsKey]);
 
   const ticketInstrument = useMemo(() => {
-    const matches = workspaceInstruments.filter((instrument) => {
+    const instrumentSource = workspaceContext === "options" ? instruments : workspaceInstruments;
+    const matches = instrumentSource.filter((instrument) => {
       if (!isProductionInstrument(instrument)) return false;
+      if (
+        initialOptionSecurityId &&
+        workspaceContext === "options" &&
+        chartSymbol === initialChartSymbol &&
+        instrument.securityId !== initialOptionSecurityId
+      ) return false;
       if (workspaceContext === "stocks") {
         return classifyInstrument(instrument) === "stocks" && (
           instrument.tradingSymbol.toUpperCase() === (chartSymbol ?? "").toUpperCase() ||
@@ -233,34 +367,70 @@ export function InstrumentExplorer({
 
     if (matches.length === 0) return undefined;
     return matches.find((instrument) => instrument.exchange === "NSE" || instrument.exchangeSegment === "NSE_EQ") ?? matches[0];
-  }, [workspaceInstruments, chartSymbol, workspaceContext]);
+  }, [initialChartSymbol, initialOptionSecurityId, instruments, workspaceInstruments, chartSymbol, workspaceContext]);
+  const ticketInstrumentSecurityId = ticketInstrument?.securityId;
+  const ticketInstrumentLotSize = ticketInstrument?.lotSize;
+
+  useEffect(() => {
+    if (
+      initialOrderSide &&
+      initialOptionSecurityId &&
+      ticketInstrumentSecurityId === initialOptionSecurityId
+    ) {
+      setTicketSide(initialOrderSide);
+      setQuantity(String(ticketInstrumentLotSize));
+      setTicketPreview(false);
+    }
+  }, [initialOptionSecurityId, initialOrderSide, ticketInstrumentSecurityId, ticketInstrumentLotSize]);
 
   const { data: selectedTerminalQuote } = useQuery({
-    queryKey: ["terminal-selected-quote", marketDataAccountId, marketDataProvider, chartSymbol],
+    queryKey: ["terminal-selected-quote", activeAccountId, marketDataProvider, chartSymbol],
     queryFn: async () => {
-      if ((!marketDataAccountId && marketDataProvider !== "dhan") || !chartSymbol) return null;
-      const existingInstrument = rows.find((row) => (row.chartSymbol ?? row.symbol) === chartSymbol)?.instrument
+      if (!activeAccountId || !marketDataProvider || !chartSymbol) return null;
+      const instrument = rows.find((row) => (row.chartSymbol ?? row.symbol) === chartSymbol)?.instrument
         ?? workspaceInstruments.find((candidate) =>
         candidate.tradingSymbol.toUpperCase() === chartSymbol.toUpperCase() ||
         candidate.symbol.toUpperCase() === chartSymbol.toUpperCase()
-      );
-      const searchResults = existingInstrument ? [] : await requestTerminalMarketData<Instrument[]>(
-        marketDataAccountId,
+      ) ?? (await requestTerminalMarketData<Instrument[]>(
+        activeAccountId,
         marketDataProvider,
         { operation: "searchInstruments", query: chartSymbol },
-      );
-      const instrument = existingInstrument ?? searchResults.find((candidate) =>
+      )).find((candidate) =>
         candidate.tradingSymbol.toUpperCase() === chartSymbol.toUpperCase() ||
         candidate.symbol.toUpperCase() === chartSymbol.toUpperCase()
-      ) ?? (searchResults.length === 1 ? searchResults[0] : undefined);
+      );
       if (!instrument) throw new Error(`Terminal OS could not resolve ${chartSymbol}.`);
       return requestTerminalMarketData<TerminalMarketDataQuote>(
-        marketDataAccountId,
+        activeAccountId,
         marketDataProvider,
         { operation: "getQuote", instrument: toTerminalMarketDataInstrument(instrument, marketDataProvider) },
       );
     },
-    enabled: Boolean(canLoadMarketData && chartSymbol && workspaceContext !== "options"),
+    enabled: Boolean(activeAccountId && marketDataProvider && marketDataProvider !== "dhan" && chartSymbol && workspaceContext !== "options"),
+    staleTime: 5_000,
+    refetchInterval: 15_000,
+    retry: false,
+  });
+
+  const centralChartQuoteQuery = useQuery({
+    queryKey: ["terminal-central-chart-quote", chartSymbol, centralChartInstrument?.exchangeSegment, centralChartInstrument?.securityId],
+    queryFn: async () => {
+      if (!chartSymbol || !centralChartInstrument) return null;
+      const result = await fetchCentralMarketQuotes([{ key: chartSymbol, instrument: centralChartInstrument }]);
+      return result.quotes[chartSymbol] ?? null;
+    },
+    enabled: Boolean(
+      (!activeAccountId || marketDataProvider === "dhan") &&
+      !isAccountLoading &&
+      centralChartInstrument?.provider === "dhan" &&
+      chartSymbol &&
+      workspaceContext !== "options" &&
+      (filteredRows.length === 0 ? !isLoading : visibleQuotesQuery.isFetched) &&
+      (
+        !filteredRows.some((row) => (row.chartSymbol ?? row.symbol).toUpperCase() === chartSymbol.toUpperCase()) ||
+        (visibleQuotesQuery.isFetched && !visibleQuotesQuery.data?.quotes[chartSymbol])
+      )
+    ),
     staleTime: 5_000,
     refetchInterval: 15_000,
     retry: false,
@@ -306,6 +476,21 @@ export function InstrumentExplorer({
         instrument: ticketInstrument,
       };
     }
+    if (centralChartQuoteQuery.data && Number.isFinite(centralChartQuoteQuery.data.ltp) && centralChartQuoteQuery.data.ltp > 0) {
+      return {
+        symbol: centralChartQuoteQuery.data.symbol,
+        chartSymbol: centralChartQuoteQuery.data.tradingSymbol,
+        label: centralChartQuoteQuery.data.tradingSymbol,
+        ltp: centralChartQuoteQuery.data.ltp,
+        change: centralChartQuoteQuery.data.change,
+        changePercent: centralChartQuoteQuery.data.changePercent,
+        open: centralChartQuoteQuery.data.open,
+        high: centralChartQuoteQuery.data.high,
+        low: centralChartQuoteQuery.data.low,
+        volume: centralChartQuoteQuery.data.volume,
+        instrument: centralChartInstrument,
+      };
+    }
     if (rowQuote || workspaceContext !== "options" || !ticketInstrument?.strikePrice || !ticketInstrument.optionType) {
       return rowQuote ?? null;
     }
@@ -340,27 +525,29 @@ export function InstrumentExplorer({
       low: null,
       volume: leg.volume,
       instrument: ticketInstrument,
+      bid: leg.bidPrice,
+      ask: leg.askPrice,
     };
-  }, [chartSymbol, derivativeQuote, filteredRows, optionChainData, rows, selectedRowQuote, selectedTerminalQuote, ticketInstrument, workspaceContext]);
+  }, [centralChartInstrument, centralChartQuoteQuery.data, chartSymbol, derivativeQuote, filteredRows, optionChainData, rows, selectedRowQuote, selectedTerminalQuote, ticketInstrument, workspaceContext]);
   const selectedQuoteIsAvailable = Boolean(
     selectedQuote && Number.isFinite(selectedQuote.ltp) && selectedQuote.ltp > 0
   );
   const selectedQuoteIsLive = Boolean(
     selectedQuoteIsAvailable && (
-      selectedRowQuote?.isLive ||
-      (selectedTerminalQuote != null &&
-        Number.isFinite(Date.parse(selectedTerminalQuote.timestamp)) &&
-        Date.now() - Date.parse(selectedTerminalQuote.timestamp) >= 0 &&
-        Date.now() - Date.parse(selectedTerminalQuote.timestamp) <= 60_000)
+      selectedRowQuote?.isLive === true &&
+      marketStatus?.isOpen === true &&
+      marketStatus.isLive === true
     )
   );
   const chartQuoteStatus = workspaceContext === "options" && selectedQuote?.ltp
     ? "AVAILABLE"
     : selectedQuoteIsLive
       ? "LIVE"
-      : selectedQuoteIsAvailable
-        ? "STALE"
-        : "UNAVAILABLE";
+      : !selectedQuoteIsAvailable
+        ? "OFFLINE"
+        : marketStatus?.isOpen === false
+          ? "LAST TRADED PRICE"
+          : "DELAYED";
   const chartUnavailableMessage = isAccountLoading
     ? "Checking account-specific historical data availability."
     : !activeAccountId
@@ -370,22 +557,22 @@ export function InstrumentExplorer({
         : undefined;
 
   const futuresContracts = useMemo(
-    () => workspaceInstruments
+    () => derivativeInstruments
       .filter((instrument) => isProductionInstrument(instrument) && classifyInstrument(instrument) === "futures")
       .sort((a, b) => a.symbol.localeCompare(b.symbol) || (a.expiryDate ?? "").localeCompare(b.expiryDate ?? "")),
-    [workspaceInstruments]
+    [derivativeInstruments]
   );
 
   const optionUnderlyings = useMemo(
-    () => Array.from(new Set(workspaceInstruments
+    () => Array.from(new Set(derivativeInstruments
       .filter((instrument) => isProductionInstrument(instrument) && classifyInstrument(instrument) === "options")
       .map((instrument) => instrument.symbol)))
       .sort(),
-    [workspaceInstruments]
+    [derivativeInstruments]
   );
 
   const resolveContract = (underlying: string, expiry: string | undefined, strike: number, optionType: "CE" | "PE") =>
-    workspaceInstruments.find((instrument) =>
+    derivativeInstruments.find((instrument) =>
       isProductionInstrument(instrument) &&
       classifyInstrument(instrument) === "options" &&
       instrument.symbol === underlying &&
@@ -415,8 +602,10 @@ export function InstrumentExplorer({
   };
 
   const openTrade = (symbol: string) => {
+    if (isReadOnlyAccount) return;
     if (symbol !== chartSymbol) setChartSymbol(symbol);
     setTicketSide("BUY");
+    setTicketPreview(false);
     setOrderType("MARKET");
     setQuantity("1");
     setLimitPrice("");
@@ -432,7 +621,9 @@ export function InstrumentExplorer({
   };
 
   const openOrderTicket = (side: "BUY" | "SELL") => {
+    if (isReadOnlyAccount) return;
     setTicketSide(side);
+    setTicketPreview(false);
     setOrderType("MARKET");
     const ticketCategory = ticketInstrument ? classifyInstrument(ticketInstrument) : null;
     setQuantity(ticketCategory === "futures" || ticketCategory === "options" ? String(ticketInstrument?.lotSize ?? 1) : "1");
@@ -449,6 +640,11 @@ export function InstrumentExplorer({
   };
 
   const submitOrder = async () => {
+    if (isReadOnlyAccount) {
+      setTicketState("error");
+      setTicketMessage("This account is view-only. Order placement is disabled.");
+      return;
+    }
     if (!ticketSide || !chartSymbol || !activeAccountId) {
       setTicketState("error");
       setTicketMessage("Select an active trading account before placing an order.");
@@ -466,9 +662,13 @@ export function InstrumentExplorer({
       ?? stockMatches[0];
     const ticketCategory = ticketInstrument ? classifyInstrument(ticketInstrument) : null;
     const isDerivative = ticketCategory === "futures" || ticketCategory === "options";
-    if (workspaceContext !== "stocks" && (!ticketInstrument || !isDerivative || ticketInstrument.provider !== "zerodha")) {
+    const accountProvider = (activeAccountProvider ?? "").toLowerCase();
+    const providerMatchesAccount = ticketInstrument?.provider === "zerodha" && ["kite", "zerodha"].includes(accountProvider);
+    if (workspaceContext !== "stocks" && (!ticketInstrument || !isDerivative || !providerMatchesAccount)) {
       setTicketState("error");
-      setTicketMessage("Select a valid Kite futures or options contract.");
+      setTicketMessage(ticketInstrument?.provider === "dhan"
+        ? "Dhan option quotes are available, but the existing Dhan broker adapter does not support order placement. No order was submitted."
+        : "The selected derivative is not supported by the active trading account.");
       return;
     }
     const currentPrice = selectedQuote?.ltp ?? 0;
@@ -515,7 +715,9 @@ export function InstrumentExplorer({
     setTicketMessage("");
     try {
       const orderInstrument = isDerivative && ticketInstrument
-        ? { ...ticketInstrument, exchange: "NSE", exchangeSegment: "NSE_FNO" }
+        ? ticketInstrument.provider === "zerodha"
+          ? { ...ticketInstrument, exchange: "NSE", exchangeSegment: "NSE_FNO" }
+          : ticketInstrument
         : undefined;
       const result = await createTerminalOrder({
         account_id: activeAccountId,
@@ -559,6 +761,11 @@ export function InstrumentExplorer({
   const estimatedRisk = stopLossEnabled && exitBasePrice > 0 && resolvedStopLoss > 0
     ? Math.abs(exitBasePrice - resolvedStopLoss) * (Number(quantity) || 0)
     : null;
+  const derivativeOrderUnsupported = workspaceContext !== "stocks" && Boolean(
+    ticketInstrument &&
+    classifyInstrument(ticketInstrument) &&
+    !(ticketInstrument.provider === "zerodha" && ["kite", "zerodha"].includes((activeAccountProvider ?? "").toLowerCase()))
+  );
 
   const chartTabs = ["Markets", "Charts"];
 
@@ -588,7 +795,7 @@ export function InstrumentExplorer({
   }, [terminalPositionsData]);
 
   const closePosition = async (position: ReturnType<typeof normalizeCanonicalPosition>) => {
-    if (!activeAccountId) return;
+    if (isReadOnlyAccount || !activeAccountId) return;
     const quantity = Number(position.qty ?? position.quantity ?? 0);
     if (!Number.isFinite(quantity) || quantity <= 0) return;
 
@@ -607,6 +814,7 @@ export function InstrumentExplorer({
   };
 
   const handleProtectionChange = async (positionId: string, field: "stop_loss" | "take_profit", value: string) => {
+    if (isReadOnlyAccount) return;
     if (!value || !Number.isFinite(Number(value)) || Number(value) <= 0) return;
     await modifyTerminalPositionProtection(positionId, field, Number(value));
   };
@@ -616,6 +824,7 @@ export function InstrumentExplorer({
   return (
     <div className={chartSymbol && hasChartWorkspace ? "flex h-full min-h-0 flex-col" : "space-y-4"}>
       {marketDataNotice && <p className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-600" role="status">{marketDataNotice}</p>}
+      {isReadOnlyAccount && <p className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-sm text-red-500" role="status">VIEW ONLY — order placement and execution are disabled for this account.</p>}
       {!chartSymbol || !hasChartWorkspace ? (
         <>
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -652,8 +861,8 @@ export function InstrumentExplorer({
                       {asset === "futures" ? <TableHead>Contract</TableHead> : <TableHead>{asset === "stocks" ? "SYMBOL" : "Symbol"}</TableHead>}
                       {asset === "futures" && <TableHead>Underlying</TableHead>}
                       {asset === "futures" && <TableHead>Expiry</TableHead>}
-                      {asset !== "stocks" && <TableHead>Segment</TableHead>}
-                      {asset !== "stocks" && <TableHead>Security ID</TableHead>}
+                      {asset === "indices" && <TableHead>Segment</TableHead>}
+                      {asset === "indices" && <TableHead>Security ID</TableHead>}
                       <TableHead className="text-right">LTP</TableHead>
                       <TableHead className="text-right">{asset === "stocks" ? "CHG" : "Change"}</TableHead>
                       <TableHead className="text-right">{asset === "stocks" ? "CHG%" : "Chg%"}</TableHead>
@@ -668,7 +877,7 @@ export function InstrumentExplorer({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {displayedRows.map((row) => {
+                    {pageRows.map((row) => {
                       const positive = (row.changePercent ?? 0) >= 0;
                       const isWatched = isWatchlisted(row.symbol, watchedSymbols);
                       const dayRange = (row.high ?? row.ltp ?? 0) - (row.low ?? row.ltp ?? 0);
@@ -688,7 +897,9 @@ export function InstrumentExplorer({
                             <TableCell className="font-sans font-medium">
                               <div className="flex items-center gap-2">
                                 <span>{row.contract ?? row.label}</span>
-                                {row.isLive && <Badge variant="outline" className="text-[9px] border-bullish/30 text-bullish"><Radio className="mr-1 h-2 w-2 animate-pulse" />LIVE</Badge>}
+                                <Badge variant="outline" className={`text-[9px] ${row.isLive ? "border-bullish/30 text-bullish" : "border-border text-muted-foreground"}`}>
+                                  {row.isLive && <Radio className="mr-1 h-2 w-2 animate-pulse" />}{row.quoteStatus ?? (row.ltp ? "DELAYED" : "OFFLINE")}
+                                </Badge>
                               </div>
                             </TableCell>
                           ) : (
@@ -696,11 +907,21 @@ export function InstrumentExplorer({
                               <div className="flex items-center gap-2">
                                 {positive ? <TrendingUp className="h-3 w-3 text-bullish opacity-80" /> : <TrendingDown className="h-3 w-3 text-bearish opacity-80" />}
                                 {asset === "stocks" ? (
-                                  <button type="button" className="hover:text-primary" onClick={() => openChart(row.chartSymbol ?? row.symbol)} aria-label={`Open ${row.symbol} stock chart`}>
-                                    {row.symbol}
-                                  </button>
+                                  <>
+                                    <button type="button" className="hover:text-primary" onClick={() => openChart(row.chartSymbol ?? row.symbol)} aria-label={`Open ${row.symbol} stock chart`}>
+                                      {row.symbol}
+                                    </button>
+                                    <Badge variant="outline" className={`text-[9px] ${row.isLive ? "border-bullish/30 text-bullish" : "border-border text-muted-foreground"}`}>
+                                      {row.isLive && <Radio className="mr-1 h-2 w-2 animate-pulse" />}{row.quoteStatus ?? (row.ltp ? "DELAYED" : "OFFLINE")}
+                                    </Badge>
+                                  </>
                                 ) : (
-                                  <span>{row.label || row.symbol}</span>
+                                  <>
+                                    <span>{row.label || row.symbol}</span>
+                                    <Badge variant="outline" className={`text-[9px] ${row.isLive ? "border-bullish/30 text-bullish" : "border-border text-muted-foreground"}`}>
+                                      {row.isLive && <Radio className="mr-1 h-2 w-2 animate-pulse" />}{row.quoteStatus ?? (row.ltp ? "DELAYED" : "OFFLINE")}
+                                    </Badge>
+                                  </>
                                 )}
                               </div>
                             </TableCell>
@@ -714,10 +935,21 @@ export function InstrumentExplorer({
                             <TableCell className="text-muted-foreground">{row.expiry || "—"}</TableCell>
                           )}
 
-                          {asset !== "stocks" && <TableCell className="text-muted-foreground">{row.instrument?.exchangeSegment ?? "—"}</TableCell>}
-                          {asset !== "stocks" && <TableCell className="font-mono text-muted-foreground">{row.instrument?.providerInstrumentId ?? row.instrument?.securityId ?? "—"}</TableCell>}
+                          {asset === "indices" && <TableCell className="text-muted-foreground">{row.instrument?.exchangeSegment ?? "—"}</TableCell>}
+                          {asset === "indices" && <TableCell className="font-mono text-muted-foreground">{row.instrument?.providerInstrumentId ?? row.instrument?.securityId ?? "—"}</TableCell>}
 
-                          <TableCell className="text-right font-semibold">{row.ltp != null && row.ltp > 0 ? `₹${row.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}</TableCell>
+                          <TableCell className="text-right font-semibold" title={row.updatedAt ? `Dhan exchange timestamp: ${row.updatedAt}` : "Dhan quote unavailable"}>
+                            {row.ltp != null && row.ltp > 0 ? (
+                              <>
+                                <span>₹{row.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                <span className="block text-[9px] font-normal text-muted-foreground">
+                                  {row.updatedAt
+                                    ? new Date(row.updatedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Asia/Kolkata" })
+                                    : "Timestamp unavailable"}
+                                </span>
+                              </>
+                            ) : "—"}
+                          </TableCell>
                           <TableCell className={`text-right ${row.change != null && row.change >= 0 ? "text-bullish" : "text-bearish"}`}>
                             {row.change != null && row.ltp != null && row.ltp > 0 ? `${row.change >= 0 ? "+" : ""}${row.change.toFixed(2)}` : "—"}
                           </TableCell>
@@ -758,7 +990,7 @@ export function InstrumentExplorer({
 
                           <TableCell>
                             <div className="flex items-center justify-center gap-1">
-                              {onTradeOpen && (
+                              {onTradeOpen && !isReadOnlyAccount && (
                                 <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openTrade(row.symbol)} title="Open trade flow">
                                   <ExternalLink className="h-3 w-3" />
                                 </Button>
@@ -778,7 +1010,7 @@ export function InstrumentExplorer({
           </Card>
           {visibleQuotesQuery.data?.errors.length ? (
             <p className="mt-2 text-xs text-amber-500" role="status">
-              Some Terminal OS quotes are unavailable: {visibleQuotesQuery.data.errors[0]}
+              Some Dhan quotes are unavailable: {visibleQuotesQuery.data.errors[0]}
             </p>
           ) : null}
           <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
@@ -897,6 +1129,11 @@ export function InstrumentExplorer({
                       <span className="text-2xl font-bold tracking-tight">{selectedQuote?.label ?? chartSymbol}</span>
                       <span className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{asset === "indices" ? "NSE · IDX_I" : workspaceContext === "stocks" ? "NSE" : "NFO"}</span>
                     </div>
+                    {workspaceContext === "options" && ticketInstrument && (
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        {ticketInstrument.symbol} · {ticketInstrument.expiryDate} · {ticketInstrument.strikePrice?.toLocaleString("en-IN")} {ticketInstrument.optionType} · ID {ticketInstrument.securityId}
+                      </p>
+                    )}
                     <div className="mt-1 flex items-center gap-3 text-sm">
                       <span className="font-mono font-semibold text-foreground">
                         {selectedQuote?.ltp != null && selectedQuote.ltp > 0
@@ -912,10 +1149,12 @@ export function InstrumentExplorer({
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <Button variant="outline" onClick={() => openOrderTicket("SELL")} className="h-12 min-w-[134px] rounded-lg border-0 bg-red-600 px-4 text-sm font-bold text-white shadow-sm hover:bg-red-700"><span aria-hidden="true" className="mr-1.5 text-[10px]">▼</span>SELL</Button>
-                    <Button variant="outline" onClick={() => openOrderTicket("BUY")} className="h-12 min-w-[134px] rounded-lg border-0 bg-emerald-600 px-4 text-sm font-bold text-white shadow-sm hover:bg-emerald-700"><span aria-hidden="true" className="mr-1.5 text-[10px]">▲</span>BUY</Button>
-                  </div>
+                  {!isReadOnlyAccount && (
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" onClick={() => openOrderTicket("SELL")} className="h-12 min-w-[134px] rounded-lg border-0 bg-red-600 px-4 text-sm font-bold text-white shadow-sm hover:bg-red-700"><span aria-hidden="true" className="mr-1.5 text-[10px]">▼</span>SELL</Button>
+                      <Button variant="outline" onClick={() => openOrderTicket("BUY")} className="h-12 min-w-[134px] rounded-lg border-0 bg-emerald-600 px-4 text-sm font-bold text-white shadow-sm hover:bg-emerald-700"><span aria-hidden="true" className="mr-1.5 text-[10px]">▲</span>BUY</Button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="shrink-0 border-b border-border px-4 py-2">
@@ -1003,6 +1242,7 @@ export function InstrumentExplorer({
                       fill
                       candleOnly={activeTab === "Markets"}
                       instrumentToken={chartInstrumentToken}
+                      optionContract={workspaceContext === "options"}
                       unavailableMessage={workspaceContext === "stocks" ? chartUnavailableMessage : undefined}
                     />
                   </div>
@@ -1071,6 +1311,7 @@ export function InstrumentExplorer({
                                     aria-label={`Stop Loss for ${normalized.symbol}`}
                                     type="number"
                                     step="0.05"
+                                    disabled={isReadOnlyAccount}
                                     value={stopLossValue}
                                     onChange={(event) => {
                                       const next = event.target.value;
@@ -1094,6 +1335,7 @@ export function InstrumentExplorer({
                                     aria-label={`Take Profit for ${normalized.symbol}`}
                                     type="number"
                                     step="0.05"
+                                    disabled={isReadOnlyAccount}
                                     value={takeProfitValue}
                                     onChange={(event) => {
                                       const next = event.target.value;
@@ -1117,7 +1359,7 @@ export function InstrumentExplorer({
                                 <TableCell className={pnlValue >= 0 ? "font-mono text-bullish" : "font-mono text-bearish"}>₹{Math.abs(pnlValue).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                                 <TableCell className={netPnlValue >= 0 ? "font-mono text-bullish" : "font-mono text-bearish"}>₹{Math.abs(netPnlValue).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                                 <TableCell>
-                                  <button type="button" aria-label={`Close position ${normalized.symbol}`} onClick={() => void closePosition(normalized)} className="text-xs text-red-500 hover:text-red-400">X</button>
+                                  <button type="button" aria-label={`Close position ${normalized.symbol}`} disabled={isReadOnlyAccount} onClick={() => void closePosition(normalized)} className="text-xs text-red-500 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-50">X</button>
                                 </TableCell>
                               </TableRow>
                             );
@@ -1132,20 +1374,24 @@ export function InstrumentExplorer({
             </div>
           </div>
 
-          {ticketSide && (
-            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 p-4" role="dialog" aria-modal="true" aria-label={`SIMULATED ${ticketSide} order ticket`}>
+          {ticketSide && !isReadOnlyAccount && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 p-4" role="dialog" aria-modal="true" aria-label={`${ticketSide} order ticket`}>
               <div className="max-h-[min(90vh,760px)] w-full max-w-md overflow-y-auto rounded-lg border border-border bg-card p-5 text-card-foreground shadow-2xl">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
                     <h2 className="truncate text-base font-semibold">{chartSymbol}</h2>
-                    <p className="mt-1 text-xs text-muted-foreground">{ticketInstrument?.exchangeSegment ?? (workspaceContext === "stocks" ? "NSE_EQ" : "NFO")} · simulated order ticket</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {workspaceContext === "options" && ticketInstrument
+                        ? `${ticketInstrument.symbol} · ${ticketInstrument.expiryDate} · ${ticketInstrument.strikePrice} ${ticketInstrument.optionType} · ID ${ticketInstrument.securityId} · ${ticketInstrument.exchangeSegment}`
+                        : `${ticketInstrument?.exchangeSegment ?? (workspaceContext === "stocks" ? "NSE_EQ" : "NFO")} · order ticket`}
+                    </p>
                   </div>
                   <button type="button" onClick={() => setTicketSide(null)} className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Close order ticket"><X className="h-4 w-4" /></button>
                 </div>
 
                 <div className="mt-4 grid grid-cols-2 gap-2 rounded-md bg-muted/50 p-1">
                   {(["BUY", "SELL"] as const).map((side) => (
-                    <button key={side} type="button" aria-pressed={ticketSide === side} aria-label={`SIMULATED ${side}`} onClick={() => { setTicketSide(side); setTakeProfitPrice(""); setStopLossPrice(""); setTicketState("idle"); setTicketMessage(""); }} className={`rounded px-3 py-2.5 text-sm font-bold transition-colors ${ticketSide === side ? side === "BUY" ? "bg-emerald-600 text-white shadow-sm hover:bg-emerald-700" : "bg-red-600 text-white shadow-sm hover:bg-red-700" : "bg-transparent text-muted-foreground hover:bg-background hover:text-foreground"}`}>{side}</button>
+                    <button key={side} type="button" aria-pressed={ticketSide === side} aria-label={side} onClick={() => { setTicketSide(side); setTicketPreview(false); setTakeProfitPrice(""); setStopLossPrice(""); setTicketState("idle"); setTicketMessage(""); }} className={`rounded px-3 py-2.5 text-sm font-bold transition-colors ${ticketSide === side ? side === "BUY" ? "bg-emerald-600 text-white shadow-sm hover:bg-emerald-700" : "bg-red-600 text-white shadow-sm hover:bg-red-700" : "bg-transparent text-muted-foreground hover:bg-background hover:text-foreground"}`}>{side}</button>
                   ))}
                 </div>
 
@@ -1153,6 +1399,11 @@ export function InstrumentExplorer({
                   <div>
                     <p className="text-xs text-muted-foreground">{ticketInstrument?.exchangeSegment?.startsWith("NFO") ? "NFO" : "NSE"} · LTP</p>
                     <p className="mt-1 font-mono text-lg font-semibold">₹{(selectedQuote?.ltp ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                  </div>
+                  <div className="mt-2 flex gap-4 text-xs text-muted-foreground">
+                    <span>Bid <span className="font-mono text-foreground">{formatNumber(selectedQuote?.bid ?? null)}</span></span>
+                    <span>Ask <span className="font-mono text-foreground">{formatNumber(selectedQuote?.ask ?? null)}</span></span>
+                    <span>Lot size <span className="font-mono text-foreground">{ticketInstrument?.lotSize ?? "—"}</span></span>
                   </div>
                   <div className="text-right">
                     <p className="text-xs text-muted-foreground">Est. order value</p>
@@ -1189,9 +1440,30 @@ export function InstrumentExplorer({
                 </section>
 
                 {ticketMessage && <p className={`mt-3 text-xs ${ticketState === "error" ? "text-destructive" : "text-emerald-500"}`}>{ticketMessage}</p>}
+                {derivativeOrderUnsupported && ticketInstrument?.provider === "dhan" && (
+                  <p className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs text-amber-600" role="status">
+                    Dhan quotes and contract identity are loaded; the current Dhan broker adapter does not support order placement. Preview is available, but submission is disabled.
+                  </p>
+                )}
+                {ticketPreview && (
+                  <div className="mt-4 space-y-1 rounded-md border border-primary/20 bg-primary/5 p-3 text-xs" role="status" aria-label="Order preview">
+                    <p className="font-semibold">{ticketSide} {ticketInstrument?.tradingSymbol ?? chartSymbol}</p>
+                    <p>Security ID: <span className="font-mono">{ticketInstrument?.securityId ?? "—"}</span></p>
+                    <p>{orderType} · Qty {quantity} · Est. value ₹{(((orderType === "LIMIT" || orderType === "STOP-LIMIT") && Number(limitPrice) > 0 ? Number(limitPrice) : selectedQuote?.ltp ?? 0) * (Number(quantity) || 0)).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                    <p>Available margin: {availableMargin != null && Number.isFinite(availableMargin) ? `₹${availableMargin.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "Unavailable"}</p>
+                    <p className="text-muted-foreground">Required margin estimate unavailable; broker risk checks apply on submission.</p>
+                  </div>
+                )}
                 <div className="mt-5 flex gap-2">
-                  <Button variant="outline" onClick={() => setTicketSide(null)}>Cancel</Button>
-                  <Button disabled={ticketState === "submitting" || ticketState === "submitted"} aria-label={`SIMULATED ${ticketSide} ${orderType === "MARKET" ? "Market" : orderType}`} onClick={() => void submitOrder()} className={`flex-1 font-semibold text-white ${ticketSide === "BUY" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"}`}>{ticketState === "submitting" ? "Submitting..." : ticketState === "submitted" ? "Order Created" : `${ticketSide} ${orderType === "MARKET" ? "Market" : orderType}`}</Button>
+                  <Button variant="outline" onClick={() => { setTicketSide(null); setTicketPreview(false); }}>Cancel</Button>
+                  <Button
+                    disabled={ticketState === "submitting" || ticketState === "submitted" || (ticketPreview && derivativeOrderUnsupported)}
+                    aria-label={ticketPreview ? `Confirm and submit ${ticketSide} order` : `Preview ${ticketSide} order`}
+                    onClick={() => ticketPreview ? void submitOrder() : setTicketPreview(true)}
+                    className={`flex-1 font-semibold text-white ${ticketSide === "BUY" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"}`}
+                  >
+                    {ticketState === "submitting" ? "Submitting..." : ticketState === "submitted" ? "Order Created" : ticketPreview ? derivativeOrderUnsupported ? "Submission unavailable" : `Confirm & Submit ${ticketSide}` : `Preview ${ticketSide} Order`}
+                  </Button>
                 </div>
               </div>
             </div>

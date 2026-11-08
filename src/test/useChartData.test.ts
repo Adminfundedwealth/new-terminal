@@ -65,7 +65,11 @@ describe("parseColumnarCandles", () => {
 
   it("normalises millisecond timestamps down to seconds", () => {
     const result = parseColumnarCandles({
+      open: [100],
+      high: [105],
+      low: [99],
       close: [104],
+      volume: [1000],
       timestamp: [1779200000000], // ms
     });
     expect(result[0].time).toBe(1779200000); // seconds
@@ -73,7 +77,11 @@ describe("parseColumnarCandles", () => {
 
   it("accepts ISO string timestamps (Dhan start_Time)", () => {
     const result = parseColumnarCandles({
+      open: [245],
+      high: [255],
+      low: [240],
       close: [250],
+      volume: [1200],
       start_Time: ["2026-06-11 09:15:00"],
     });
     expect(result).toHaveLength(1);
@@ -81,17 +89,20 @@ describe("parseColumnarCandles", () => {
     expect(result[0].time).toBeGreaterThan(1_700_000_000);
   });
 
-  it("falls back high/low/open to close when a column is missing", () => {
-    const result = parseColumnarCandles({
-      close: [200, 210],
-      timestamp: [1779200000, 1779286400],
-    });
-    expect(result[0]).toMatchObject({ open: 200, high: 200, low: 200, close: 200 });
+  it("rejects candles when required price or volume fields are missing", () => {
+    expect(() => parseColumnarCandles({
+      close: [200],
+      timestamp: [1779200000],
+    })).toThrow("Historical market data omitted a required candle field.");
   });
 
   it("sorts out-of-order candles ascending by time", () => {
     const result = parseColumnarCandles({
+      open: [2, 1, 1.5],
+      high: [4, 2, 3],
+      low: [1, 0.5, 1],
       close: [3, 1, 2],
+      volume: [30, 10, 20],
       timestamp: [1779372800, 1779200000, 1779286400],
     });
     expect(result.map((c) => c.close)).toEqual([1, 2, 3]);
@@ -190,5 +201,54 @@ describe("Founder-global Dhan chart history gateway", () => {
       query: "RELIANCE",
     });
     expect(result.current.data?.[0]).toMatchObject({ open: 100, high: 105, low: 99, close: 103, volume: 10 });
+  });
+
+  it("loads and aggregates exact Dhan option candles for the requested interval", async () => {
+    const contract = {
+      provider: "dhan",
+      providerInstrumentId: "991234",
+      symbol: "NIFTY",
+      tradingSymbol: "NIFTY28NOV24500CE",
+      exchange: "NSE",
+      exchangeSegment: "NSE_FNO",
+      instrumentType: "OPTIDX",
+      expiryDate: "2026-11-28",
+      strikePrice: 24500,
+      optionType: "CE",
+      lotSize: 25,
+    };
+    const start = Math.floor(Date.UTC(2026, 10, 5, 3, 45) / 1000);
+    gatewayMocks.requestMarketData.mockImplementation(async (_accountId, _provider, operation) => {
+      if (operation.operation === "searchInstruments") return [contract];
+      if (operation.operation === "getHistoricalCandles") return [
+        { timestamp: start, open: 100, high: 102, low: 99, close: 101, volume: 10 },
+        { timestamp: start + 60, open: 101, high: 104, low: 100, close: 103, volume: 20 },
+        { timestamp: start + 120, open: 103, high: 105, low: 102, close: 104, volume: 30 },
+      ];
+      return null;
+    });
+
+    const { result } = renderHook(
+      () => useChartData(contract.tradingSymbol, "3m", true, contract.providerInstrumentId),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.data).toHaveLength(1));
+
+    expect(gatewayMocks.requestMarketData).toHaveBeenCalledWith(null, "dhan", expect.objectContaining({
+      operation: "getHistoricalCandles",
+      instrument: expect.objectContaining({
+        providerInstrumentId: contract.providerInstrumentId,
+        tradingSymbol: contract.tradingSymbol,
+        exchangeSegment: "NSE_FNO",
+      }),
+      interval: "1m",
+    }));
+    expect(result.current.data?.[0]).toMatchObject({
+      open: 100,
+      high: 105,
+      low: 99,
+      close: 104,
+      volume: 60,
+    });
   });
 });

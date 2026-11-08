@@ -1,14 +1,14 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { InstrumentExplorer } from "@/components/InstrumentExplorer";
 import { useLiveOptionChain } from "@/hooks/useMarketData";
-import { createTerminalOrder, fetchTerminalExecutions, fetchTerminalOrders, fetchTerminalPositions, modifyTerminalPositionProtection } from "@/lib/terminalApi";
+import { createTerminalOrder, fetchTerminalExecutions, fetchTerminalOrders, fetchTerminalPositions, modifyTerminalPositionProtection, subscribeToTerminalMarketDataStream, type TerminalMarketDataQuote } from "@/lib/terminalApi";
+import { fetchCentralMarketQuotes } from "@/lib/centralMarketQuotes";
+import { CURATED_STOCK_SYMBOLS } from "@/lib/curatedMarketLists";
 import type { Instrument } from "@/lib/localDatabase";
 
-const { requestTerminalMarketDataMock } = vi.hoisted(() => ({
-  requestTerminalMarketDataMock: vi.fn(),
-}));
+const { marketStatusMock } = vi.hoisted(() => ({ marketStatusMock: vi.fn() }));
 
 vi.mock("@/hooks/useLocalDatabase", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/hooks/useLocalDatabase")>();
@@ -20,6 +20,7 @@ vi.mock("@/hooks/useLocalDatabase", async (importOriginal) => {
         { securityId: "500490", symbol: "ABB", tradingSymbol: "ABB", displayName: "ABB Ltd", exchange: "NSE", exchangeSegment: "NSE_EQ", instrumentType: "EQUITY", lotSize: 1, tickSize: 0.05, provider: "test", providerInstrumentId: "500490" },
         { securityId: "3456", symbol: "TATA MOTORS PASS VEH LTD", tradingSymbol: "TMPV", displayName: "Tata Motors Passenger Vehicles", exchange: "NSE", exchangeSegment: "NSE_EQ", instrumentType: "EQUITY", series: "EQ", lotSize: 1, tickSize: 0.05, provider: "dhan", providerInstrumentId: "3456" },
         { securityId: "18920450", symbol: "NIFTY", tradingSymbol: "NIFTY26SEP23150CE", displayName: "NIFTY 23150 CE", exchange: "NSE", exchangeSegment: "NSE_FNO", instrumentType: "OPTIDX", lotSize: 65, tickSize: 0.05, expiryDate: "2026-09-29", strikePrice: 23150, optionType: "CE", provider: "zerodha", providerInstrumentId: "18920450" },
+        { securityId: "991234", symbol: "NIFTY", tradingSymbol: "NIFTY28NOV24500CE", displayName: "NIFTY 24500 CE", exchange: "NSE", exchangeSegment: "NSE_FNO", instrumentType: "OPTIDX", lotSize: 25, tickSize: 0.05, expiryDate: "2026-11-28", strikePrice: 24500, optionType: "CE", provider: "dhan", providerInstrumentId: "991234" },
       ],
       isLoaded: true,
     }),
@@ -28,15 +29,16 @@ vi.mock("@/hooks/useLocalDatabase", async (importOriginal) => {
 
 vi.mock("@/hooks/useMarketData", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/hooks/useMarketData")>();
-  return { ...actual, useLiveOptionChain: vi.fn().mockReturnValue({ data: null, isLoading: false }) };
-});
-
-vi.mock("@/lib/marketApi", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/marketApi")>();
   return {
     ...actual,
-    fetchInstrumentMaster: vi.fn().mockResolvedValue({ instruments: [] }),
+    useLiveOptionChain: vi.fn().mockReturnValue({ data: null, isLoading: false }),
+    useMarketStatus: marketStatusMock,
   };
+});
+
+vi.mock("@/lib/centralMarketQuotes", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/centralMarketQuotes")>();
+  return { ...actual, fetchCentralMarketQuotes: vi.fn() };
 });
 
 vi.mock("@/lib/terminalApi", async (importOriginal) => {
@@ -47,7 +49,7 @@ vi.mock("@/lib/terminalApi", async (importOriginal) => {
     resolveTerminalMarketDataProvider: vi.fn((provider?: string) =>
       provider === "dhan" ? "dhan" : provider === "kite" || provider === "zerodha" ? "kite" : null
     ),
-    requestTerminalMarketData: requestTerminalMarketDataMock,
+    subscribeToTerminalMarketDataStream: vi.fn(() => () => undefined),
     createTerminalOrder: vi.fn().mockResolvedValue({ ok: true, order: { id: "mock-order" } }),
     modifyTerminalPositionProtection: vi.fn().mockResolvedValue({}),
     fetchTerminalPositions: vi.fn().mockResolvedValue({
@@ -125,60 +127,267 @@ vi.mock("@/components/StockChart", async (importOriginal) => {
   };
 });
 
+function quoteFor(
+  instrument: Instrument,
+  values: Partial<TerminalMarketDataQuote> = {},
+): TerminalMarketDataQuote {
+  const ltp = values.ltp ?? 279.9;
+  const previousClose = values.previousClose ?? 273;
+  const change = values.change ?? ltp - previousClose;
+  return {
+    provider: "dhan",
+    symbol: instrument.symbol,
+    tradingSymbol: instrument.tradingSymbol,
+    exchange: values.exchange ?? instrument.exchange ?? "NSE",
+    ltp,
+    open: values.open ?? 275.8,
+    high: values.high ?? 280.95,
+    low: values.low ?? 274.6,
+    previousClose,
+    change,
+    changePercent: values.changePercent ?? (change / previousClose) * 100,
+    volume: values.volume ?? 6360894,
+    openInterest: values.openInterest ?? null,
+    timestamp: values.timestamp ?? new Date().toISOString(),
+  };
+}
+
+function confirmOrder(ticket: HTMLElement, side: "BUY" | "SELL") {
+  fireEvent.click(within(ticket).getByRole("button", { name: `Preview ${side} order` }));
+  fireEvent.click(within(ticket).getByRole("button", { name: `Confirm and submit ${side} order` }));
+}
+
+beforeEach(() => {
+  marketStatusMock.mockReturnValue({ data: { isOpen: false, isLive: true } });
+  vi.mocked(fetchCentralMarketQuotes).mockReset();
+  vi.mocked(subscribeToTerminalMarketDataStream).mockClear();
+  vi.mocked(fetchCentralMarketQuotes).mockImplementation(async (targets) => {
+    const quotes: Record<string, TerminalMarketDataQuote> = {};
+    for (const target of targets) {
+      if (target.instrument) quotes[target.key] = quoteFor(target.instrument);
+    }
+    return { quotes, errors: [] };
+  });
+});
+
 describe("InstrumentExplorer stock workspace", () => {
-  afterEach(() => {
-    requestTerminalMarketDataMock.mockReset();
+  it("searches stock symbols across the entire configured universe", async () => {
+    const rows = CURATED_STOCK_SYMBOLS.map((symbol, index) => {
+      const instrument: Instrument = {
+        securityId: String(10000 + index),
+        providerInstrumentId: String(10000 + index),
+        provider: "dhan",
+        symbol,
+        tradingSymbol: symbol,
+        exchange: "NSE",
+        exchangeSegment: "NSE_EQ",
+        instrumentType: "EQUITY",
+        lotSize: 1,
+      };
+      return {
+        symbol,
+        chartSymbol: symbol,
+        label: symbol,
+        instrument,
+        ltp: null,
+        change: null,
+        changePercent: null,
+        open: null,
+        high: null,
+        low: null,
+        volume: null,
+      };
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InstrumentExplorer
+          title="Stocks"
+          subtitle="Cash equities"
+          asset="stocks"
+          rows={rows}
+          watchedSymbols={[]}
+          onToggleWatchlist={vi.fn()}
+          footerLabel="stocks"
+          searchPlaceholder="Search stocks..."
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText(`${CURATED_STOCK_SYMBOLS.length} stocks`)).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("Search stocks..."), { target: { value: "SHRIRAMFIN" } });
+
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(2));
+    expect(screen.getByText("SHRIRAMFIN")).toBeInTheDocument();
   });
 
-  const globalTmpvInstrument: Instrument = {
-    securityId: "3456",
-    providerInstrumentId: "3456",
-    provider: "dhan",
-    symbol: "TATA MOTORS PASS VEH LTD",
-    tradingSymbol: "TMPV",
-    exchange: "NSE",
-    exchangeSegment: "NSE_EQ",
-    instrumentType: "EQUITY",
-    lotSize: 1,
-  };
-  const globalTmpvQuote = {
-    ltp: 279.9,
-    open: 275.8,
-    high: 280.95,
-    low: 274.6,
-    previousClose: 273,
-    change: 6.9,
-    changePercent: 2.53,
-    volume: 6360894,
-    openInterest: null,
-    timestamp: "2026-10-09T15:59:51.000Z",
-  };
-  function mockGlobalDhanQuotes(quotesByInstrument: Record<string, typeof globalTmpvQuote> = {
-    "3456": globalTmpvQuote,
-  }) {
-    requestTerminalMarketDataMock.mockImplementation(async (_accountId, _provider, operation) => {
-      if (operation.operation === "searchInstruments") return [globalTmpvInstrument];
-      if (operation.operation === "getQuote") {
-        return quotesByInstrument[operation.instrument.providerInstrumentId] ?? null;
+  it("ranks stocks by provider day volume and subscribes using their mapped trading symbols", async () => {
+    vi.mocked(fetchCentralMarketQuotes).mockImplementationOnce(async (targets) => {
+      const quotes: Record<string, TerminalMarketDataQuote> = {};
+      for (const target of targets) {
+        if (target.instrument) {
+          quotes[target.key] = quoteFor(target.instrument, { volume: target.key === "HIGHVOL" ? 900 : 100 });
+        }
       }
-      return null;
+      return { quotes, errors: [] };
     });
-  }
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InstrumentExplorer
+          title="Stocks"
+          subtitle="Cash equities"
+          asset="stocks"
+          watchedSymbols={[]}
+          onToggleWatchlist={vi.fn()}
+          rows={["LOWVOL", "HIGHVOL"].map((symbol, index) => {
+            const mappedInstrument: Instrument = {
+              securityId: String(1000 + index),
+              providerInstrumentId: String(1000 + index),
+              provider: "dhan",
+              symbol,
+              tradingSymbol: symbol,
+              exchange: "NSE",
+              exchangeSegment: "NSE_EQ",
+              instrumentType: "EQUITY",
+              lotSize: 1,
+            };
+            return {
+              symbol,
+              chartSymbol: symbol,
+              instrument: mappedInstrument,
+              label: symbol,
+              ltp: null,
+              change: null,
+              changePercent: null,
+              open: null,
+              high: null,
+              low: null,
+              volume: null,
+            };
+          })}
+        />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(3));
+    expect(screen.getAllByRole("row")[1]).toHaveTextContent("HIGHVOL");
+    expect(subscribeToTerminalMarketDataStream).toHaveBeenCalledWith(
+      null,
+      "dhan",
+      ["HIGHVOL", "LOWVOL"],
+      expect.any(Function),
+    );
+  });
+
+  it("shows LIVE only for a fresh matching Dhan WebSocket tick during an open market", async () => {
+    marketStatusMock.mockReturnValue({ data: { isOpen: true, isLive: true } });
+    const mappedInstrument: Instrument = {
+      securityId: "12345",
+      providerInstrumentId: "12345",
+      provider: "dhan",
+      symbol: "LIVE LTD",
+      tradingSymbol: "LIVE",
+      exchange: "NSE",
+      exchangeSegment: "NSE_EQ",
+      instrumentType: "EQUITY",
+      lotSize: 1,
+    };
+    const view = render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InstrumentExplorer
+          title="Stocks"
+          subtitle="Cash equities"
+          asset="stocks"
+          rows={[{
+            symbol: "LIVE",
+            chartSymbol: "LIVE",
+            label: "LIVE LTD",
+            instrument: mappedInstrument,
+            ltp: null,
+            change: null,
+            changePercent: null,
+            open: null,
+            high: null,
+            low: null,
+            volume: null,
+          }]}
+          watchedSymbols={[]}
+          onToggleWatchlist={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(subscribeToTerminalMarketDataStream).toHaveBeenCalled());
+    const onQuote = vi.mocked(subscribeToTerminalMarketDataStream).mock.calls[0][3];
+
+    act(() => onQuote({
+      provider: "dhan",
+      environment: "production",
+      symbol: "LIVE",
+      quote: quoteFor(mappedInstrument, { ltp: 301, timestamp: new Date().toISOString() }),
+    }));
+    expect(await screen.findByText("LIVE", { selector: "div" })).toBeInTheDocument();
+    expect(screen.getByText("₹301.00")).toBeInTheDocument();
+
+    act(() => onQuote({
+      provider: "dhan",
+      environment: "production",
+      symbol: "LIVE",
+      quote: quoteFor(mappedInstrument, {
+        ltp: 999,
+        exchange: "BSE",
+        timestamp: new Date().toISOString(),
+      }),
+    }));
+    expect(screen.queryByText("₹999.00")).not.toBeInTheDocument();
+
+    marketStatusMock.mockReturnValue({ data: { isOpen: false, isLive: true } });
+    view.rerender(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <InstrumentExplorer
+          title="Stocks"
+          subtitle="Cash equities"
+          asset="stocks"
+          rows={[{
+            symbol: "LIVE",
+            chartSymbol: "LIVE",
+            label: "LIVE LTD",
+            instrument: mappedInstrument,
+            ltp: null,
+            change: null,
+            changePercent: null,
+            open: null,
+            high: null,
+            low: null,
+            volume: null,
+          }]}
+          watchedSymbols={[]}
+          onToggleWatchlist={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    expect(screen.getAllByText("LAST TRADED PRICE").length).toBeGreaterThan(0);
+    expect(screen.queryByText("LIVE", { selector: "div" })).not.toBeInTheDocument();
+  });
 
   it("opens the existing chart workspace for a stock row using the same shared layout", async () => {
-    mockGlobalDhanQuotes({
-      "500490": {
-        ltp: 7060,
-        open: 7020,
-        high: 7070,
-        low: 7010,
-        previousClose: 7050,
-        change: 10,
-        changePercent: 10 / 7050 * 100,
-        volume: 10000,
-        openInterest: null,
-        timestamp: new Date().toISOString(),
-      },
+    vi.mocked(fetchCentralMarketQuotes).mockImplementationOnce(async (targets) => {
+      const instrument = targets[0]?.instrument;
+      return {
+        quotes: instrument ? {
+          ABB: quoteFor(instrument, {
+            ltp: 7060,
+            open: 7020,
+            high: 7070,
+            low: 7010,
+            previousClose: 7050,
+            change: 10,
+            changePercent: 10 / 7050 * 100,
+            volume: 10000,
+          }),
+        } : {},
+        errors: [],
+      };
     });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
@@ -216,12 +425,11 @@ describe("InstrumentExplorer stock workspace", () => {
     ]);
     expect(screen.queryByText("NSE_EQ")).not.toBeInTheDocument();
     expect(screen.queryByText("500490")).not.toBeInTheDocument();
-    const quoteQueryKey = ["terminal-explorer-quotes", "stocks", null, "dhan", ["500490"]];
+    const quoteQueryKey = ["terminal-explorer-quotes", "stocks", undefined, null, ["500490"]];
     await waitFor(() => {
-      expect(requestTerminalMarketDataMock).toHaveBeenCalledWith(null, "dhan", expect.objectContaining({
-        operation: "getQuote",
-        instrument: expect.objectContaining({ providerInstrumentId: "500490" }),
-      }));
+      expect(fetchCentralMarketQuotes).toHaveBeenCalledWith([
+        { key: "ABB", instrument: expect.objectContaining({ securityId: "500490" }) },
+      ]);
       expect(queryClient.getQueryState(quoteQueryKey)?.status).toBe("success");
     });
     expect(queryClient.getQueryData(quoteQueryKey)).toMatchObject({
@@ -237,7 +445,7 @@ describe("InstrumentExplorer stock workspace", () => {
     expect(screen.getByTestId("stock-chart")).toHaveTextContent("ABB chart mock");
     expect(screen.getByTestId("stock-chart")).toHaveAttribute("data-unavailable-message", "Historical market data is currently unavailable for this chart.");
     expect(screen.queryByText(/Dhan|broker|link .*account/i)).not.toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(screen.getAllByText("LAST TRADED PRICE").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Option Chain" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Futures" })).not.toBeInTheDocument();
   });
@@ -294,8 +502,7 @@ describe("InstrumentExplorer stock workspace", () => {
     expect(screen.getByTestId("stock-chart")).toHaveTextContent("NIFTY_MIDCAP_50 chart mock");
   });
 
-  it("loads a global Dhan quote for a no-account deep-linked stock symbol", async () => {
-    mockGlobalDhanQuotes();
+  it("loads a central quote for a no-account deep-linked legacy stock symbol", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     render(
@@ -325,19 +532,30 @@ describe("InstrumentExplorer stock workspace", () => {
       </QueryClientProvider>
     );
 
-    await waitFor(() => expect(screen.getByText("₹279.90")).toBeInTheDocument());
-    expect(requestTerminalMarketDataMock).toHaveBeenCalledWith(null, "dhan", expect.objectContaining({
-      operation: "searchInstruments",
-      query: "TATAMOTORS",
-    }));
-    expect(screen.queryByText(/select a fundedwealth trading account/i)).not.toBeInTheDocument();
+    await waitFor(() => expect(queryClient.getQueryState(["terminal-central-chart-quote", "TATAMOTORS", "NSE_EQ", "3456"])?.status).toBe("success"));
+    expect(fetchCentralMarketQuotes).toHaveBeenCalledWith([
+      { key: "TATAMOTORS", instrument: expect.objectContaining({ securityId: "3456" }) },
+    ]);
+    expect(screen.getByText("₹279.90")).toBeInTheDocument();
     expect(screen.getByText("+2.53%")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /back to stocks/i })).toBeInTheDocument();
     expect(screen.queryByText(/link .*account/i)).not.toBeInTheDocument();
   });
 
-  it("loads global Dhan quotes for visible rows and deep-linked symbols without account context", async () => {
-    mockGlobalDhanQuotes();
+  it("waits for visible batch quotes before requesting a missing deep-linked symbol", async () => {
+    let releaseVisibleBatch: (() => void) | undefined;
+    const visibleBatch = new Promise<void>((resolve) => { releaseVisibleBatch = resolve; });
+    vi.mocked(fetchCentralMarketQuotes).mockImplementation(async (targets) => {
+      if (targets.some((target) => target.instrument?.securityId === "500490")) {
+        await visibleBatch;
+        return { quotes: {}, errors: [] };
+      }
+      return {
+        quotes: Object.fromEntries(targets.flatMap((target) =>
+          target.instrument ? [[target.key, quoteFor(target.instrument)]] : [])),
+        errors: [],
+      };
+    });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     render(
@@ -367,14 +585,30 @@ describe("InstrumentExplorer stock workspace", () => {
       </QueryClientProvider>
     );
 
+    await waitFor(() => expect(fetchCentralMarketQuotes).toHaveBeenCalledTimes(1));
+    expect(fetchCentralMarketQuotes).toHaveBeenCalledWith([
+      { key: "ABB", instrument: expect.objectContaining({ securityId: "500490" }) },
+    ]);
+    releaseVisibleBatch?.();
+    await waitFor(() => expect(fetchCentralMarketQuotes).toHaveBeenCalledWith([
+      { key: "TATAMOTORS", instrument: expect.objectContaining({ securityId: "3456" }) },
+    ]));
     await waitFor(() => expect(screen.getByText("₹279.90")).toBeInTheDocument());
-    expect(requestTerminalMarketDataMock).toHaveBeenCalledWith(null, "dhan", expect.objectContaining({
-      operation: "getQuote",
-    }));
+    expect(fetchCentralMarketQuotes).toHaveBeenCalledTimes(2);
   });
 
-  it("loads the selected stock quote directly from global Dhan", async () => {
-    mockGlobalDhanQuotes();
+  it("falls back to a single-symbol central quote when the visible quote batch has no result", async () => {
+    let quoteRequests = 0;
+    vi.mocked(fetchCentralMarketQuotes).mockImplementation(async (targets) => {
+      if (!targets.some((target) => target.instrument?.securityId === "3456")) return { quotes: {}, errors: [] };
+      quoteRequests += 1;
+      if (quoteRequests === 1) return { quotes: {}, errors: [] };
+      return {
+        quotes: Object.fromEntries(targets.flatMap((target) =>
+          target.instrument ? [[target.key, quoteFor(target.instrument)]] : [])),
+        errors: [],
+      };
+    });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const tmpvInstrument: Instrument = {
       securityId: "3456",
@@ -416,15 +650,12 @@ describe("InstrumentExplorer stock workspace", () => {
     );
 
     await waitFor(() => expect(screen.getByText("₹279.90")).toBeInTheDocument());
-    expect(requestTerminalMarketDataMock).toHaveBeenCalledWith(null, "dhan", expect.objectContaining({
-      operation: "getQuote",
-      instrument: expect.objectContaining({ providerInstrumentId: "3456" }),
-    }));
+    expect(fetchCentralMarketQuotes).toHaveBeenCalledTimes(2);
     expect(screen.getByText("+2.53%")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /back to stocks/i })).toBeInTheDocument();
   });
 
-  it("routes one-lot Kite futures BUY and SELL through the simulated existing ticket", async () => {
+  it("routes one-lot Kite futures BUY and SELL through an explicitly confirmed ticket", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     vi.mocked(createTerminalOrder).mockClear();
     const futuresInstrument: Instrument = { securityId: "12345", symbol: "NIFTY", tradingSymbol: "NIFTY26DEC26FUT", displayName: "NIFTY26DEC26FUT", exchange: "NSE", exchangeSegment: "NFO", instrumentType: "FUTIDX", lotSize: 65, tickSize: 0.05, expiryDate: "2026-12-31", provider: "zerodha", providerInstrumentId: "12345" };
@@ -440,6 +671,7 @@ describe("InstrumentExplorer stock workspace", () => {
           watchedSymbols={[]}
           onToggleWatchlist={() => {}}
           activeAccountId="account-1"
+          activeAccountProvider="zerodha"
         />
       </QueryClientProvider>
     );
@@ -451,9 +683,9 @@ describe("InstrumentExplorer stock workspace", () => {
     expect(screen.getByTestId("stock-chart")).toHaveAttribute("data-instrument-token", "12345");
     expect(screen.queryByTestId("bottom-trading-workspace")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "BUY" }));
-    let ticket = screen.getByRole("dialog", { name: "SIMULATED BUY order ticket" });
+    let ticket = screen.getByRole("dialog", { name: "BUY order ticket" });
     expect(within(ticket).getByRole("spinbutton", { name: "Units / Quantity" })).toHaveValue(65);
-    fireEvent.click(within(ticket).getByRole("button", { name: "SIMULATED BUY Market" }));
+    confirmOrder(ticket, "BUY");
     await waitFor(() => expect(createTerminalOrder).toHaveBeenCalledWith(expect.objectContaining({
       account_id: "account-1",
       symbol: "NIFTY26DEC26FUT",
@@ -466,9 +698,9 @@ describe("InstrumentExplorer stock workspace", () => {
       instrument: expect.objectContaining({ provider: "zerodha", instrumentType: "FUTIDX", exchangeSegment: "NSE_FNO" }),
     })));
 
-    fireEvent.click(within(ticket).getByRole("button", { name: "SIMULATED SELL" }));
-    ticket = screen.getByRole("dialog", { name: "SIMULATED SELL order ticket" });
-    fireEvent.click(within(ticket).getByRole("button", { name: "SIMULATED SELL Market" }));
+    fireEvent.click(within(ticket).getByRole("button", { name: "SELL" }));
+    ticket = screen.getByRole("dialog", { name: "SELL order ticket" });
+    confirmOrder(ticket, "SELL");
     await waitFor(() => expect(createTerminalOrder).toHaveBeenCalledWith(expect.objectContaining({
       symbol: "NIFTY26DEC26FUT",
       side: "SELL",
@@ -513,16 +745,17 @@ describe("InstrumentExplorer stock workspace", () => {
           initialUnderlying="NIFTY"
           initialExpiry="2026-09-29"
           initialInstrumentToken="18920450"
+          activeAccountProvider="zerodha"
         />
       </QueryClientProvider>
     );
 
     await waitFor(() => expect(screen.getAllByText("₹119.25").length).toBeGreaterThan(0));
     fireEvent.click(screen.getByRole("button", { name: "BUY" }));
-    const ticket = screen.getByRole("dialog", { name: "SIMULATED BUY order ticket" });
+    const ticket = screen.getByRole("dialog", { name: "BUY order ticket" });
     expect(within(ticket).getByText("₹119.25")).toBeInTheDocument();
     expect(within(ticket).getByRole("spinbutton", { name: "Units / Quantity" })).toHaveValue(65);
-    fireEvent.click(within(ticket).getByRole("button", { name: "SIMULATED BUY Market" }));
+    confirmOrder(ticket, "BUY");
 
     await waitFor(() => expect(createTerminalOrder).toHaveBeenCalledWith(expect.objectContaining({
       account_id: "account-1",
@@ -533,6 +766,61 @@ describe("InstrumentExplorer stock workspace", () => {
       product: "NRML",
       instrument: expect.objectContaining({ providerInstrumentId: "18920450", instrumentType: "OPTIDX" }),
     })));
+    vi.mocked(useLiveOptionChain).mockReturnValue({ data: null, isLoading: false } as ReturnType<typeof useLiveOptionChain>);
+  });
+
+  it("opens the exact Dhan option ticket but prevents submission when the broker adapter lacks order support", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const chainData = {
+      chain: [{ strikePrice: 24500, ce: { ltp: 98.75, oi: 1000, oiChange: 30, volume: 500, iv: 12.48, delta: 0.5, gamma: 0, theta: 0, vega: 0, bidPrice: 98.6, askPrice: 98.9 }, pe: { ltp: 142.1, oi: 1200, oiChange: 20, volume: 400, iv: 13, delta: -0.5, gamma: 0, theta: 0, vega: 0, bidPrice: 142, askPrice: 142.2 } }],
+      spotPrice: 24657.8,
+      expiries: [{ label: "2026-11-28", value: "2026-11-28", daysToExpiry: 20 }],
+      lotSize: 25,
+      stepSize: 50,
+      maxPain: 24500,
+      totalCEOI: 1000,
+      totalPEOI: 1200,
+      isLive: true,
+      afterHours: false,
+      source: "dhan",
+      cachedAt: null,
+    };
+    vi.mocked(useLiveOptionChain).mockReturnValue({ data: chainData, isLoading: false } as ReturnType<typeof useLiveOptionChain>);
+    vi.mocked(createTerminalOrder).mockClear();
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InstrumentExplorer
+          title="Stocks"
+          subtitle="NSE-listed equity quotes."
+          asset="stocks"
+          rows={[]}
+          isLoading={false}
+          watchedSymbols={[]}
+          onToggleWatchlist={() => {}}
+          activeAccountId="dhan-account"
+          activeAccountProvider="dhan"
+          initialWorkspaceContext="options"
+          initialChartSymbol="NIFTY28NOV24500CE"
+          initialUnderlying="NIFTY"
+          initialExpiry="2026-11-28"
+          initialInstrumentToken="991234"
+          initialOptionSecurityId="991234"
+          initialOrderSide="BUY"
+        />
+      </QueryClientProvider>
+    );
+
+    const ticket = await screen.findByRole("dialog", { name: "BUY order ticket" });
+    expect(ticket).toHaveTextContent("NIFTY28NOV24500CE");
+    expect(ticket).toHaveTextContent("₹98.75");
+    expect(ticket).toHaveTextContent("98.60");
+    expect(ticket).toHaveTextContent("98.90");
+    expect(ticket).toHaveTextContent("Lot size 25");
+    fireEvent.click(within(ticket).getByRole("button", { name: "Preview BUY order" }));
+    await waitFor(() => expect(within(ticket).getByRole("status", { name: "Order preview" })).toHaveTextContent("Security ID: 991234"));
+    expect(within(ticket).getByRole("button", { name: "Confirm and submit BUY order" })).toBeDisabled();
+    expect(createTerminalOrder).not.toHaveBeenCalled();
     vi.mocked(useLiveOptionChain).mockReturnValue({ data: null, isLoading: false } as ReturnType<typeof useLiveOptionChain>);
   });
 
@@ -564,13 +852,13 @@ describe("InstrumentExplorer stock workspace", () => {
     expect(screen.getByTestId("stock-chart")).toHaveTextContent("ABB chart mock");
 
     fireEvent.click(screen.getByRole("button", { name: /^BUY$/ }));
-    const ticket = screen.getByRole("dialog", { name: "SIMULATED BUY order ticket" });
+    const ticket = screen.getByRole("dialog", { name: "BUY order ticket" });
     expect(ticket).toHaveTextContent("ABB");
-    expect(ticket).toHaveTextContent("NSE_EQ · simulated order ticket");
+    expect(ticket).toHaveTextContent("NSE_EQ · order ticket");
     expect(ticket).toHaveTextContent("NSE");
     expect(ticket).toHaveTextContent("₹7,051.50");
     expect(ticket).toHaveTextContent("Risk, INR");
-    expect(within(ticket).getByRole("button", { name: "SIMULATED BUY" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(ticket).getByRole("button", { name: "BUY" })).toHaveAttribute("aria-pressed", "true");
 
     fireEvent.click(screen.getByRole("tab", { name: "Limit" }));
     expect(screen.getByLabelText("Limit price")).toBeInTheDocument();
@@ -586,23 +874,23 @@ describe("InstrumentExplorer stock workspace", () => {
     expect(screen.getByLabelText("Stop loss price")).toHaveValue(7050.25);
     expect(screen.getByText("₹1.25")).toBeInTheDocument();
 
-    fireEvent.click(within(ticket).getByRole("button", { name: "SIMULATED SELL" }));
-    const sellTicket = screen.getByRole("dialog", { name: "SIMULATED SELL order ticket" });
-    expect(within(sellTicket).getByRole("button", { name: "SIMULATED SELL" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(within(ticket).getByRole("button", { name: "SELL" }));
+    const sellTicket = screen.getByRole("dialog", { name: "SELL order ticket" });
+    expect(within(sellTicket).getByRole("button", { name: "SELL" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByLabelText("Take profit price")).toHaveValue(7047.75);
     expect(screen.getByLabelText("Stop loss price")).toHaveValue(7052.75);
 
-    fireEvent.click(within(sellTicket).getByRole("button", { name: "SIMULATED BUY" }));
-    const buyTicket = screen.getByRole("dialog", { name: "SIMULATED BUY order ticket" });
-    expect(within(buyTicket).getByRole("button", { name: "SIMULATED BUY" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(within(sellTicket).getByRole("button", { name: "BUY" }));
+    const buyTicket = screen.getByRole("dialog", { name: "BUY order ticket" });
+    expect(within(buyTicket).getByRole("button", { name: "BUY" })).toHaveAttribute("aria-pressed", "true");
     for (const orderType of ["Market", "Limit", "Stop", "Stop-Limit"]) {
       expect(screen.getByRole("tab", { name: orderType })).toBeInTheDocument();
     }
     expect(screen.getByLabelText("Units / Quantity")).toHaveValue(1);
 
-    fireEvent.click(within(buyTicket).getByRole("button", { name: "SIMULATED SELL" }));
-    const sellOrderTicket = screen.getByRole("dialog", { name: "SIMULATED SELL order ticket" });
-    fireEvent.click(within(sellOrderTicket).getByRole("button", { name: "SIMULATED SELL Market" }));
+    fireEvent.click(within(buyTicket).getByRole("button", { name: "SELL" }));
+    const sellOrderTicket = screen.getByRole("dialog", { name: "SELL order ticket" });
+    confirmOrder(sellOrderTicket, "SELL");
     await waitFor(() => expect(createTerminalOrder).toHaveBeenCalledWith(expect.objectContaining({
       side: "SELL",
       order_type: "MARKET",
@@ -613,8 +901,8 @@ describe("InstrumentExplorer stock workspace", () => {
 
     fireEvent.click(within(sellOrderTicket).getByRole("button", { name: "Close order ticket" }));
     fireEvent.click(screen.getByRole("button", { name: /^SELL$/ }));
-    const headerSellTicket = screen.getByRole("dialog", { name: "SIMULATED SELL order ticket" });
-    expect(within(headerSellTicket).getByRole("button", { name: "SIMULATED SELL" })).toHaveAttribute("aria-pressed", "true");
+    const headerSellTicket = screen.getByRole("dialog", { name: "SELL order ticket" });
+    expect(within(headerSellTicket).getByRole("button", { name: "SELL" })).toHaveAttribute("aria-pressed", "true");
   }, 15_000);
 
   it("shows no positions when canonical position, order, and execution reads are empty", async () => {
