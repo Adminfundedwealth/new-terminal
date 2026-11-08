@@ -516,7 +516,9 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
           </ToggleGroup>
 
           {/* View Mode Tabs */}
-          <ToggleGroup type="single" value={viewMode} onValueChange={(v) => v && setViewMode(v as any)} className="bg-muted rounded-md p-0.5">
+          <ToggleGroup type="single" value={viewMode} onValueChange={(v) => {
+            if (v === "expiration" || v === "strike") setViewMode(v);
+          }} className="bg-muted rounded-md p-0.5">
             <ToggleGroupItem value="expiration" className="text-xs h-7 px-3 data-[state=on]:bg-background data-[state=on]:shadow-sm rounded">
               By expiration
             </ToggleGroupItem>
