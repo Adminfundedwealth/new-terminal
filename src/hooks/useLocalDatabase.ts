@@ -35,6 +35,7 @@ import {
   type TerminalMarketDataInstrument,
   toLocalMarketDataInstrument,
 } from "@/lib/terminalApi";
+import { isApprovedStock, getDhanSymbol, APPROVED_200_STOCKS } from "@/lib/approvedInstruments";
 
 // ── Hook: Database readiness check ──
 
@@ -208,23 +209,48 @@ export function useInstrumentLookup() {
           if (!row || typeof row !== "object") return [];
           const source = row as Record<string, unknown>;
           const instrumentName = String(source.SEM_INSTRUMENT_NAME ?? source.instrumentType ?? "").toUpperCase();
-          if (!["EQUITY", "INDEX", "FUTSTK", "FUTIDX"].includes(instrumentName)) return [];
+          if (!["EQUITY", "INDEX", "FUTSTK", "FUTIDX", "OPTSTK", "OPTIDX"].includes(instrumentName)) return [];
           const normalized = normalizeProviderInstrument(source, "dhan", index).instrument;
           if (!normalized) return [];
           const category = classifyInstrument(normalized);
-          if (!category || !["stocks", "indices", "futures"].includes(category)) return [];
-          if (category === "stocks" && !isCashEquityListing(normalized)) return [];
-          if (category === "futures") {
-            const expiry = Date.parse(normalized.expiryDate ?? "");
-            if (!Number.isFinite(expiry) || expiry < Date.now()) return [];
+          if (!category || !["stocks", "indices", "futures", "options"].includes(category)) return [];
+          
+          // FILTER: Only approved 200 stocks for cash equity
+          if (category === "stocks") {
+            if (!isCashEquityListing(normalized)) return [];
+            // Check if this stock's symbol OR dhanSymbol matches approved list
+            const nseSymbol = normalized.symbol.toUpperCase();
+            const dhanSymbol = normalized.tradingSymbol.toUpperCase();
+            const isApproved = APPROVED_200_STOCKS.some(stock => 
+              stock.symbol === nseSymbol || 
+              stock.dhanSymbol === dhanSymbol ||
+              stock.symbol === dhanSymbol // Handle reverse mapping
+            );
+            if (!isApproved) return []; // SKIP non-approved stocks
           }
+          
+          // FILTER: Only futures/options for approved underlying stocks
+          if (category === "futures" || category === "options") {
+            const underlying = normalized.symbol.toUpperCase();
+            // Allow index derivatives (NIFTY, BANKNIFTY, etc.)
+            const isIndex = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX", "SENSEX"].includes(underlying);
+            if (!isIndex && !isApprovedStock(underlying)) {
+              return []; // SKIP futures/options for non-approved stocks
+            }
+            // Check expiry for derivatives
+            if (category === "futures") {
+              const expiry = Date.parse(normalized.expiryDate ?? "");
+              if (!Number.isFinite(expiry) || expiry < Date.now()) return [];
+            }
+          }
+          
           const key = `${normalized.exchangeSegment}:${normalized.providerInstrumentId}`;
           if (existingIds.has(key)) return [];
           existingIds.add(key);
           return [normalized];
         });
         if (officialInstruments.length === 0) {
-          throw new Error("Dhan's official instrument master contains no valid stocks, indices, or futures.");
+          throw new Error("Dhan's official instrument master contains no valid approved instruments.");
         }
         instruments.push(...officialInstruments);
       }
