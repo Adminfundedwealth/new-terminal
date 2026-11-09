@@ -16,6 +16,7 @@ export default function InstrumentDirectory({ category }: { category: "stocks" |
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const label = category === "stocks" ? "Stocks" : "Indices";
+  const showExchangeIdentifiers = category === "stocks";
   const filteredRows = useMemo(() => {
     const query = search.trim().toUpperCase();
     return instruments
@@ -118,8 +119,8 @@ export default function InstrumentDirectory({ category }: { category: "stocks" |
                       <th className="pb-2">Instrument</th>
                       <th className="pb-2">Trading Symbol</th>
                       <th className="pb-2 text-right">Last Price</th>
-                      <th className="pb-2">Segment</th>
-                      <th className="pb-2">Security ID</th>
+                      {showExchangeIdentifiers && <th className="pb-2">Segment</th>}
+                      {showExchangeIdentifiers && <th className="pb-2">Security ID</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -132,8 +133,12 @@ export default function InstrumentDirectory({ category }: { category: "stocks" |
                           <td className="py-2 text-right font-mono">
                             {price === undefined ? "—" : `₹${price.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                           </td>
-                          <td className="py-2"><Badge variant="outline" className="text-[10px]">{instrument.exchangeSegment}</Badge></td>
-                          <td className="py-2 font-mono text-xs text-muted-foreground">{instrument.securityId}</td>
+                          {showExchangeIdentifiers && (
+                            <>
+                              <td className="py-2"><Badge variant="outline" className="text-[10px]">{instrument.exchangeSegment}</Badge></td>
+                              <td className="py-2 font-mono text-xs text-muted-foreground">{instrument.securityId}</td>
+                            </>
+                          )}
                         </tr>
                       );
                     })}
