@@ -310,6 +310,92 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
       : SYMBOL_CATEGORIES.filter(cat => cat.label !== "Indices");
   }, [isMasterLoaded, masterInstruments, marketView]);
 
+  // Navigate to Chart with the selected option contract
+  const openChart = useCallback((strike: number, type: "CE" | "PE", row: typeof enrichedChain[0]) => {
+    const contract = chain.find(c => c.strikePrice === strike);
+    if (!contract) {
+      toast.error("Contract details not available");
+      return;
+    }
+    
+    const optionSide = type === "CE" ? contract.ce : contract.pe;
+    const expiryLabel = expiries.find(e => e.value === (selectedExpiry || expiries[0]?.value))?.label || "";
+    
+    // Build trading symbol for the option contract
+    const tradingSymbol = `${symbol}${expiryLabel.replace(/\s+/g, "")}${strike}${type}`;
+    
+    // Navigate to charts with contract details in URL params
+    navigate(`/charts?${new URLSearchParams({
+      symbol: tradingSymbol,
+      underlying: symbol,
+      strike: String(strike),
+      type,
+      expiry: selectedExpiry || expiries[0]?.value || "",
+      securityId: String(optionSide.securityId || ""),
+      exchangeSegment: optionSide.exchangeSegment || "",
+      contractType: "option"
+    })}`);
+  }, [symbol, chain, expiries, selectedExpiry, navigate, enrichedChain]);
+
+  // Open Buy ticket with the selected option contract
+  const openBuyTicket = useCallback((strike: number, type: "CE" | "PE", row: typeof enrichedChain[0]) => {
+    const contract = chain.find(c => c.strikePrice === strike);
+    if (!contract) {
+      toast.error("Contract details not available");
+      return;
+    }
+    
+    const optionSide = type === "CE" ? contract.ce : contract.pe;
+    const expiryLabel = expiries.find(e => e.value === (selectedExpiry || expiries[0]?.value))?.label || "";
+    const tradingSymbol = `${symbol}${expiryLabel.replace(/\s+/g, "")}${strike}${type}`;
+    
+    navigate(`/orders?${new URLSearchParams({
+      action: "BUY",
+      symbol: tradingSymbol,
+      underlying: symbol,
+      strike: String(strike),
+      type,
+      expiry: selectedExpiry || expiries[0]?.value || "",
+      securityId: String(optionSide.securityId || ""),
+      exchangeSegment: optionSide.exchangeSegment || "",
+      ltp: String(optionSide.ltp),
+      bid: String(optionSide.bidPrice),
+      ask: String(optionSide.askPrice),
+      lotSize: String(lotSize),
+      contractType: "option"
+    })}`);
+  }, [symbol, chain, expiries, selectedExpiry, lotSize, navigate, enrichedChain]);
+
+  // Open Sell ticket with the selected option contract
+  const openSellTicket = useCallback((strike: number, type: "CE" | "PE", row: typeof enrichedChain[0]) => {
+    const contract = chain.find(c => c.strikePrice === strike);
+    if (!contract) {
+      toast.error("Contract details not available");
+      return;
+    }
+    
+    const optionSide = type === "CE" ? contract.ce : contract.pe;
+    const expiryLabel = expiries.find(e => e.value === (selectedExpiry || expiries[0]?.value))?.label || "";
+    const tradingSymbol = `${symbol}${expiryLabel.replace(/\s+/g, "")}${strike}${type}`;
+    
+    navigate(`/orders?${new URLSearchParams({
+      action: "SELL",
+      symbol: tradingSymbol,
+      underlying: symbol,
+      strike: String(strike),
+      type,
+      expiry: selectedExpiry || expiries[0]?.value || "",
+      securityId: String(optionSide.securityId || ""),
+      exchangeSegment: optionSide.exchangeSegment || "",
+      ltp: String(optionSide.ltp),
+      bid: String(optionSide.bidPrice),
+      ask: String(optionSide.askPrice),
+      lotSize: String(lotSize),
+      contractType: "option"
+    })}`);
+  }, [symbol, chain, expiries, selectedExpiry, lotSize, navigate, enrichedChain]);
+
+  // Legacy quick trade for Strategy Builder (only for multi-leg strategies)
   const quickTrade = useCallback((strike: number, type: "CE" | "PE", action: "BUY" | "SELL") => {
     navigate(`/strategy-builder?${new URLSearchParams({ symbol, strike: String(strike), type, action })}`);
   }, [symbol, navigate]);
@@ -388,16 +474,30 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     }
   }, [viewMode, atmStrike]);
 
-  const handleContextAction = (strike: number, type: "CE" | "PE", action: string) => {
+  const handleContextAction = (strike: number, type: "CE" | "PE", action: string, row?: typeof enrichedChain[0]) => {
+    const targetRow = row || enrichedChain.find(r => r.strikePrice === strike);
+    if (!targetRow) return;
+    
     switch (action) {
-      case "buy": quickTrade(strike, type, "BUY"); break;
-      case "sell": quickTrade(strike, type, "SELL"); break;
+      case "chart": 
+        openChart(strike, type, targetRow); 
+        break;
+      case "buy": 
+        openBuyTicket(strike, type, targetRow); 
+        break;
+      case "sell": 
+        openSellTicket(strike, type, targetRow); 
+        break;
       case "straddle":
         toast.success(`Added ${strike} Straddle to Strategy Builder`);
         navigate(`/strategy-builder?symbol=${symbol}&strike=${strike}&type=CE&action=BUY`);
         break;
-      case "alert": toast.success(`Alert set for ${symbol} ${strike} ${type}`); break;
-      case "oi-analysis": navigate(`/oi-analysis`); break;
+      case "alert": 
+        toast.success(`Alert set for ${symbol} ${strike} ${type}`); 
+        break;
+      case "oi-analysis": 
+        navigate(`/oi-analysis`); 
+        break;
     }
   };
 
@@ -935,7 +1035,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
                             {/* ── STRIKE ── */}
                             <TableCell className="text-center bg-accent/50 border-l-2 border-border py-1.5">
-                              <div className="flex flex-col items-center">
+                              <div className="flex flex-col items-center gap-1">
                                 <div className="flex items-center gap-1">
                                   <span className={`font-bold text-[11px] ${isATM ? "text-primary" : isMP ? "text-warning" : ""}`}>
                                     {row.strikePrice.toLocaleString("en-IN")}
@@ -947,6 +1047,64 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                                   )}
                                 </div>
                                 {isMP && <span className="text-[11px] text-warning/60 font-medium">MAX PAIN</span>}
+                                {/* Action Buttons Row */}
+                                <div className="flex items-center gap-0.5 mt-0.5">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-5 px-1.5 text-[10px] hover:bg-primary/10 hover:text-primary"
+                                    onClick={() => openChart(row.strikePrice, "CE", row)}
+                                    title="Open Chart for CE"
+                                  >
+                                    📊 C
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-5 px-1.5 text-[10px] hover:bg-bullish/10 hover:text-bullish"
+                                    onClick={() => openBuyTicket(row.strikePrice, "CE", row)}
+                                    title="Buy CE"
+                                  >
+                                    🔼 B
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-5 px-1.5 text-[10px] hover:bg-bearish/10 hover:text-bearish"
+                                    onClick={() => openSellTicket(row.strikePrice, "CE", row)}
+                                    title="Sell CE"
+                                  >
+                                    🔽 S
+                                  </Button>
+                                  <span className="text-[10px] text-muted-foreground mx-0.5">|</span>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-5 px-1.5 text-[10px] hover:bg-primary/10 hover:text-primary"
+                                    onClick={() => openChart(row.strikePrice, "PE", row)}
+                                    title="Open Chart for PE"
+                                  >
+                                    📊 P
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-5 px-1.5 text-[10px] hover:bg-bullish/10 hover:text-bullish"
+                                    onClick={() => openBuyTicket(row.strikePrice, "PE", row)}
+                                    title="Buy PE"
+                                  >
+                                    🔼 B
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-5 px-1.5 text-[10px] hover:bg-bearish/10 hover:text-bearish"
+                                    onClick={() => openSellTicket(row.strikePrice, "PE", row)}
+                                    title="Sell PE"
+                                  >
+                                    🔽 S
+                                  </Button>
+                                </div>
                               </div>
                             </TableCell>
                             <TableCell className="text-center py-1.5 bg-accent/50 border-r-2 border-border text-muted-foreground">{avgIV}</TableCell>
@@ -981,17 +1139,24 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                         </ContextMenuTrigger>
                         <ContextMenuContent className="w-48">
                           <ContextMenuSub>
+                            <ContextMenuSubTrigger className="gap-2"><BarChart3 className="h-3.5 w-3.5 text-primary" /> Chart</ContextMenuSubTrigger>
+                            <ContextMenuSubContent>
+                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "chart", row)} className="text-xs">Chart CE @ ₹{row.ce.ltp.toFixed(2)}</ContextMenuItem>
+                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "PE", "chart", row)} className="text-xs">Chart PE @ ₹{row.pe.ltp.toFixed(2)}</ContextMenuItem>
+                            </ContextMenuSubContent>
+                          </ContextMenuSub>
+                          <ContextMenuSub>
                             <ContextMenuSubTrigger className="gap-2"><TrendingUp className="h-3.5 w-3.5 text-primary" /> Buy</ContextMenuSubTrigger>
                             <ContextMenuSubContent>
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "buy")} className="text-xs">Buy CE @ ₹{row.ce.ltp.toFixed(2)}</ContextMenuItem>
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "PE", "buy")} className="text-xs">Buy PE @ ₹{row.pe.ltp.toFixed(2)}</ContextMenuItem>
+                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "buy", row)} className="text-xs">Buy CE @ ₹{row.ce.ltp.toFixed(2)}</ContextMenuItem>
+                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "PE", "buy", row)} className="text-xs">Buy PE @ ₹{row.pe.ltp.toFixed(2)}</ContextMenuItem>
                             </ContextMenuSubContent>
                           </ContextMenuSub>
                           <ContextMenuSub>
                             <ContextMenuSubTrigger className="gap-2"><TrendingDown className="h-3.5 w-3.5 text-bearish" /> Sell</ContextMenuSubTrigger>
                             <ContextMenuSubContent>
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "sell")} className="text-xs">Sell CE @ ₹{row.ce.ltp.toFixed(2)}</ContextMenuItem>
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "PE", "sell")} className="text-xs">Sell PE @ ₹{row.pe.ltp.toFixed(2)}</ContextMenuItem>
+                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "sell", row)} className="text-xs">Sell CE @ ₹{row.ce.ltp.toFixed(2)}</ContextMenuItem>
+                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "PE", "sell", row)} className="text-xs">Sell PE @ ₹{row.pe.ltp.toFixed(2)}</ContextMenuItem>
                             </ContextMenuSubContent>
                           </ContextMenuSub>
                           <ContextMenuSeparator />
