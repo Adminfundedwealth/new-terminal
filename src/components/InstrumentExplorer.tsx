@@ -652,12 +652,10 @@ export function InstrumentExplorer({
                       {asset === "futures" ? <TableHead>Contract</TableHead> : <TableHead>{asset === "stocks" ? "SYMBOL" : "Symbol"}</TableHead>}
                       {asset === "futures" && <TableHead>Underlying</TableHead>}
                       {asset === "futures" && <TableHead>Expiry</TableHead>}
-                      {asset !== "stocks" && <TableHead>Segment</TableHead>}
-                      {asset !== "stocks" && <TableHead>Security ID</TableHead>}
                       <TableHead className="text-right">LTP</TableHead>
                       <TableHead className="text-right">{asset === "stocks" ? "CHG" : "Change"}</TableHead>
                       <TableHead className="text-right">{asset === "stocks" ? "CHG%" : "Chg%"}</TableHead>
-                      <TableHead className="text-right">{asset === "stocks" ? "OPEN" : "Open"}</TableHead>
+                      {asset === "stocks" && <TableHead className="text-right">OPEN</TableHead>}
                       <TableHead className="text-right">{asset === "stocks" ? "HIGH" : "High"}</TableHead>
                       <TableHead className="text-right">{asset === "stocks" ? "LOW" : "Low"}</TableHead>
                       {asset !== "indices" && <TableHead className="text-right">{asset === "stocks" ? "VOLUME" : "Volume"}</TableHead>}
@@ -714,9 +712,6 @@ export function InstrumentExplorer({
                             <TableCell className="text-muted-foreground">{row.expiry || "—"}</TableCell>
                           )}
 
-                          {asset !== "stocks" && <TableCell className="text-muted-foreground">{row.instrument?.exchangeSegment ?? "—"}</TableCell>}
-                          {asset !== "stocks" && <TableCell className="font-mono text-muted-foreground">{row.instrument?.providerInstrumentId ?? row.instrument?.securityId ?? "—"}</TableCell>}
-
                           <TableCell className="text-right font-semibold">{row.ltp != null && row.ltp > 0 ? `₹${row.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}</TableCell>
                           <TableCell className={`text-right ${row.change != null && row.change >= 0 ? "text-bullish" : "text-bearish"}`}>
                             {row.change != null && row.ltp != null && row.ltp > 0 ? `${row.change >= 0 ? "+" : ""}${row.change.toFixed(2)}` : "—"}
@@ -729,7 +724,7 @@ export function InstrumentExplorer({
                             ) : "—"}
                           </TableCell>
 
-                          <TableCell className="text-right text-muted-foreground">{formatNumber(row.open)}</TableCell>
+                          {asset === "stocks" && <TableCell className="text-right text-muted-foreground">{formatNumber(row.open)}</TableCell>}
                           <TableCell className="text-right text-muted-foreground">{formatNumber(row.high)}</TableCell>
                           <TableCell className="text-right text-muted-foreground">{formatNumber(row.low)}</TableCell>
 

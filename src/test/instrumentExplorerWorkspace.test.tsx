@@ -264,6 +264,10 @@ describe("InstrumentExplorer stock workspace", () => {
       </QueryClientProvider>
     );
 
+    expect(screen.getAllByRole("columnheader").map((header) => header.textContent?.trim())).toEqual([
+      "", "Symbol", "LTP", "Change", "Chg%", "High", "Low", "Chart", "Actions",
+    ]);
+
     fireEvent.click(screen.getByRole("button", { name: "View chart for NIFTY" }));
     await waitFor(() => expect(queryClient.getQueryState(["terminal-os", "positions", "account-1"])?.status).toBe("success"));
 
@@ -443,6 +447,10 @@ describe("InstrumentExplorer stock workspace", () => {
         />
       </QueryClientProvider>
     );
+
+    expect(screen.getAllByRole("columnheader").map((header) => header.textContent?.trim())).toEqual([
+      "", "Contract", "Underlying", "Expiry", "LTP", "Change", "Chg%", "High", "Low", "Volume", "OI", "OI Chg", "Chart", "Actions",
+    ]);
 
     fireEvent.click(screen.getByRole("button", { name: "View chart for NIFTY" }));
 
