@@ -1,110 +1,18 @@
+import { APPROVED_200_STOCKS } from "./approvedInstruments";
+
 export interface CuratedStock {
   symbol: string;
   name: string;
 }
 
-export const CURATED_STOCKS: CuratedStock[] = [
-  { symbol: "RELIANCE", name: "Reliance Industries" },
-  { symbol: "HDFCBANK", name: "HDFC Bank" },
-  { symbol: "ICICIBANK", name: "ICICI Bank" },
-  { symbol: "SBIN", name: "State Bank of India" },
-  { symbol: "AXISBANK", name: "Axis Bank" },
-  { symbol: "KOTAKBANK", name: "Kotak Mahindra Bank" },
-  { symbol: "BANKBARODA", name: "Bank of Baroda" },
-  { symbol: "PNB", name: "Punjab National Bank" },
-  { symbol: "CANBK", name: "Canara Bank" },
-  { symbol: "INDUSINDBK", name: "IndusInd Bank" },
-  { symbol: "TCS", name: "Tata Consultancy Services" },
-  { symbol: "INFY", name: "Infosys" },
-  { symbol: "HCLTECH", name: "HCL Technologies" },
-  { symbol: "WIPRO", name: "Wipro" },
-  { symbol: "TECHM", name: "Tech Mahindra" },
-  { symbol: "LTIM", name: "LTIMindtree" },
-  { symbol: "PERSISTENT", name: "Persistent Systems" },
-  { symbol: "COFORGE", name: "Coforge" },
-  { symbol: "MPHASIS", name: "Mphasis" },
-  { symbol: "OFSS", name: "Oracle Financial Services" },
-  { symbol: "ITC", name: "ITC" },
-  { symbol: "HINDUNILVR", name: "Hindustan Unilever" },
-  { symbol: "NESTLEIND", name: "Nestle India" },
-  { symbol: "BRITANNIA", name: "Britannia Industries" },
-  { symbol: "TATACONSUM", name: "Tata Consumer Products" },
-  { symbol: "VBL", name: "Varun Beverages" },
-  { symbol: "DABUR", name: "Dabur India" },
-  { symbol: "GODREJCP", name: "Godrej Consumer Products" },
-  { symbol: "MARICO", name: "Marico" },
-  { symbol: "COLPAL", name: "Colgate-Palmolive" },
-  { symbol: "BHARTIARTL", name: "Bharti Airtel" },
-  { symbol: "IDEA", name: "Vodafone Idea" },
-  { symbol: "INDUSTOWER", name: "Indus Towers" },
-  { symbol: "TITAN", name: "Titan Company" },
-  { symbol: "ASIANPAINT", name: "Asian Paints" },
-  { symbol: "ONGC", name: "ONGC" },
-  { symbol: "BPCL", name: "Bharat Petroleum" },
-  { symbol: "IOC", name: "Indian Oil Corporation" },
-  { symbol: "GAIL", name: "GAIL India" },
-  { symbol: "HINDPETRO", name: "Hindustan Petroleum" },
-  { symbol: "PETRONET", name: "Petronet LNG" },
-  { symbol: "OIL", name: "Oil India" },
-  { symbol: "COALINDIA", name: "Coal India" },
-  { symbol: "NTPC", name: "NTPC" },
-  { symbol: "POWERGRID", name: "Power Grid" },
-  { symbol: "TATASTEEL", name: "Tata Steel" },
-  { symbol: "JSWSTEEL", name: "JSW Steel" },
-  { symbol: "HINDALCO", name: "Hindalco Industries" },
-  { symbol: "VEDL", name: "Vedanta" },
-  { symbol: "SAIL", name: "Steel Authority of India" },
-  { symbol: "JINDALSTEL", name: "Jindal Steel" },
-  { symbol: "NMDC", name: "NMDC" },
-  { symbol: "NATIONALUM", name: "National Aluminium" },
-  { symbol: "ADANIENT", name: "Adani Enterprises" },
-  { symbol: "ADANIPORTS", name: "Adani Ports" },
-  { symbol: "LT", name: "Larsen & Toubro" },
-  { symbol: "BEL", name: "Bharat Electronics" },
-  { symbol: "HAL", name: "Hindustan Aeronautics" },
-  { symbol: "BHEL", name: "BHEL" },
-  { symbol: "RVNL", name: "Rail Vikas Nigam" },
-  { symbol: "IRFC", name: "IRFC" },
-  { symbol: "PFC", name: "Power Finance Corporation" },
-  { symbol: "RECLTD", name: "REC Limited" },
-  { symbol: "NBCC", name: "NBCC India" },
-  { symbol: "CONCOR", name: "Container Corporation" },
-  { symbol: "SUNPHARMA", name: "Sun Pharmaceutical" },
-  { symbol: "DRREDDY", name: "Dr Reddys Laboratories" },
-  { symbol: "CIPLA", name: "Cipla" },
-  { symbol: "DIVISLAB", name: "Divi's Laboratories" },
-  { symbol: "APOLLOHOSP", name: "Apollo Hospitals" },
-  { symbol: "MAXHEALTH", name: "Max Healthcare" },
-  { symbol: "LUPIN", name: "Lupin" },
-  { symbol: "AUROPHARMA", name: "Aurobindo Pharma" },
-  { symbol: "MANKIND", name: "Mankind Pharma" },
-  { symbol: "ZYDUSLIFE", name: "Zydus Lifesciences" },
-  { symbol: "TATAMOTORS", name: "Tata Motors" },
-  { symbol: "M&M", name: "Mahindra & Mahindra" },
-  { symbol: "MARUTI", name: "Maruti Suzuki" },
-  { symbol: "EICHERMOT", name: "Eicher Motors" },
-  { symbol: "HEROMOTOCO", name: "Hero MotoCorp" },
-  { symbol: "BAJAJ-AUTO", name: "Bajaj Auto" },
-  { symbol: "TVSMOTOR", name: "TVS Motor" },
-  { symbol: "ASHOKLEY", name: "Ashok Leyland" },
-  { symbol: "BOSCHLTD", name: "Bosch" },
-  { symbol: "TIINDIA", name: "Tube Investments" },
-  { symbol: "BAJFINANCE", name: "Bajaj Finance" },
-  { symbol: "BAJAJFINSV", name: "Bajaj Finserv" },
-  { symbol: "JIOFIN", name: "Jio Financial Services" },
-  { symbol: "HDFCLIFE", name: "HDFC Life" },
-  { symbol: "SBILIFE", name: "SBI Life" },
-  { symbol: "CHOLAFIN", name: "Cholamandalam Finance" },
-  { symbol: "SHRIRAMFIN", name: "Shriram Finance" },
-  { symbol: "MUTHOOTFIN", name: "Muthoot Finance" },
-  { symbol: "MANAPPURAM", name: "Manappuram Finance" },
-  { symbol: "ABCAPITAL", name: "Aditya Birla Capital" },
-  { symbol: "LTF", name: "L&T Finance" },
-  { symbol: "SUZLON", name: "Suzlon Energy" },
-  { symbol: "ETERNAL", name: "Eternal" },
-  { symbol: "PAYTM", name: "One 97 Communications" },
-  { symbol: "YESBANK", name: "YES Bank" },
-];
+/**
+ * Derived from the canonical APPROVED_200_STOCKS universe.
+ * Do NOT maintain a separate list here — always derive from approvedInstruments.ts.
+ */
+export const CURATED_STOCKS: CuratedStock[] = APPROVED_200_STOCKS.map(stock => ({
+  symbol: stock.symbol,
+  name: stock.name,
+}));
 
 export interface CuratedIndex {
   symbol: string;
@@ -142,7 +50,7 @@ export const CURATED_INDICES: CuratedIndex[] = [
 
 const normalize = (value: string | null | undefined) => (value ?? "").replace(/[^A-Z0-9]/gi, "").toUpperCase();
 const STOCK_SYMBOLS = new Map(CURATED_STOCKS.map((stock) => [normalize(stock.symbol), stock]));
-const STOCK_ALIAS_TO_SYMBOL = new Map([["TMPV", "TATAMOTORS"]]);
+const STOCK_ALIAS_TO_SYMBOL = new Map<string, string>();
 const INDEX_ALIASES = new Map<string, CuratedIndex>();
 
 for (const index of CURATED_INDICES) {
@@ -173,8 +81,7 @@ export function curatedIndexForInstrument(...values: Array<string | null | undef
 }
 
 export function canonicalCuratedStockSymbol(value: string): string {
-  const key = normalize(value);
-  return key === "TATAMOTORS" ? "TMPV" : value;
+  return value;
 }
 
 export function rankRowsByVolume<T extends { symbol: string; chartSymbol?: string }>(

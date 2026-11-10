@@ -35,7 +35,7 @@ import {
   type TerminalMarketDataInstrument,
   toLocalMarketDataInstrument,
 } from "@/lib/terminalApi";
-import { isApprovedStock, getDhanSymbol, APPROVED_200_STOCKS } from "@/lib/approvedInstruments";
+import { isApprovedStock, getDhanSymbol, APPROVED_200_STOCKS, getUnderlyingFromTradingSymbol } from "@/lib/approvedInstruments";
 
 // ΓöÇΓöÇ Hook: Database readiness check ΓöÇΓöÇ
 
@@ -234,8 +234,13 @@ export function useInstrumentLookup() {
             const underlying = normalized.symbol.toUpperCase();
             // Allow index derivatives (NIFTY, BANKNIFTY, etc.)
             const isIndex = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX", "SENSEX"].includes(underlying);
-            if (!isIndex && !isApprovedStock(underlying)) {
-              return []; // SKIP futures/options for non-approved stocks
+            if (!isIndex) {
+              // For stock futures/options, check the trading symbol prefix since
+              // normalized.symbol may be the company name, not the NSE ticker.
+              const resolvedUnderlying = getUnderlyingFromTradingSymbol(normalized.tradingSymbol);
+              if (!resolvedUnderlying && !isApprovedStock(underlying)) {
+                return []; // SKIP futures/options for non-approved stocks
+              }
             }
             // Check expiry for derivatives
             if (category === "futures") {
