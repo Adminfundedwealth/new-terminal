@@ -1,11 +1,11 @@
-/**
- * useLocalDatabase — React hooks for reading locally-cached market data
+﻿/**
+ * useLocalDatabase ΓÇö React hooks for reading locally-cached market data
  * 
  * Provides:
- *   1. useCachedPrices()     — All stored price snapshots from IndexedDB
- *   2. useCandleHistory()    — Stored OHLCV candle data for a specific instrument
- *   3. useDatabaseReady()    — Whether the local DB has been populated
- *   4. useInstrumentLookup() — Search instruments from the local DB
+ *   1. useCachedPrices()     ΓÇö All stored price snapshots from IndexedDB
+ *   2. useCandleHistory()    ΓÇö Stored OHLCV candle data for a specific instrument
+ *   3. useDatabaseReady()    ΓÇö Whether the local DB has been populated
+ *   4. useInstrumentLookup() ΓÇö Search instruments from the local DB
  * 
  * These hooks serve as the "offline-first" layer: components load from
  * IndexedDB immediately, then overlay live WebSocket / polling data on top.
@@ -28,15 +28,16 @@ import {
   type Instrument,
 } from "@/lib/localDatabase";
 import { classifyInstrument, isCashEquityListing, type InstrumentCategory } from "@/lib/instrumentClassification";
-import { normalizeInstrumentMaster } from "@/lib/instrumentMaster";
 import { fetchDhanInstrumentMaster } from "@/lib/marketApi";
+import { normalizeProviderInstrument } from "@/lib/instrumentMaster";
 import {
   requestTerminalMarketData,
   type TerminalMarketDataInstrument,
   toLocalMarketDataInstrument,
 } from "@/lib/terminalApi";
+import { isApprovedStock, getDhanSymbol, APPROVED_200_STOCKS } from "@/lib/approvedInstruments";
 
-// ── Hook: Database readiness check ──
+// ΓöÇΓöÇ Hook: Database readiness check ΓöÇΓöÇ
 
 export function useDatabaseReady() {
   const [stats, setStats] = useState<DatabaseStats | null>(null);
@@ -54,7 +55,7 @@ export function useDatabaseReady() {
   return { isReady, stats };
 }
 
-// ── Hook: Cached price snapshots ──
+// ΓöÇΓöÇ Hook: Cached price snapshots ΓöÇΓöÇ
 
 export function useCachedPrices() {
   const [prices, setPrices] = useState<PriceSnapshot[]>([]);
@@ -86,7 +87,7 @@ export function useCachedPrices() {
   return { prices, priceMap, getPrice, isLoaded };
 }
 
-// ── Hook: Candle history for a specific instrument ──
+// ΓöÇΓöÇ Hook: Candle history for a specific instrument ΓöÇΓöÇ
 
 export function useCandleHistory(
   securityId: string | undefined,
@@ -138,7 +139,7 @@ export function useCandleHistory(
   return { history, chartData, isLoading, hasData: !!history?.candles?.length };
 }
 
-// ── Hook: All available candle histories ──
+// ΓöÇΓöÇ Hook: All available candle histories ΓöÇΓöÇ
 
 export function useAllCandleHistories() {
   const [histories, setHistories] = useState<CandleHistory[]>([]);
@@ -150,7 +151,7 @@ export function useAllCandleHistories() {
   return histories;
 }
 
-// ── Hook: F&O Stock instrument list from local DB ──
+// ΓöÇΓöÇ Hook: F&O Stock instrument list from local DB ΓöÇΓöÇ
 
 export function useLocalFnOStocks() {
   const [stocks, setStocks] = useState<Instrument[]>([]);
@@ -168,7 +169,7 @@ export function useLocalFnOStocks() {
   return { stocks, isLoaded };
 }
 
-// ── Hook: Instrument search/lookup ──
+// ΓöÇΓöÇ Hook: Instrument search/lookup ΓöÇΓöÇ
 
 export function useInstrumentLookup() {
   const [localInstruments, setLocalInstruments] = useState<Instrument[]>([]);
@@ -199,26 +200,69 @@ export function useInstrumentLookup() {
       const instruments = remote
         .filter((instrument) => instrument.providerInstrumentId && instrument.symbol && instrument.tradingSymbol)
         .map(toLocalMarketDataInstrument);
-      if (instruments.length === 0) throw new Error("Terminal OS returned an empty Dhan instrument catalog.");
-      if (!instruments.some((instrument) => classifyInstrument(instrument) === "stocks" && isCashEquityListing(instrument))) {
-        const officialMaster = normalizeInstrumentMaster(await fetchDhanInstrumentMaster(), "dhan").instruments;
-        const knownIds = new Set(instruments.map((instrument) => `${instrument.exchangeSegment}:${instrument.securityId}`));
-        instruments.push(...officialMaster.filter((instrument) =>
-          classifyInstrument(instrument) === "stocks" &&
-          isCashEquityListing(instrument) &&
-          !knownIds.has(`${instrument.exchangeSegment}:${instrument.securityId}`)
-        ));
-      }
-      const BATCH_SIZE = 2000;
-      void (async () => {
-        try {
-          for (let i = 0; i < instruments.length; i += BATCH_SIZE) {
-            await saveInstruments(instruments.slice(i, i + BATCH_SIZE));
+      if (!instruments.some((instrument) =>
+        instrument.exchangeSegment === "NSE_EQ" && instrument.instrumentType === "EQUITY")) {
+        const master = await fetchDhanInstrumentMaster();
+        const existingIds = new Set(instruments.map((instrument) =>
+          `${instrument.exchangeSegment}:${instrument.providerInstrumentId}`));
+        const officialInstruments = master.flatMap((row, index) => {
+          if (!row || typeof row !== "object") return [];
+          const source = row as Record<string, unknown>;
+          const instrumentName = String(source.SEM_INSTRUMENT_NAME ?? source.instrumentType ?? "").toUpperCase();
+          if (!["EQUITY", "INDEX", "FUTSTK", "FUTIDX", "OPTSTK", "OPTIDX"].includes(instrumentName)) return [];
+          const normalized = normalizeProviderInstrument(source, "dhan", index).instrument;
+          if (!normalized) return [];
+          const category = classifyInstrument(normalized);
+          if (!category || !["stocks", "indices", "futures", "options"].includes(category)) return [];
+          
+          // FILTER: Only approved 200 stocks for cash equity
+          if (category === "stocks") {
+            if (!isCashEquityListing(normalized)) return [];
+            // Check if this stock's symbol OR dhanSymbol matches approved list
+            const nseSymbol = normalized.symbol.toUpperCase();
+            const dhanSymbol = normalized.tradingSymbol.toUpperCase();
+            const isApproved = APPROVED_200_STOCKS.some(stock => 
+              stock.symbol === nseSymbol || 
+              stock.dhanSymbol === dhanSymbol ||
+              stock.symbol === dhanSymbol // Handle reverse mapping
+            );
+            if (!isApproved) return []; // SKIP non-approved stocks
           }
-        } catch (error) {
-          console.error("Founder Dhan instruments could not be cached locally:", error);
+          
+          // FILTER: Only futures/options for approved underlying stocks
+          if (category === "futures" || category === "options") {
+            const underlying = normalized.symbol.toUpperCase();
+            // Allow index derivatives (NIFTY, BANKNIFTY, etc.)
+            const isIndex = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX", "SENSEX"].includes(underlying);
+            if (!isIndex && !isApprovedStock(underlying)) {
+              return []; // SKIP futures/options for non-approved stocks
+            }
+            // Check expiry for derivatives
+            if (category === "futures") {
+              const expiry = Date.parse(normalized.expiryDate ?? "");
+              if (!Number.isFinite(expiry) || expiry < Date.now()) return [];
+            }
+          }
+          
+          const key = `${normalized.exchangeSegment}:${normalized.providerInstrumentId}`;
+          if (existingIds.has(key)) return [];
+          existingIds.add(key);
+          return [normalized];
+        });
+        if (officialInstruments.length === 0) {
+          throw new Error("Dhan's official instrument master contains no valid approved instruments.");
         }
-      })();
+        instruments.push(...officialInstruments);
+      }
+      if (instruments.length === 0) throw new Error("Terminal OS returned an empty Dhan instrument catalog.");
+      const BATCH_SIZE = 2000;
+      try {
+        for (let i = 0; i < instruments.length; i += BATCH_SIZE) {
+          await saveInstruments(instruments.slice(i, i + BATCH_SIZE));
+        }
+      } catch (error) {
+        console.error("Founder Dhan instruments could not be cached locally:", error);
+      }
       return instruments;
     },
     retry: false,
@@ -227,7 +271,7 @@ export function useInstrumentLookup() {
 
   const cachedDhanInstruments = localInstruments.filter((instrument) => instrument.provider === "dhan");
   const allInstruments = gatewayQuery.data ?? cachedDhanInstruments;
-  const isLoaded = localLoaded && (gatewayQuery.isFetched || cachedDhanInstruments.length > 0);
+  const isLoaded = localLoaded && gatewayQuery.isFetched;
   const loadError = gatewayQuery.error instanceof Error
     ? gatewayQuery.error.message
     : null;
@@ -255,4 +299,18 @@ export function useInstrumentLookup() {
   }, [allInstruments]);
 
   return { search, findBySymbol, symbols, instruments: allInstruments, isLoaded, count: allInstruments.length, loadError };
+}
+
+// ΓöÇΓöÇ Symbol ΓåÆ SecurityId mapping from local DB ΓöÇΓöÇ
+
+const KNOWN_INDEX_MAP: Record<string, string> = {
+  NIFTY: "13",
+  BANKNIFTY: "25",
+  FINNIFTY: "27",
+  MIDCPNIFTY: "442",
+  INDIAVIX: "26",
+};
+
+export function getSecurityIdForSymbol(symbol: string): string | undefined {
+  return KNOWN_INDEX_MAP[symbol.toUpperCase()];
 }

@@ -1,4 +1,4 @@
-// Types, constants, and calculation utilities for the options trading terminal
+﻿// Types, constants, and calculation utilities for the options trading terminal
 
 export interface IndexData {
   name: string;
@@ -81,73 +81,12 @@ export interface PCRHistoryPoint {
 
 // -- Static Data --
 
-// Complete list of NSE F&O stocks (as of 2026)
-export const fnoStocks = [
-  // Nifty 50 constituents
-  "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "HINDUNILVR",
-  "SBIN", "BHARTIARTL", "ITC", "KOTAKBANK", "LT", "AXISBANK",
-  "ASIANPAINT", "MARUTI", "TATAMOTORS", "SUNPHARMA", "TITAN",
-  "WIPRO", "ULTRACEMCO", "BAJFINANCE", "HCLTECH", "NTPC",
-  "POWERGRID", "ONGC", "ADANIENT", "ADANIPORTS", "COALINDIA",
-  "DRREDDY", "NESTLEIND", "CIPLA", "BAJAJFINSV", "GRASIM",
-  "JSWSTEEL", "TATACONSUM", "BRITANNIA", "TECHM", "INDUSINDBK",
-  "HINDALCO", "M&M", "APOLLOHOSP", "EICHERMOT", "DIVISLAB",
-  "BPCL", "HEROMOTOCO", "TATASTEEL", "SBILIFE", "HDFCLIFE",
-  "SHRIRAMFIN", "TRENT", "BAJAJ-AUTO",
-  // Nifty Next 50
-  "BANKBARODA", "PNB", "CANBK", "RECLTD", "PFC", "NHPC",
-  "IOC", "GAIL", "VEDL", "JINDALSTEL", "SAIL", "NMDC",
-  "BHEL", "HAL", "BEL", "IRCTC", "ZOMATO", "PAYTM",
-  "NYKAA", "POLICYBZR", "DELHIVERY", "INDUSTOWER",
-  "TATAPOWER", "TORNTPHARM", "LUPIN", "AUROPHARMA",
-  "BIOCON", "ALKEM", "IPCALAB", "LALPATHLAB", "METROPOLIS",
-  "ABBOTINDIA", "SYNGENE", "GLENMARK",
-  // Banking & Finance
-  "IDFCFIRSTB", "FEDERALBNK", "BANDHANBNK", "RBLBANK", "AUBANK",
-  "MANAPPURAM", "MUTHOOTFIN", "CHOLAFIN", "M&MFIN", "L&TFH",
-  "LICHSGFIN", "CANFINHOME", "ICICIGI", "ICICIPRULI",
-  "HDFCAMC", "SBICARD",
-  // IT & Tech
-  "LTIM", "MPHASIS", "COFORGE", "PERSISTENT", "LTTS",
-  "HAPPSTMNDS", "TATAELXSI",
-  // Auto
-  "ASHOKLEY", "ESCORTS", "TVSMOTOR", "MRF", "MOTHERSON",
-  "EXIDEIND", "BALKRISIND", "BHARATFORG",
-  // Metals & Mining
-  "NATIONALUM", "MOIL", "APLAPOLLO", "RATNAMANI",
-  // Energy & Oil
-  "PETRONET", "IGL", "MGL", "PIIND",
-  // Infra & Construction
-  "ADANIGREEN", "ADANITRANS", "SIEMENS", "ABB", "CUMMINSIND",
-  "VOLTAS", "HAVELLS", "CROMPTON", "POLYCAB",
-  // Chemicals
-  "PIDILITIND", "SRF", "ATUL", "DEEPAKNTR", "CLEAN",
-  "FLUOROCHEM", "NAVINFLUOR",
-  // Cement
-  "AMBUJACEM", "ACC", "RAMCOCEM", "DALMIACEM", "JKCEMENT",
-  "SHREECEM",
-  // FMCG
-  "GODREJCP", "DABUR", "MARICO", "COLPAL", "EMAMILTD",
-  "TATACONSUM", "UBL", "MCDOWELL-N",
-  // Telecom & Media
-  "IDEA",
-  // Real Estate
-  "DLF", "GODREJPROP", "OBEROIRLTY", "PRESTIGE", "BRIGADE",
-  "PHOENIXLTD",
-  // Textiles & Apparel
-  "PAGEIND",
-  // Miscellaneous F&O
-  "INDIGO", "CONCOR", "IRFC", "RVNL", "SUZLON",
-  "ABCAPITAL", "ASTRAL", "BALRAMCHIN", "BATAINDIA",
-  "BERGEPAINT", "BSOFT", "CANFINHOME", "CHAMBLFERT",
-  "COROMANDEL", "CUB", "CUMMINSIND", "DELTACORP",
-  "DEEPAKNTR", "DIXON", "GNFC", "GRANULES", "GSPL",
-  "GUJARATGAS", "HONAUT", "IBULHSGFIN",
-  "INTELLECT", "JUBLFOOD", "LAURUSLABS", "MCX",
-  "MFSL", "NAM-INDIA", "OFSS", "PEL",
-  "PVRINOX", "SUNDARMFIN", "SUNTV", "TATACOMM",
-  "UPL", "ZEEL",
-];
+// Import approved 200 NSE stocks from canonical source
+import { getApprovedSymbols } from "./approvedInstruments";
+
+// Complete list of NSE F&O stocks - CANONICAL APPROVED 200
+// This list is now sourced from approvedInstruments.ts to maintain single source of truth
+export const fnoStocks = getApprovedSymbols();
 
 // -- Utility --
 
@@ -185,7 +124,7 @@ export function getMaxPain(chain: OptionData[]): number {
   return maxPainStrike;
 }
 
-// ΓöÇΓöÇ Black-Scholes Greeks Calculator ΓöÇΓöÇ
+// ╬ô├╢├ç╬ô├╢├ç Black-Scholes Greeks Calculator ╬ô├╢├ç╬ô├╢├ç
 
 function normalCDF(x: number): number {
   const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429;
@@ -265,7 +204,7 @@ export function generateGreeksSensitivity(
   return points;
 }
 
-// ΓöÇΓöÇ Strategy Definitions ΓöÇΓöÇ
+// ╬ô├╢├ç╬ô├╢├ç Strategy Definitions ╬ô├╢├ç╬ô├╢├ç
 
 export interface StrategyLeg {
   type: "CE" | "PE";
@@ -425,7 +364,7 @@ export function estimateProbOfProfit(legs: StrategyLeg[], lotSize: number, spotP
   return Math.round((profitable / samples) * 100);
 }
 
-// ΓöÇΓöÇ IV Analytics ΓöÇΓöÇ
+// ╬ô├╢├ç╬ô├╢├ç IV Analytics ╬ô├╢├ç╬ô├╢├ç
 
 // -- IV Analytics --
 
@@ -454,7 +393,7 @@ export interface ScannerResult {
 }
 
 
-// ΓöÇΓöÇ Delta OI (OI ├ù Delta per strike) ΓöÇΓöÇ
+// ╬ô├╢├ç╬ô├╢├ç Delta OI (OI Γö£├╣ Delta per strike) ╬ô├╢├ç╬ô├╢├ç
 
 export interface DeltaOIData {
   strike: number;
@@ -478,7 +417,7 @@ export function getDeltaOI(chain: OptionData[], spotPrice: number, stepSize: num
     });
 }
 
-// ΓöÇΓöÇ Strike-wise PCR ΓöÇΓöÇ
+// ╬ô├╢├ç╬ô├╢├ç Strike-wise PCR ╬ô├╢├ç╬ô├╢├ç
 
 export interface StrikePCRData {
   strike: number;
@@ -500,7 +439,7 @@ export function getStrikePCR(chain: OptionData[], spotPrice: number): StrikePCRD
     }));
 }
 
-// ΓöÇΓöÇ ATM Zone Analysis (nearest N strikes) ΓöÇΓöÇ
+// ╬ô├╢├ç╬ô├╢├ç ATM Zone Analysis (nearest N strikes) ╬ô├╢├ç╬ô├╢├ç
 
 export interface ATMZoneData {
   strikes: number;
@@ -560,7 +499,7 @@ export function getATMZoneAnalysis(chain: OptionData[], spotPrice: number, stepS
   };
 }
 
-// ΓöÇΓöÇ Option Price + OI Time Series (mock intraday) ΓöÇΓöÇ
+// ╬ô├╢├ç╬ô├╢├ç Option Price + OI Time Series (mock intraday) ╬ô├╢├ç╬ô├╢├ç
 
 export interface OptionOITimeSeriesPoint {
   time: string;
@@ -571,7 +510,7 @@ export interface OptionOITimeSeriesPoint {
 }
 
 
-// ΓöÇΓöÇ OI-Weighted Greeks ΓöÇΓöÇ
+// ╬ô├╢├ç╬ô├╢├ç OI-Weighted Greeks ╬ô├╢├ç╬ô├╢├ç
 
 export interface OIWeightedGreeks {
   netDelta: number;
@@ -615,7 +554,7 @@ export function getOIWeightedGreeks(chain: OptionData[], lotSize: number): OIWei
   };
 }
 
-// ΓöÇΓöÇ Candlestick Data (original, kept for backward compat) ΓöÇΓöÇ
+// ╬ô├╢├ç╬ô├╢├ç Candlestick Data (original, kept for backward compat) ╬ô├╢├ç╬ô├╢├ç
 
 export interface CandleData {
   time: string;
@@ -654,7 +593,7 @@ export interface Position {
 
 
 
-// ΓöÇΓöÇ P&L Simulator ΓöÇΓöÇ
+// ╬ô├╢├ç╬ô├╢├ç P&L Simulator ╬ô├╢├ç╬ô├╢├ç
 
 export interface PnLSimPoint {
   spotPrice: number;
@@ -690,7 +629,7 @@ export function simulatePnL(positions: Position[], spotRange: [number, number], 
   return points;
 }
 
-// ΓöÇΓöÇ Greeks Decay Simulation ΓöÇΓöÇ
+// ╬ô├╢├ç╬ô├╢├ç Greeks Decay Simulation ╬ô├╢├ç╬ô├╢├ç
 
 export interface GreeksDecayPoint {
   day: number;
