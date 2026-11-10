@@ -22,10 +22,7 @@ export default function Stocks() {
   const rows = useMemo(() => {
     const instrumentsByCuratedSymbol = new Map<string, typeof instruments[number]>();
     for (const instrument of instruments) {
-      if (
-        !isProductionInstrument(instrument) ||
-        !isNseCashEquityListing(instrument)
-      ) continue;
+      if (!isProductionInstrument(instrument)) continue;
       const curatedStock = curatedStockForInstrument(instrument.tradingSymbol, instrument.symbol);
       if (curatedStock && !instrumentsByCuratedSymbol.has(curatedStock.symbol)) {
         instrumentsByCuratedSymbol.set(curatedStock.symbol, instrument);

@@ -29,12 +29,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
     };
 
-    void supabase.auth.getSession().then(({ data, error }) => {
-      if (!mounted) return;
-      if (error) {
-        console.error("Supabase session initialization failed:", error.message);
-      }
-      finalizeSession(data.session ?? null);
+    // Race getSession against a 5 s timeout so an unreachable Supabase URL
+    // never leaves the app stuck on the splash screen.
+    const sessionTimeout = new Promise<null>((resolve) =>
+      setTimeout(() => resolve(null), 5000)
+    );
+    void Promise.race([
+      supabase.auth.getSession().then(({ data, error }) => {
+        if (error) console.error("Supabase session initialization failed:", error.message);
+        return data.session ?? null;
+      }).catch(() => null),
+      sessionTimeout,
+    ]).then((session) => {
+      finalizeSession(session);
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
