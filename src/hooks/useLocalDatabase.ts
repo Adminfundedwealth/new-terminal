@@ -36,6 +36,7 @@ import {
   toLocalMarketDataInstrument,
 } from "@/lib/terminalApi";
 import { isApprovedStock, getDhanSymbol, APPROVED_200_STOCKS, getUnderlyingFromTradingSymbol } from "@/lib/approvedInstruments";
+import { isApprovedIndex } from "@/lib/approvedIndices";
 
 // ΓöÇΓöÇ Hook: Database readiness check ΓöÇΓöÇ
 
@@ -205,7 +206,9 @@ export function useInstrumentLookup() {
       const instruments = allRemote.filter((instrument) => {
         const cat = classifyInstrument(instrument);
         if (!cat) return false;
-        if (cat === "indices") return true;
+        if (cat === "indices") {
+          return isApprovedIndex(instrument.symbol) || isApprovedIndex(instrument.tradingSymbol);
+        }
         if (cat === "futures" || cat === "options") return true; // further filtered below/in page
         if (cat === "stocks") {
           return APPROVED_200_STOCKS.some(stock =>
@@ -231,6 +234,11 @@ export function useInstrumentLookup() {
           const category = classifyInstrument(normalized);
           if (!category || !["stocks", "indices", "futures", "options"].includes(category)) return [];
           
+          // FILTER: Only approved indices
+          if (category === "indices") {
+            if (!isApprovedIndex(normalized.symbol) && !isApprovedIndex(normalized.tradingSymbol)) return [];
+          }
+
           // FILTER: Only approved 200 stocks for cash equity
           if (category === "stocks") {
             if (!isCashEquityListing(normalized)) return [];
