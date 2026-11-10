@@ -1,4 +1,4 @@
-/**
+﻿/**
  * APPROVED 200 NSE STOCK UNIVERSE
  * 
  * This is the canonical list of approved NSE stocks for the FundedWealth Terminal.
@@ -8,24 +8,20 @@
  * Source: NSE F&O segment + Manual verification
  */
 
-// ── NSE Symbol to Dhan Trading Symbol Mapping ──
+// ΓöÇΓöÇ NSE Symbol to Dhan Trading Symbol Mapping ΓöÇΓöÇ
 // Known Dhan-specific mappings that differ from NSE symbols
 export const NSE_TO_DHAN_SYMBOL_MAP: Record<string, string> = {
-  "TATAMOTORS": "TMPV",          // Tata Motors Parent + Voting
-  "LTIM": "LTM",                 // LTIMindtree
-  "BIRLASOFT": "BSOFT",          // Birlasoft
   "BOSCH": "BOSCHLTD",           // Bosch Limited
   "UNITEDSPIR": "UNITDSPR",      // United Spirits
   "KHAITAN": "KHAITANLTD",       // Khaitan Electricals
   "KALPATPOWR": "KALPATARU",     // Kalpataru Power
-  "BERGERPAINT": "BERGEPAINT",   // Berger Paints
   "M&M": "M&M",                  // Mahindra & Mahindra (stays same)
   "BAJAJ-AUTO": "BAJAJ-AUTO",    // Bajaj Auto (stays same)
   "L&TFH": "LTF",                // L&T Finance Holdings
   "MCDOWELL-N": "MCDOWELL-N",    // McDowell-N (stays same)
 };
 
-// ── TradingView Symbol Mapping ──
+// ΓöÇΓöÇ TradingView Symbol Mapping ΓöÇΓöÇ
 // Maps NSE symbols to TradingView exchange-qualified symbols
 export const NSE_TO_TRADINGVIEW_MAP: Record<string, string> = {
   "HDFCBANK": "NSE:HDFCBANK",
@@ -51,7 +47,7 @@ export function getTradingViewSymbol(nseSymbol: string): string {
   return NSE_TO_TRADINGVIEW_MAP[nseSymbol] || `NSE:${nseSymbol}`;
 }
 
-// ── APPROVED 200 NSE STOCKS ──
+// ΓöÇΓöÇ APPROVED 200 NSE STOCKS ΓöÇΓöÇ
 
 export interface ApprovedStock {
   symbol: string;              // NSE symbol
@@ -104,7 +100,7 @@ export const IT_TECHNOLOGY: ApprovedStock[] = [
   { symbol: "WIPRO", name: "Wipro Ltd", sector: "IT & Technology", dhanSymbol: "WIPRO", tradingViewSymbol: "NSE:WIPRO", isFnO: true, lotSize: 1200 },
   { symbol: "HCLTECH", name: "HCL Technologies Ltd", sector: "IT & Technology", dhanSymbol: "HCLTECH", tradingViewSymbol: "NSE:HCLTECH", isFnO: true, lotSize: 350 },
   { symbol: "TECHM", name: "Tech Mahindra Ltd", sector: "IT & Technology", dhanSymbol: "TECHM", tradingViewSymbol: "NSE:TECHM", isFnO: true, lotSize: 550 },
-  { symbol: "LTIM", name: "LTIMindtree Ltd", sector: "IT & Technology", dhanSymbol: "LTM", tradingViewSymbol: "NSE:LTIM", isFnO: true, lotSize: 150 },
+  { symbol: "LTIM", name: "LTIMindtree Ltd", sector: "IT & Technology", dhanSymbol: "LTIM", tradingViewSymbol: "NSE:LTIM", isFnO: true, lotSize: 150 },
   { symbol: "PERSISTENT", name: "Persistent Systems", sector: "IT & Technology", dhanSymbol: "PERSISTENT", tradingViewSymbol: "NSE:PERSISTENT", isFnO: true, lotSize: 125 },
   { symbol: "COFORGE", name: "Coforge Ltd", sector: "IT & Technology", dhanSymbol: "COFORGE", tradingViewSymbol: "NSE:COFORGE", isFnO: true, lotSize: 100 },
   { symbol: "MPHASIS", name: "Mphasis Ltd", sector: "IT & Technology", dhanSymbol: "MPHASIS", tradingViewSymbol: "NSE:MPHASIS", isFnO: true, lotSize: 250 },
@@ -118,14 +114,14 @@ export const IT_TECHNOLOGY: ApprovedStock[] = [
   { symbol: "SONATSOFTW", name: "Sonata Software Ltd", sector: "IT & Technology", dhanSymbol: "SONATSOFTW", tradingViewSymbol: "NSE:SONATSOFTW", isFnO: true, lotSize: 1500 },
   { symbol: "SASKEN", name: "Sasken Technologies", sector: "IT & Technology", dhanSymbol: "SASKEN", tradingViewSymbol: "NSE:SASKEN", isFnO: true, lotSize: 875 },
   { symbol: "INTELLECT", name: "Intellect Design Arena", sector: "IT & Technology", dhanSymbol: "INTELLECT", tradingViewSymbol: "NSE:INTELLECT", isFnO: true, lotSize: 1000 },
-  { symbol: "BIRLASOFT", name: "Birlasoft Ltd", sector: "IT & Technology", dhanSymbol: "BSOFT", tradingViewSymbol: "NSE:BIRLASOFT", isFnO: true, lotSize: 2500 },
+  { symbol: "BIRLASOFT", name: "Birlasoft Ltd", sector: "IT & Technology", dhanSymbol: "BIRLASOFT", tradingViewSymbol: "NSE:BIRLASOFT", isFnO: true, lotSize: 2500 },
 ];
 
 /**
  * Automobile & Auto Components - 20 stocks
  */
 export const AUTO_AUTO_COMPONENTS: ApprovedStock[] = [
-  { symbol: "TATAMOTORS", name: "Tata Motors Ltd", sector: "Automobile & Auto Components", dhanSymbol: "TMPV", tradingViewSymbol: "NSE:TATAMOTORS", isFnO: true, lotSize: 1500 },
+  { symbol: "TATAMOTORS", name: "Tata Motors Ltd", sector: "Automobile & Auto Components", dhanSymbol: "TATAMOTORS", tradingViewSymbol: "NSE:TATAMOTORS", isFnO: true, lotSize: 1500 },
   { symbol: "M&M", name: "Mahindra & Mahindra", sector: "Automobile & Auto Components", dhanSymbol: "M&M", tradingViewSymbol: "NSE:M&M", isFnO: true, lotSize: 300 },
   { symbol: "MARUTI", name: "Maruti Suzuki India", sector: "Automobile & Auto Components", dhanSymbol: "MARUTI", tradingViewSymbol: "NSE:MARUTI", isFnO: true, lotSize: 50 },
   { symbol: "HEROMOTOCO", name: "Hero MotoCorp Ltd", sector: "Automobile & Auto Components", dhanSymbol: "HEROMOTOCO", tradingViewSymbol: "NSE:HEROMOTOCO", isFnO: true, lotSize: 150 },
@@ -267,7 +263,7 @@ export const INFRA_CAPITAL_GOODS_DEFENCE: ApprovedStock[] = [
 export const CHEMICALS_MATERIALS: ApprovedStock[] = [
   { symbol: "ASIANPAINT", name: "Asian Paints Ltd", sector: "Chemicals & Materials", dhanSymbol: "ASIANPAINT", tradingViewSymbol: "NSE:ASIANPAINT", isFnO: true, lotSize: 200 },
   { symbol: "PIDILITIND", name: "Pidilite Industries", sector: "Chemicals & Materials", dhanSymbol: "PIDILITIND", tradingViewSymbol: "NSE:PIDILITIND", isFnO: true, lotSize: 200 },
-  { symbol: "BERGERPAINT", name: "Berger Paints India", sector: "Chemicals & Materials", dhanSymbol: "BERGEPAINT", tradingViewSymbol: "NSE:BERGERPAINT", isFnO: true, lotSize: 1250 },
+  { symbol: "BERGERPAINT", name: "Berger Paints India", sector: "Chemicals & Materials", dhanSymbol: "BERGERPAINT", tradingViewSymbol: "NSE:BERGERPAINT", isFnO: true, lotSize: 1250 },
   { symbol: "KANSAINER", name: "Kansai Nerolac Paints", sector: "Chemicals & Materials", dhanSymbol: "KANSAINER", tradingViewSymbol: "NSE:KANSAINER", isFnO: true, lotSize: 2000 },
   { symbol: "UPL", name: "UPL Ltd", sector: "Chemicals & Materials", dhanSymbol: "UPL", tradingViewSymbol: "NSE:UPL", isFnO: true, lotSize: 1200 },
   { symbol: "PIIND", name: "PI Industries Ltd", sector: "Chemicals & Materials", dhanSymbol: "PIIND", tradingViewSymbol: "NSE:PIIND", isFnO: true, lotSize: 200 },
@@ -326,9 +322,10 @@ export const CEMENT_ADDITIONAL_FINANCIAL: ApprovedStock[] = [
   { symbol: "M&MFIN", name: "Mahindra & Mahindra Fin", sector: "Cement & Additional Financial", dhanSymbol: "M&MFIN", tradingViewSymbol: "NSE:M&MFIN", isFnO: true, lotSize: 2700 },
   { symbol: "CANFINHOME", name: "Can Fin Homes Ltd", sector: "Cement & Additional Financial", dhanSymbol: "CANFINHOME", tradingViewSymbol: "NSE:CANFINHOME", isFnO: true, lotSize: 1250 },
   { symbol: "PNBHOUSING", name: "PNB Housing Finance", sector: "Cement & Additional Financial", dhanSymbol: "PNBHOUSING", tradingViewSymbol: "NSE:PNBHOUSING", isFnO: true, lotSize: 1000 },
+  { symbol: "LICHSGFIN", name: "LIC Housing Finance Ltd", sector: "Cement & Additional Financial", dhanSymbol: "LICHSGFIN", tradingViewSymbol: "NSE:LICHSGFIN", isFnO: true, lotSize: 2000 },
 ];
 
-// ── CONSOLIDATED APPROVED 200 STOCKS ──
+// ΓöÇΓöÇ CONSOLIDATED APPROVED 200 STOCKS ΓöÇΓöÇ
 
 export const APPROVED_200_STOCKS: ApprovedStock[] = [
   ...BANKING_FINANCIAL,
@@ -349,7 +346,7 @@ if (APPROVED_200_STOCKS.length !== 200) {
   console.error(`[APPROVED_INSTRUMENTS] Expected 200 stocks, got ${APPROVED_200_STOCKS.length}`);
 }
 
-// ── UTILITY FUNCTIONS ──
+// ΓöÇΓöÇ UTILITY FUNCTIONS ΓöÇΓöÇ
 
 /**
  * Get approved stock by NSE symbol
@@ -362,7 +359,27 @@ export function getApprovedStock(nseSymbol: string): ApprovedStock | undefined {
  * Check if a symbol is in the approved list
  */
 export function isApprovedStock(nseSymbol: string): boolean {
-  return APPROVED_200_STOCKS.some(stock => stock.symbol === nseSymbol);
+  const upper = nseSymbol.toUpperCase();
+  return APPROVED_200_STOCKS.some(stock =>
+    stock.symbol === upper ||
+    stock.dhanSymbol === upper
+  );
+}
+
+/**
+ * Extract the underlying NSE symbol from a futures/options trading symbol.
+ * e.g. "TATAMOTORS26JANFUT" -> "TATAMOTORS", "NIFTY26JANFUT" -> "NIFTY"
+ * Returns null if the prefix does not match any approved stock or known index.
+ */
+export function getUnderlyingFromTradingSymbol(tradingSymbol: string): string | null {
+  const upper = tradingSymbol.toUpperCase();
+  // Try matching approved stocks by their symbol or dhanSymbol as a prefix
+  for (const stock of APPROVED_200_STOCKS) {
+    if (upper.startsWith(stock.symbol) || upper.startsWith(stock.dhanSymbol)) {
+      return stock.symbol;
+    }
+  }
+  return null;
 }
 
 /**

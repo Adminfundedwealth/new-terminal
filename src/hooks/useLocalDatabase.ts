@@ -1,11 +1,11 @@
-/**
- * useLocalDatabase — React hooks for reading locally-cached market data
+﻿/**
+ * useLocalDatabase ΓÇö React hooks for reading locally-cached market data
  * 
  * Provides:
- *   1. useCachedPrices()     — All stored price snapshots from IndexedDB
- *   2. useCandleHistory()    — Stored OHLCV candle data for a specific instrument
- *   3. useDatabaseReady()    — Whether the local DB has been populated
- *   4. useInstrumentLookup() — Search instruments from the local DB
+ *   1. useCachedPrices()     ΓÇö All stored price snapshots from IndexedDB
+ *   2. useCandleHistory()    ΓÇö Stored OHLCV candle data for a specific instrument
+ *   3. useDatabaseReady()    ΓÇö Whether the local DB has been populated
+ *   4. useInstrumentLookup() ΓÇö Search instruments from the local DB
  * 
  * These hooks serve as the "offline-first" layer: components load from
  * IndexedDB immediately, then overlay live WebSocket / polling data on top.
@@ -35,9 +35,9 @@ import {
   type TerminalMarketDataInstrument,
   toLocalMarketDataInstrument,
 } from "@/lib/terminalApi";
-import { isApprovedStock, getDhanSymbol, APPROVED_200_STOCKS } from "@/lib/approvedInstruments";
+import { isApprovedStock, getDhanSymbol, APPROVED_200_STOCKS, getUnderlyingFromTradingSymbol } from "@/lib/approvedInstruments";
 
-// ── Hook: Database readiness check ──
+// ΓöÇΓöÇ Hook: Database readiness check ΓöÇΓöÇ
 
 export function useDatabaseReady() {
   const [stats, setStats] = useState<DatabaseStats | null>(null);
@@ -55,7 +55,7 @@ export function useDatabaseReady() {
   return { isReady, stats };
 }
 
-// ── Hook: Cached price snapshots ──
+// ΓöÇΓöÇ Hook: Cached price snapshots ΓöÇΓöÇ
 
 export function useCachedPrices() {
   const [prices, setPrices] = useState<PriceSnapshot[]>([]);
@@ -87,7 +87,7 @@ export function useCachedPrices() {
   return { prices, priceMap, getPrice, isLoaded };
 }
 
-// ── Hook: Candle history for a specific instrument ──
+// ΓöÇΓöÇ Hook: Candle history for a specific instrument ΓöÇΓöÇ
 
 export function useCandleHistory(
   securityId: string | undefined,
@@ -139,7 +139,7 @@ export function useCandleHistory(
   return { history, chartData, isLoading, hasData: !!history?.candles?.length };
 }
 
-// ── Hook: All available candle histories ──
+// ΓöÇΓöÇ Hook: All available candle histories ΓöÇΓöÇ
 
 export function useAllCandleHistories() {
   const [histories, setHistories] = useState<CandleHistory[]>([]);
@@ -151,7 +151,7 @@ export function useAllCandleHistories() {
   return histories;
 }
 
-// ── Hook: F&O Stock instrument list from local DB ──
+// ΓöÇΓöÇ Hook: F&O Stock instrument list from local DB ΓöÇΓöÇ
 
 export function useLocalFnOStocks() {
   const [stocks, setStocks] = useState<Instrument[]>([]);
@@ -169,7 +169,7 @@ export function useLocalFnOStocks() {
   return { stocks, isLoaded };
 }
 
-// ── Hook: Instrument search/lookup ──
+// ΓöÇΓöÇ Hook: Instrument search/lookup ΓöÇΓöÇ
 
 export function useInstrumentLookup() {
   const [localInstruments, setLocalInstruments] = useState<Instrument[]>([]);
@@ -234,8 +234,13 @@ export function useInstrumentLookup() {
             const underlying = normalized.symbol.toUpperCase();
             // Allow index derivatives (NIFTY, BANKNIFTY, etc.)
             const isIndex = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX", "SENSEX"].includes(underlying);
-            if (!isIndex && !isApprovedStock(underlying)) {
-              return []; // SKIP futures/options for non-approved stocks
+            if (!isIndex) {
+              // For stock futures/options, check the trading symbol prefix since
+              // normalized.symbol may be the company name, not the NSE ticker.
+              const resolvedUnderlying = getUnderlyingFromTradingSymbol(normalized.tradingSymbol);
+              if (!resolvedUnderlying && !isApprovedStock(underlying)) {
+                return []; // SKIP futures/options for non-approved stocks
+              }
             }
             // Check expiry for derivatives
             if (category === "futures") {
@@ -301,7 +306,7 @@ export function useInstrumentLookup() {
   return { search, findBySymbol, symbols, instruments: allInstruments, isLoaded, count: allInstruments.length, loadError };
 }
 
-// ── Symbol → SecurityId mapping from local DB ──
+// ΓöÇΓöÇ Symbol ΓåÆ SecurityId mapping from local DB ΓöÇΓöÇ
 
 const KNOWN_INDEX_MAP: Record<string, string> = {
   NIFTY: "13",

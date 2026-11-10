@@ -310,91 +310,6 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
       : SYMBOL_CATEGORIES.filter(cat => cat.label !== "Indices");
   }, [isMasterLoaded, masterInstruments, marketView]);
 
-  // Navigate to Chart with the selected option contract
-  const openChart = useCallback((strike: number, type: "CE" | "PE", row: typeof enrichedChain[0]) => {
-    const contract = chain.find(c => c.strikePrice === strike);
-    if (!contract) {
-      toast.error("Contract details not available");
-      return;
-    }
-    
-    const optionSide = type === "CE" ? contract.ce : contract.pe;
-    const expiryLabel = expiries.find(e => e.value === (selectedExpiry || expiries[0]?.value))?.label || "";
-    
-    // Build trading symbol for the option contract
-    const tradingSymbol = `${symbol}${expiryLabel.replace(/\s+/g, "")}${strike}${type}`;
-    
-    // Navigate to charts with contract details in URL params
-    navigate(`/charts?${new URLSearchParams({
-      symbol: tradingSymbol,
-      underlying: symbol,
-      strike: String(strike),
-      type,
-      expiry: selectedExpiry || expiries[0]?.value || "",
-      securityId: String(optionSide.securityId || ""),
-      exchangeSegment: optionSide.exchangeSegment || "",
-      contractType: "option"
-    })}`);
-  }, [symbol, chain, expiries, selectedExpiry, navigate, enrichedChain]);
-
-  // Open Buy ticket with the selected option contract
-  const openBuyTicket = useCallback((strike: number, type: "CE" | "PE", row: typeof enrichedChain[0]) => {
-    const contract = chain.find(c => c.strikePrice === strike);
-    if (!contract) {
-      toast.error("Contract details not available");
-      return;
-    }
-    
-    const optionSide = type === "CE" ? contract.ce : contract.pe;
-    const expiryLabel = expiries.find(e => e.value === (selectedExpiry || expiries[0]?.value))?.label || "";
-    const tradingSymbol = `${symbol}${expiryLabel.replace(/\s+/g, "")}${strike}${type}`;
-    
-    navigate(`/orders?${new URLSearchParams({
-      action: "BUY",
-      symbol: tradingSymbol,
-      underlying: symbol,
-      strike: String(strike),
-      type,
-      expiry: selectedExpiry || expiries[0]?.value || "",
-      securityId: String(optionSide.securityId || ""),
-      exchangeSegment: optionSide.exchangeSegment || "",
-      ltp: String(optionSide.ltp),
-      bid: String(optionSide.bidPrice),
-      ask: String(optionSide.askPrice),
-      lotSize: String(lotSize),
-      contractType: "option"
-    })}`);
-  }, [symbol, chain, expiries, selectedExpiry, lotSize, navigate, enrichedChain]);
-
-  // Open Sell ticket with the selected option contract
-  const openSellTicket = useCallback((strike: number, type: "CE" | "PE", row: typeof enrichedChain[0]) => {
-    const contract = chain.find(c => c.strikePrice === strike);
-    if (!contract) {
-      toast.error("Contract details not available");
-      return;
-    }
-    
-    const optionSide = type === "CE" ? contract.ce : contract.pe;
-    const expiryLabel = expiries.find(e => e.value === (selectedExpiry || expiries[0]?.value))?.label || "";
-    const tradingSymbol = `${symbol}${expiryLabel.replace(/\s+/g, "")}${strike}${type}`;
-    
-    navigate(`/orders?${new URLSearchParams({
-      action: "SELL",
-      symbol: tradingSymbol,
-      underlying: symbol,
-      strike: String(strike),
-      type,
-      expiry: selectedExpiry || expiries[0]?.value || "",
-      securityId: String(optionSide.securityId || ""),
-      exchangeSegment: optionSide.exchangeSegment || "",
-      ltp: String(optionSide.ltp),
-      bid: String(optionSide.bidPrice),
-      ask: String(optionSide.askPrice),
-      lotSize: String(lotSize),
-      contractType: "option"
-    })}`);
-  }, [symbol, chain, expiries, selectedExpiry, lotSize, navigate, enrichedChain]);
-
   // Legacy quick trade for Strategy Builder (only for multi-leg strategies)
   const quickTrade = useCallback((strike: number, type: "CE" | "PE", action: "BUY" | "SELL") => {
     navigate(`/strategy-builder?${new URLSearchParams({ symbol, strike: String(strike), type, action })}`);
@@ -511,6 +426,82 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
       pe: { ...row.pe, intrinsic: peIntrinsic, timeValue: Math.max(row.pe.ltp - peIntrinsic, 0) },
     };
   }), [chain, spotPrice]);
+
+  // Navigate to Chart with the selected option contract (defined after enrichedChain to avoid TDZ)
+  const openChart = useCallback((strike: number, type: "CE" | "PE", _row: typeof enrichedChain[0]) => {
+    const contract = chain.find(c => c.strikePrice === strike);
+    if (!contract) {
+      toast.error("Contract details not available");
+      return;
+    }
+    const optionSide = type === "CE" ? contract.ce : contract.pe;
+    const expiryLabel = expiries.find(e => e.value === (selectedExpiry || expiries[0]?.value))?.label || "";
+    const tradingSymbol = `${symbol}${expiryLabel.replace(/\s+/g, "")}${strike}${type}`;
+    navigate(`/charts?${new URLSearchParams({
+      symbol: tradingSymbol,
+      underlying: symbol,
+      strike: String(strike),
+      type,
+      expiry: selectedExpiry || expiries[0]?.value || "",
+      securityId: String(optionSide.securityId || ""),
+      exchangeSegment: optionSide.exchangeSegment || "",
+      contractType: "option"
+    })}`);
+  }, [symbol, chain, expiries, selectedExpiry, navigate]);
+
+  // Open Buy ticket (defined after enrichedChain to avoid TDZ)
+  const openBuyTicket = useCallback((strike: number, type: "CE" | "PE", _row: typeof enrichedChain[0]) => {
+    const contract = chain.find(c => c.strikePrice === strike);
+    if (!contract) {
+      toast.error("Contract details not available");
+      return;
+    }
+    const optionSide = type === "CE" ? contract.ce : contract.pe;
+    const expiryLabel = expiries.find(e => e.value === (selectedExpiry || expiries[0]?.value))?.label || "";
+    const tradingSymbol = `${symbol}${expiryLabel.replace(/\s+/g, "")}${strike}${type}`;
+    navigate(`/orders?${new URLSearchParams({
+      action: "BUY",
+      symbol: tradingSymbol,
+      underlying: symbol,
+      strike: String(strike),
+      type,
+      expiry: selectedExpiry || expiries[0]?.value || "",
+      securityId: String(optionSide.securityId || ""),
+      exchangeSegment: optionSide.exchangeSegment || "",
+      ltp: String(optionSide.ltp),
+      bid: String(optionSide.bidPrice),
+      ask: String(optionSide.askPrice),
+      lotSize: String(lotSize),
+      contractType: "option"
+    })}`);
+  }, [symbol, chain, expiries, selectedExpiry, lotSize, navigate]);
+
+  // Open Sell ticket (defined after enrichedChain to avoid TDZ)
+  const openSellTicket = useCallback((strike: number, type: "CE" | "PE", _row: typeof enrichedChain[0]) => {
+    const contract = chain.find(c => c.strikePrice === strike);
+    if (!contract) {
+      toast.error("Contract details not available");
+      return;
+    }
+    const optionSide = type === "CE" ? contract.ce : contract.pe;
+    const expiryLabel = expiries.find(e => e.value === (selectedExpiry || expiries[0]?.value))?.label || "";
+    const tradingSymbol = `${symbol}${expiryLabel.replace(/\s+/g, "")}${strike}${type}`;
+    navigate(`/orders?${new URLSearchParams({
+      action: "SELL",
+      symbol: tradingSymbol,
+      underlying: symbol,
+      strike: String(strike),
+      type,
+      expiry: selectedExpiry || expiries[0]?.value || "",
+      securityId: String(optionSide.securityId || ""),
+      exchangeSegment: optionSide.exchangeSegment || "",
+      ltp: String(optionSide.ltp),
+      bid: String(optionSide.bidPrice),
+      ask: String(optionSide.askPrice),
+      lotSize: String(lotSize),
+      contractType: "option"
+    })}`);
+  }, [symbol, chain, expiries, selectedExpiry, lotSize, navigate]);
 
   // "By Strike" view: show one strike across all expiries
   const byStrikeData = useMemo(() => {
