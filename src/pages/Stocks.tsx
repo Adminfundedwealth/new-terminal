@@ -53,8 +53,11 @@ export default function Stocks() {
     });
   }, [instruments]);
 
+  const isOptionContract = requestedChartSymbol
+    ? /\d+(CE|PE)$/i.test(requestedChartSymbol)
+    : false;
   const resolvedInitialChartSymbol = requestedChartSymbol
-    ? canonicalCuratedStockSymbol(requestedChartSymbol)
+    ? (isOptionContract ? requestedChartSymbol : canonicalCuratedStockSymbol(requestedChartSymbol))
     : undefined;
   const missingStocks = CURATED_STOCKS.filter((stock) =>
     !rows.some((row) => curatedStockForInstrument(row.chartSymbol)?.symbol === stock.symbol)
