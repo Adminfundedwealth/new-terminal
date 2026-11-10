@@ -1,4 +1,6 @@
-import { useState, useMemo, useRef, useCallback, useEffect } from "react";
+﻿import { useState, useMemo, useRef, useCallback, useEffect } from "react";
+import { OptionOrderPopup, type OptionContract } from "@/components/OptionOrderPopup";
+import { OptionContractChartTab, type ChartTab } from "@/components/OptionContractChartTab";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -26,7 +28,7 @@ import {
   type TerminalMarketDataOptionChain,
 } from "@/lib/terminalApi";
 
-// ── Symbol categories for organized browsing ──
+// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Symbol categories for organized browsing ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 const SYMBOL_CATEGORIES: { label: string; symbols: { label: string; value: string }[] }[] = [
   {
     label: "Indices",
@@ -135,7 +137,7 @@ const ALL_SYMBOLS = SYMBOL_CATEGORIES.flatMap(cat => cat.symbols);
 const INDEX_SYMBOLS = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]);
 const STOCK_SYMBOLS = new Set(ALL_SYMBOLS.filter(s => !INDEX_SYMBOLS.has(s.value)).map(s => s.value));
 
-// ── Searchable Symbol Selector Component ──
+// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Searchable Symbol Selector Component ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 function SymbolSearch({ value, onSelect, categories }: { value: string; onSelect: (v: string) => void; categories: { label: string; symbols: { label: string; value: string }[] }[] }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -219,7 +221,7 @@ function SymbolSearch({ value, onSelect, categories }: { value: string; onSelect
   );
 }
 
-// ── Volume Bar ──
+// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Volume Bar ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 function VolumeBar({ value, max, side }: { value: number; max: number; side: "call" | "put" }) {
   const pct = Math.min((value / max) * 100, 100);
   return (
@@ -237,7 +239,7 @@ function VolumeBar({ value, max, side }: { value: number; max: number; side: "ca
   );
 }
 
-// ── OI Bar (colored by value intensity with smooth animations) ──
+// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ OI Bar (colored by value intensity with smooth animations) ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 function OIBar({ value, max, side }: { value: number; max: number; side: "call" | "put" }) {
   const pct = Math.min((value / max) * 100, 100);
   const isHigh = pct > 60;
@@ -262,6 +264,22 @@ function OIBar({ value, max, side }: { value: number; max: number; side: "call" 
   );
 }
 
+// ── Internal tab state types ──────────────────────────────────────────────────
+type OptionTab =
+  | { kind: "chain" }
+  | {
+      kind: "chart";
+      id: string;
+      label: string;
+      tradingSymbol: string;
+      underlying: string;
+      strike: number;
+      optionType: "CE" | "PE";
+      expiry: string;
+      securityId: string;
+      exchangeSegment: string;
+    };
+
 export default function OptionChain({ defaultMarketView = "stocks" }: { defaultMarketView?: "stocks" | "indices" }) {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -281,6 +299,13 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
   const [showChart, setShowChart] = useState(false);
   const [isDownloadingPast, setIsDownloadingPast] = useState(false);
   const [focusedStrikeIdx, setFocusedStrikeIdx] = useState<number>(-1);
+
+  // ── Internal workspace tabs ───────────────────────────────────────────────
+  const [openTabs, setOpenTabs] = useState<OptionTab[]>([{ kind: "chain" }]);
+  const [activeTabId, setActiveTabId] = useState<string>("chain");
+
+  // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Order popup state ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
+  const [orderPopup, setOrderPopup] = useState<{ contract: OptionContract; side: "BUY" | "SELL" } | null>(null);
 
   useEffect(() => {
     setMarketView(defaultMarketView);
@@ -353,7 +378,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
   const totalPEVol = chain.reduce((s, o) => s + o.pe.volume, 0);
   const atmRow = chain.find(o => o.strikePrice === atmStrike);
 
-  // ── Unusual Activity Detection: volume > 3x average OI ratio ──
+  // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Unusual Activity Detection: volume > 3x average OI ratio ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
   const unusualActivity = useMemo(() => {
     if (chain.length === 0) return { flags: new Map<number, { ce: boolean; pe: boolean }>(), count: 0, hotStrikes: [] as number[] };
     const avgCEOI = totalCEOI / chain.length || 1;
@@ -435,60 +460,90 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
       return;
     }
     const optionSide = type === "CE" ? contract.ce : contract.pe;
-    const expiryLabel = expiries.find(e => e.value === (selectedExpiry || expiries[0]?.value))?.label || "";
-    const tradingSymbol = `${symbol}${expiryLabel.replace(/\s+/g, "")}${strike}${type}`;
-    navigate(`/stocks?${new URLSearchParams({
-      workspace: "options",
-      symbol: tradingSymbol,
+    const expiryValue = selectedExpiry || expiries[0]?.value || "";
+    const expiryLabel = expiries.find(e => e.value === expiryValue)?.label || expiryValue;
+    const expiryShort = expiryLabel.replace(/\s+/g, "").substring(0, 9);
+    const tradingSymbol = `${symbol}${expiryShort}${strike}${type}`;
+    const tabId = tradingSymbol;
+    const label = `${symbol} ${expiryLabel} ${strike} ${type}`;
+
+    setOpenTabs(prev => {
+      const exists = prev.some(t => t.kind === "chart" && t.id === tabId);
+      if (exists) return prev;
+      const newTab: OptionTab = {
+        kind: "chart",
+        id: tabId,
+        label,
+        tradingSymbol,
+        underlying: symbol,
+        strike,
+        optionType: type,
+        expiry: expiryValue,
+        securityId: String(optionSide.securityId || ""),
+        exchangeSegment: optionSide.exchangeSegment || "NSE_FNO",
+      };
+      return [...prev, newTab];
+    });
+    setActiveTabId(tabId);
+  }, [symbol, chain, expiries, selectedExpiry]);
+
+  // Close a contract chart tab; activates nearest neighbour or falls back to 'chain'
+  const closeTab = useCallback((tabId: string) => {
+    setOpenTabs(prev => {
+      const next = prev.filter(t => (t.kind === "chain" ? "chain" : t.id) !== tabId);
+      return next.length ? next : [{ kind: "chain" }];
+    });
+    setActiveTabId(prev => {
+      if (prev !== tabId) return prev;
+      const remaining = openTabs.filter(t => (t.kind === "chain" ? "chain" : t.id) !== tabId);
+      if (!remaining.length) return "chain";
+      const idx = openTabs.findIndex(t => (t.kind === "chain" ? "chain" : t.id) === tabId);
+      const neighbor = remaining[Math.max(0, idx - 1)];
+      return neighbor.kind === "chain" ? "chain" : neighbor.id;
+    });
+  }, [openTabs]);
+
+  // Open Buy/Sell popup (defined after enrichedChain to avoid TDZ)
+  const buildOrderContract = useCallback((strike: number, type: "CE" | "PE"): OptionContract | null => {
+    const contract = chain.find(c => c.strikePrice === strike);
+    if (!contract) return null;
+    const optionSide = type === "CE" ? contract.ce : contract.pe;
+    const expiryValue = selectedExpiry || expiries[0]?.value || "";
+    const expiryLabel = expiries.find(e => e.value === expiryValue)?.label || expiryValue;
+    const expiryShort = expiryLabel.replace(/\s+/g, "").substring(0, 9);
+    const tradingSymbol = `${symbol}${expiryShort}${strike}${type}`;
+    return {
+      tradingSymbol,
       underlying: symbol,
-      strike: String(strike),
+      strike,
       type,
-      expiry: selectedExpiry || expiries[0]?.value || "",
+      expiry: expiryValue,
+      expiryLabel: expiryLabel || expiryValue,
+      lotSize,
+      tickSize: 0.05,
       securityId: String(optionSide.securityId || ""),
-      exchangeSegment: optionSide.exchangeSegment || "",
-      contractType: "option"
-    })}`);
-  }, [symbol, chain, expiries, selectedExpiry, navigate]);
+      exchangeSegment: optionSide.exchangeSegment || "NSE_FNO",
+      ltp: optionSide.ltp || 0,
+      bidPrice: optionSide.bidPrice || 0,
+      askPrice: optionSide.askPrice || 0,
+      oi: optionSide.oi || 0,
+      iv: optionSide.iv || 0,
+      pcr: Number(pcr),
+      maxPain,
+    };
+  }, [chain, expiries, selectedExpiry, symbol, lotSize, pcr, maxPain]);
 
-  // Open Buy ticket (defined after enrichedChain to avoid TDZ)
   const openBuyTicket = useCallback((strike: number, type: "CE" | "PE", _row: typeof enrichedChain[0]) => {
-    const contract = chain.find(c => c.strikePrice === strike);
-    if (!contract) {
-      toast.error("Contract details not available");
-      return;
-    }
-    const optionSide = type === "CE" ? contract.ce : contract.pe;
-    const expiryLabel = expiries.find(e => e.value === (selectedExpiry || expiries[0]?.value))?.label || "";
-    const tradingSymbol = `${symbol}${expiryLabel.replace(/\s+/g, "")}${strike}${type}`;
-    navigate(`/strategy-builder?${new URLSearchParams({
-      action: "BUY",
-      symbol,
-      strike: String(strike),
-      type,
-      expiry: selectedExpiry || expiries[0]?.value || "",
-      ltp: String(optionSide.ltp),
-    })}`);
-  }, [symbol, chain, expiries, selectedExpiry, lotSize, navigate]);
+    const contract = buildOrderContract(strike, type);
+    if (!contract) { toast.error("Contract details not available"); return; }
+    setOrderPopup({ contract, side: "BUY" });
+  }, [buildOrderContract]);
 
-  // Open Sell ticket (defined after enrichedChain to avoid TDZ)
   const openSellTicket = useCallback((strike: number, type: "CE" | "PE", _row: typeof enrichedChain[0]) => {
-    const contract = chain.find(c => c.strikePrice === strike);
-    if (!contract) {
-      toast.error("Contract details not available");
-      return;
-    }
-    const optionSide = type === "CE" ? contract.ce : contract.pe;
-    const expiryLabel = expiries.find(e => e.value === (selectedExpiry || expiries[0]?.value))?.label || "";
-    const tradingSymbol = `${symbol}${expiryLabel.replace(/\s+/g, "")}${strike}${type}`;
-    navigate(`/strategy-builder?${new URLSearchParams({
-      action: "SELL",
-      symbol,
-      strike: String(strike),
-      type,
-      expiry: selectedExpiry || expiries[0]?.value || "",
-      ltp: String(optionSide.ltp),
-    })}`);
-  }, [symbol, chain, expiries, selectedExpiry, lotSize, navigate]);
+    const contract = buildOrderContract(strike, type);
+    if (!contract) { toast.error("Contract details not available"); return; }
+    setOrderPopup({ contract, side: "SELL" });
+  }, [buildOrderContract]);
 
   // "By Strike" view: show one strike across all expiries
   const byStrikeData = useMemo(() => {
@@ -536,7 +591,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
   const allStrikes = enrichedChain.map(r => r.strikePrice);
 
-  // ── Keyboard Navigation: J/K to move, G to jump to ATM ──
+  // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Keyboard Navigation: J/K to move, G to jump to ATM ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
   useEffect(() => {
     if (viewMode !== "expiration" || !hasData) return;
     const handler = (e: KeyboardEvent) => {
@@ -557,7 +612,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     return () => window.removeEventListener("keydown", handler);
   }, [viewMode, hasData, enrichedChain, atmStrike, scrollToATM]);
 
-  // ── CSV Download: Export current option chain ──
+  // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ CSV Download: Export current option chain ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
   const downloadCSV = useCallback(() => {
     if (enrichedChain.length === 0) {
       toast.error("No data to export");
@@ -580,7 +635,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     toast.success(`Exported ${enrichedChain.length} strikes to CSV`);
   }, [enrichedChain, symbol, expiries, selectedExpiry]);
 
-  // ── Download a past expiry option chain through Terminal OS ──
+  // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Download a past expiry option chain through Terminal OS ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
   const downloadPastOC = useCallback(async (pastExpiry: string) => {
     setIsDownloadingPast(true);
     try {
@@ -619,7 +674,41 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
   return (
     <div className="space-y-2.5 lg:space-y-3">
-      {/* Header Bar */}
+      {/* ── Internal Tab Bar ─────────────────────────────────────────────── */}
+      <div className="flex items-center gap-1 border-b border-border pb-0 mb-2 overflow-x-auto">
+        {openTabs.map(tab => {
+          const id = tab.kind === "chain" ? "chain" : tab.id;
+          const isActive = activeTabId === id;
+          return (
+            <div
+              key={id}
+              className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-t cursor-pointer whitespace-nowrap transition-colors ${
+                isActive
+                  ? "bg-background text-foreground border border-b-background border-border -mb-px"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              onClick={() => setActiveTabId(id)}
+            >
+              <span>{tab.kind === "chain" ? "Option Chain" : tab.label}</span>
+              {tab.kind === "chart" && (
+                <button
+                  className="ml-1 opacity-60 hover:opacity-100"
+                  onClick={e => {
+                    e.stopPropagation();
+                    closeTab(id);
+                  }}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── Option Chain content (only when active) ──────────────────────── */}
+      {activeTabId === "chain" && (
+        <>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div className="flex items-center gap-3">
           <SymbolSearch value={symbol} onSelect={(v) => { setSymbol(v); setSelectedExpiry(undefined); }} categories={visibleCategories} />
@@ -722,7 +811,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                 Keyboard Shortcuts
               </p>
               <div className="space-y-2 text-xs">
-                <div className="flex justify-between items-center"><span className="text-muted-foreground">Focus Search</span><kbd className="px-1.5 py-0.5 rounded bg-muted border font-mono">⌘K</kbd></div>
+                <div className="flex justify-between items-center"><span className="text-muted-foreground">Focus Search</span><kbd className="px-1.5 py-0.5 rounded bg-muted border font-mono">ÃƒÂ¢Ã…â€™Ã‹Å“K</kbd></div>
                 <div className="flex justify-between items-center"><span className="text-muted-foreground">Refresh Data</span><kbd className="px-1.5 py-0.5 rounded bg-muted border font-mono">R</kbd></div>
                 <div className="flex justify-between items-center"><span className="text-muted-foreground">Next Strike</span><kbd className="px-1.5 py-0.5 rounded bg-muted border font-mono">J</kbd></div>
                 <div className="flex justify-between items-center"><span className="text-muted-foreground">Prev Strike</span><kbd className="px-1.5 py-0.5 rounded bg-muted border font-mono">K</kbd></div>
@@ -777,7 +866,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400">
           <WifiOff className="h-4 w-4 shrink-0" />
           <div className="flex-1">
-            <p className="text-xs font-medium">Market Closed — {hasData ? "Showing Last Available Data" : "No Cached Data Available"}</p>
+            <p className="text-xs font-medium">Market Closed ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â {hasData ? "Showing Last Available Data" : "No Cached Data Available"}</p>
             <p className="text-xs text-amber-400/60 mt-0.5">
               {hasData
                 ? "Data is from the last market session. PCR, Max Pain, and OI values reflect closing snapshot."
@@ -859,7 +948,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
           { label: "PE OI", value: `${(totalPEOI / 100000).toFixed(1)}L` },
           { label: "CE Vol", value: `${(totalCEVol / 100000).toFixed(1)}L` },
           { label: "PE Vol", value: `${(totalPEVol / 100000).toFixed(1)}L` },
-          { label: "Straddle", value: atmRow ? (atmRow.ce.ltp + atmRow.pe.ltp).toFixed(2) : "—", className: "text-warning" },
+          { label: "Straddle", value: atmRow ? (atmRow.ce.ltp + atmRow.pe.ltp).toFixed(2) : "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â", className: "text-warning" },
           { label: "PCR", value: pcr, className: Number(pcr) > 1 ? "text-bullish" : "text-bearish" },
         ].map(stat => (
           <div key={stat.label} className="bg-card rounded-md border px-2 py-1.5 text-center">
@@ -874,7 +963,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-orange-500/10 border border-orange-500/25 text-xs">
           <Flame className="h-3.5 w-3.5 text-orange-500 animate-pulse" />
           <span className="font-semibold text-orange-500">{unusualActivity.count} Unusual Activity</span>
-          <span className="text-muted-foreground">strikes detected (Vol &gt; 3× avg OI):</span>
+          <span className="text-muted-foreground">strikes detected (Vol &gt; 3ÃƒÆ’Ã¢â‚¬â€ avg OI):</span>
           <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide">
             {unusualActivity.hotStrikes.map(s => {
               const flag = unusualActivity.flags.get(s)!;
@@ -907,7 +996,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
         </div>
       )}
 
-      {/* ═══ BY EXPIRATION VIEW ═══ */}
+      {/* ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â BY EXPIRATION VIEW ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â */}
       {viewMode === "expiration" && (
         <Card>
           <CardContent className="p-0 overflow-auto max-h-[65vh]">
@@ -927,12 +1016,12 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                   {/* CALLS / STRIKE / PUTS header */}
                   <TableRow className="text-xs border-b-2">
                     <TableHead className="text-center text-primary font-bold" colSpan={callCols}>Calls</TableHead>
-                    <TableHead className="text-center font-bold bg-accent/50 border-x-2 border-border" colSpan={2}>Strike · IV%</TableHead>
+                    <TableHead className="text-center font-bold bg-accent/50 border-x-2 border-border" colSpan={2}>Strike Ãƒâ€šÃ‚Â· IV%</TableHead>
                     <TableHead className="text-center text-bearish font-bold" colSpan={putCols}>Puts</TableHead>
                   </TableRow>
-                  {/* Column sub-headers — calls reversed order */}
+                  {/* Column sub-headers ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â calls reversed order */}
                   <TableRow className="text-[11px] text-muted-foreground">
-                    {/* Call columns: reversed — leftmost is least important */}
+                    {/* Call columns: reversed ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â leftmost is least important */}
                     {columnConfig.iv && <TableHead className="text-right">IV%</TableHead>}
                     {columnConfig.intrinsic && <TableHead className="text-right">Intr.</TableHead>}
                     {columnConfig.timeValue && <TableHead className="text-right">Time</TableHead>}
@@ -946,7 +1035,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                     {columnConfig.bid && <TableHead className="text-right">Bid</TableHead>}
                     {columnConfig.volume && <TableHead className="text-right">Volume</TableHead>}
                     {/* Strike + IV */}
-                    <TableHead className="text-center bg-accent/50 border-l-2 border-border font-semibold">↑ Strike</TableHead>
+                    <TableHead className="text-center bg-accent/50 border-l-2 border-border font-semibold">Strike</TableHead>
                     <TableHead className="text-center bg-accent/50 border-r-2 border-border font-semibold">IV%</TableHead>
                     {/* Put columns: normal order */}
                     {columnConfig.volume && <TableHead className="text-left">Volume</TableHead>}
@@ -984,7 +1073,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                               isATM ? "bg-primary/[0.08] border-y-2 border-primary/30 shadow-[inset_0_0_20px_hsl(var(--primary)/0.06)]" : ""
                             } ${hasUA ? "bg-orange-500/[0.04]" : ""} ${isFocused ? "ring-1 ring-primary/60 bg-primary/[0.04]" : ""}`}
                           >
-                            {/* ── CALL SIDE ── */}
+                            {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ CALL SIDE ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
                             {columnConfig.iv && <TableCell className={`text-right py-1.5 tabular-nums ${isITMCall ? "text-muted-foreground/70" : ""}`}>{row.ce.iv.toFixed(1)}</TableCell>}
                             {columnConfig.intrinsic && <TableCell className={`text-right py-1.5 tabular-nums ${row.ce.intrinsic > 0 ? "" : "text-muted-foreground/50"}`}>{row.ce.intrinsic.toFixed(2)}</TableCell>}
                             {columnConfig.timeValue && <TableCell className="text-right py-1.5 tabular-nums">{row.ce.timeValue.toFixed(2)}</TableCell>}
@@ -1011,7 +1100,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                               </TableCell>
                             )}
 
-                            {/* ── STRIKE ── */}
+                            {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ STRIKE ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
                             <TableCell className="text-center bg-accent/50 border-l-2 border-border py-1.5">
                               <div className="flex flex-col items-center gap-1">
                                 <div className="flex items-center gap-1">
@@ -1034,7 +1123,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                                     onClick={() => openChart(row.strikePrice, "CE", row)}
                                     title="Open Chart for CE"
                                   >
-                                    📊 C
+                                    C
                                   </Button>
                                   <Button
                                     variant="ghost"
@@ -1043,7 +1132,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                                     onClick={() => openBuyTicket(row.strikePrice, "CE", row)}
                                     title="Buy CE"
                                   >
-                                    🔼 B
+                                    ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ‚Â¼ B
                                   </Button>
                                   <Button
                                     variant="ghost"
@@ -1052,7 +1141,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                                     onClick={() => openSellTicket(row.strikePrice, "CE", row)}
                                     title="Sell CE"
                                   >
-                                    🔽 S
+                                    ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ‚Â½ S
                                   </Button>
                                   <span className="text-[10px] text-muted-foreground mx-0.5">|</span>
                                   <Button
@@ -1062,7 +1151,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                                     onClick={() => openChart(row.strikePrice, "PE", row)}
                                     title="Open Chart for PE"
                                   >
-                                    📊 P
+                                    P
                                   </Button>
                                   <Button
                                     variant="ghost"
@@ -1071,7 +1160,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                                     onClick={() => openBuyTicket(row.strikePrice, "PE", row)}
                                     title="Buy PE"
                                   >
-                                    🔼 B
+                                    ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ‚Â¼ B
                                   </Button>
                                   <Button
                                     variant="ghost"
@@ -1080,14 +1169,14 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                                     onClick={() => openSellTicket(row.strikePrice, "PE", row)}
                                     title="Sell PE"
                                   >
-                                    🔽 S
+                                    ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ‚Â½ S
                                   </Button>
                                 </div>
                               </div>
                             </TableCell>
                             <TableCell className="text-center py-1.5 bg-accent/50 border-r-2 border-border text-muted-foreground">{avgIV}</TableCell>
 
-                            {/* ── PUT SIDE ── */}
+                            {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ PUT SIDE ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
                             {columnConfig.volume && (
                               <TableCell className="text-left py-1.5">
                                 <div className="flex items-center gap-0.5">
@@ -1119,22 +1208,22 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                           <ContextMenuSub>
                             <ContextMenuSubTrigger className="gap-2"><BarChart3 className="h-3.5 w-3.5 text-primary" /> Chart</ContextMenuSubTrigger>
                             <ContextMenuSubContent>
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "chart", row)} className="text-xs">Chart CE @ ₹{row.ce.ltp.toFixed(2)}</ContextMenuItem>
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "PE", "chart", row)} className="text-xs">Chart PE @ ₹{row.pe.ltp.toFixed(2)}</ContextMenuItem>
+                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "chart", row)} className="text-xs">Chart CE @ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹{row.ce.ltp.toFixed(2)}</ContextMenuItem>
+                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "PE", "chart", row)} className="text-xs">Chart PE @ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹{row.pe.ltp.toFixed(2)}</ContextMenuItem>
                             </ContextMenuSubContent>
                           </ContextMenuSub>
                           <ContextMenuSub>
                             <ContextMenuSubTrigger className="gap-2"><TrendingUp className="h-3.5 w-3.5 text-primary" /> Buy</ContextMenuSubTrigger>
                             <ContextMenuSubContent>
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "buy", row)} className="text-xs">Buy CE @ ₹{row.ce.ltp.toFixed(2)}</ContextMenuItem>
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "PE", "buy", row)} className="text-xs">Buy PE @ ₹{row.pe.ltp.toFixed(2)}</ContextMenuItem>
+                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "buy", row)} className="text-xs">Buy CE @ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹{row.ce.ltp.toFixed(2)}</ContextMenuItem>
+                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "PE", "buy", row)} className="text-xs">Buy PE @ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹{row.pe.ltp.toFixed(2)}</ContextMenuItem>
                             </ContextMenuSubContent>
                           </ContextMenuSub>
                           <ContextMenuSub>
                             <ContextMenuSubTrigger className="gap-2"><TrendingDown className="h-3.5 w-3.5 text-bearish" /> Sell</ContextMenuSubTrigger>
                             <ContextMenuSubContent>
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "sell", row)} className="text-xs">Sell CE @ ₹{row.ce.ltp.toFixed(2)}</ContextMenuItem>
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "PE", "sell", row)} className="text-xs">Sell PE @ ₹{row.pe.ltp.toFixed(2)}</ContextMenuItem>
+                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "sell", row)} className="text-xs">Sell CE @ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹{row.ce.ltp.toFixed(2)}</ContextMenuItem>
+                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "PE", "sell", row)} className="text-xs">Sell PE @ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹{row.pe.ltp.toFixed(2)}</ContextMenuItem>
                             </ContextMenuSubContent>
                           </ContextMenuSub>
                           <ContextMenuSeparator />
@@ -1149,7 +1238,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                     );
                   })}
                 </TableBody>
-                {/* ── Sticky Summary Footer ── */}
+                {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Sticky Summary Footer ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
                 {hasData && (
                   <tfoot className="sticky bottom-0 z-10 bg-card border-t-2 border-primary/20">
                     <tr className="text-xs font-mono font-semibold">
@@ -1179,7 +1268,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
         </Card>
       )}
 
-      {/* ═══ BY STRIKE VIEW ═══ */}
+      {/* ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â BY STRIKE VIEW ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â */}
       {viewMode === "strike" && (
         <Card>
           <CardContent className="p-0 overflow-auto">
@@ -1193,7 +1282,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
               <>
               <div className="flex items-center gap-2 px-3 py-1.5 border-b border-amber-500/20 bg-amber-500/5">
                 <Badge variant="outline" className="text-xs h-4 px-1.5 border-amber-500/40 text-amber-600 gap-1">
-                  ⚠ Simulated
+                  Simulated
                 </Badge>
                 <span className="text-[11px] text-muted-foreground">Multi-expiry data is approximated from current expiry. Live multi-expiry API integration pending.</span>
               </div>
@@ -1268,6 +1357,38 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
             )}
           </CardContent>
         </Card>
+      )}
+      {/* ── Close Option Chain conditional ───────────────────────────────── */}
+      </>
+      )}
+
+      {/* ── Contract chart tabs (block/hidden to preserve loaded state) ──── */}
+      {openTabs
+        .filter((t): t is Extract<OptionTab, { kind: "chart" }> => t.kind === "chart")
+        .map(tab => (
+          <div key={tab.id} className={activeTabId === tab.id ? "block" : "hidden"}>
+            <OptionContractChartTab
+              tab={tab as ChartTab}
+              onBuy={() => {
+                const c = buildOrderContract(tab.strike, tab.optionType);
+                if (c) setOrderPopup({ contract: c, side: "BUY" });
+              }}
+              onSell={() => {
+                const c = buildOrderContract(tab.strike, tab.optionType);
+                if (c) setOrderPopup({ contract: c, side: "SELL" });
+              }}
+            />
+          </div>
+        ))
+      }
+
+      {/* Buy/Sell Order Popup — always rendered at the outer level */}
+      {orderPopup && (
+        <OptionOrderPopup
+          contract={orderPopup.contract}
+          initialSide={orderPopup.side}
+          onClose={() => setOrderPopup(null)}
+        />
       )}
     </div>
   );
