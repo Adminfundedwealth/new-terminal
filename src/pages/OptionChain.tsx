@@ -437,7 +437,8 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     const optionSide = type === "CE" ? contract.ce : contract.pe;
     const expiryLabel = expiries.find(e => e.value === (selectedExpiry || expiries[0]?.value))?.label || "";
     const tradingSymbol = `${symbol}${expiryLabel.replace(/\s+/g, "")}${strike}${type}`;
-    navigate(`/charts?${new URLSearchParams({
+    navigate(`/stocks?${new URLSearchParams({
+      workspace: "options",
       symbol: tradingSymbol,
       underlying: symbol,
       strike: String(strike),
@@ -459,20 +460,13 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     const optionSide = type === "CE" ? contract.ce : contract.pe;
     const expiryLabel = expiries.find(e => e.value === (selectedExpiry || expiries[0]?.value))?.label || "";
     const tradingSymbol = `${symbol}${expiryLabel.replace(/\s+/g, "")}${strike}${type}`;
-    navigate(`/orders?${new URLSearchParams({
+    navigate(`/strategy-builder?${new URLSearchParams({
       action: "BUY",
-      symbol: tradingSymbol,
-      underlying: symbol,
+      symbol,
       strike: String(strike),
       type,
       expiry: selectedExpiry || expiries[0]?.value || "",
-      securityId: String(optionSide.securityId || ""),
-      exchangeSegment: optionSide.exchangeSegment || "",
       ltp: String(optionSide.ltp),
-      bid: String(optionSide.bidPrice),
-      ask: String(optionSide.askPrice),
-      lotSize: String(lotSize),
-      contractType: "option"
     })}`);
   }, [symbol, chain, expiries, selectedExpiry, lotSize, navigate]);
 
@@ -486,20 +480,13 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     const optionSide = type === "CE" ? contract.ce : contract.pe;
     const expiryLabel = expiries.find(e => e.value === (selectedExpiry || expiries[0]?.value))?.label || "";
     const tradingSymbol = `${symbol}${expiryLabel.replace(/\s+/g, "")}${strike}${type}`;
-    navigate(`/orders?${new URLSearchParams({
+    navigate(`/strategy-builder?${new URLSearchParams({
       action: "SELL",
-      symbol: tradingSymbol,
-      underlying: symbol,
+      symbol,
       strike: String(strike),
       type,
       expiry: selectedExpiry || expiries[0]?.value || "",
-      securityId: String(optionSide.securityId || ""),
-      exchangeSegment: optionSide.exchangeSegment || "",
       ltp: String(optionSide.ltp),
-      bid: String(optionSide.bidPrice),
-      ask: String(optionSide.askPrice),
-      lotSize: String(lotSize),
-      contractType: "option"
     })}`);
   }, [symbol, chain, expiries, selectedExpiry, lotSize, navigate]);
 
