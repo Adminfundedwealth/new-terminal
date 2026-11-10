@@ -197,9 +197,25 @@ export function useInstrumentLookup() {
         "dhan",
         { operation: "listInstruments" },
       );
-      const instruments = remote
+      const allRemote = remote
         .filter((instrument) => instrument.providerInstrumentId && instrument.symbol && instrument.tradingSymbol)
         .map(toLocalMarketDataInstrument);
+
+      // Filter to approved 200 stocks + all derivatives + indices
+      const instruments = allRemote.filter((instrument) => {
+        const cat = classifyInstrument(instrument);
+        if (!cat) return false;
+        if (cat === "indices") return true;
+        if (cat === "futures" || cat === "options") return true; // further filtered below/in page
+        if (cat === "stocks") {
+          return APPROVED_200_STOCKS.some(stock =>
+            stock.symbol === instrument.symbol.toUpperCase() ||
+            stock.dhanSymbol === instrument.symbol.toUpperCase() ||
+            stock.symbol === instrument.tradingSymbol.toUpperCase()
+          );
+        }
+        return false;
+      });
       if (!instruments.some((instrument) =>
         instrument.exchangeSegment === "NSE_EQ" && instrument.instrumentType === "EQUITY")) {
         const master = await fetchDhanInstrumentMaster();
