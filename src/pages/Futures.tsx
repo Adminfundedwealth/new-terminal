@@ -5,6 +5,7 @@ import { InstrumentExplorer, type ExplorerRow } from "@/components/InstrumentExp
 import { useAccountContext } from "@/hooks/useAccountContext";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { classifyInstrument, isProductionInstrument, isTradableContract } from "@/lib/instrumentClassification";
+import { isApprovedStock, getApprovedFnOStocks } from "@/lib/approvedInstruments";
 import { getSavedWatchlist, saveWatchlist } from "@/lib/watchlist";
 import type { Instrument } from "@/lib/localDatabase";
 
@@ -16,12 +17,15 @@ export default function Futures() {
   const [watchedSymbols, setWatchedSymbols] = useState<string[]>(() => getSavedWatchlist());
 
   const futures = useMemo(() => instruments
-    .filter((instrument) =>
-      isProductionInstrument(instrument) &&
-      classifyInstrument(instrument) === "futures" &&
-      isTradableContract(instrument, "futures") &&
-      Date.parse(instrument.expiryDate || "") >= Date.now()
-    )
+    .filter((instrument) => {
+      if (!isProductionInstrument(instrument)) return false;
+      if (classifyInstrument(instrument) !== "futures") return false;
+      if (!isTradableContract(instrument, "futures")) return false;
+      if (Date.parse(instrument.expiryDate || "") < Date.now()) return false;
+      // Restrict stock futures to approved 200 list; allow index futures through
+      if (instrument.instrumentType === "FUTSTK" && !isApprovedStock(instrument.symbol)) return false;
+      return true;
+    })
     .sort((a, b) => a.symbol.localeCompare(b.symbol) || (a.expiryDate || "").localeCompare(b.expiryDate || "")),
   [instruments]);
 
