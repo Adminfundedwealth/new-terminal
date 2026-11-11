@@ -12,6 +12,7 @@ export type ChartTab = {
   expiry: string;
   securityId: string;
   exchangeSegment: string;
+  lotSize: number;
 };
 
 export function OptionContractChartTab({
@@ -34,6 +35,9 @@ export function OptionContractChartTab({
           </Badge>
           <span className="text-xs text-muted-foreground font-mono">
             {tab.underlying} · {tab.strike.toLocaleString("en-IN")} · {tab.optionType} · {tab.expiry}
+          </span>
+          <span className="text-[10px] text-muted-foreground font-mono">
+            ID {tab.securityId} · Lot {tab.lotSize}
           </span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -60,6 +64,7 @@ export function OptionContractChartTab({
       <div className="h-[600px] min-h-[400px]">
         <StockChart
           symbol={tab.tradingSymbol}
+          instrumentToken={tab.securityId}
           inline
           fill
           candleOnly

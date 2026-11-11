@@ -38,11 +38,14 @@ import { useLiveOptionChain } from "@/hooks/useMarketData";
 
 import { StockChart } from "@/components/StockChart";
 
+import { OptionChainStrikeActions } from "@/components/OptionChainStrikeActions";
+
 import { toast } from "sonner";
 
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 
 import { useAccountContext } from "@/hooks/useAccountContext";
+import { findDhanOptionInstrument } from "@/lib/marketInstrumentResolver";
 
 import { classifyInstrument } from "@/lib/instrumentClassification";
 
@@ -554,6 +557,8 @@ type OptionTab =
 
       expiry: string;
 
+      lotSize: number;
+
       securityId: string;
 
       exchangeSegment: string;
@@ -920,15 +925,23 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
     }
 
-    const optionSide = type === "CE" ? contract.ce : contract.pe;
-
     const expiryValue = selectedExpiry || expiries[0]?.value || "";
 
     const expiryLabel = expiries.find(e => e.value === expiryValue)?.label || expiryValue;
 
-    const expiryShort = expiryLabel.replace(/\s+/g, "").substring(0, 9);
+    const optionInstrument = findDhanOptionInstrument(masterInstruments, {
+      underlying: symbol,
+      expiry: expiryValue,
+      strike,
+      optionType: type,
+      underlyingSecurityId: centralUnderlyingInstrument?.securityId,
+    });
+    if (!optionInstrument) {
+      toast.error(`Dhan's instrument master could not resolve ${symbol} ${expiryValue} ${strike} ${type}.`);
+      return;
+    }
 
-    const tradingSymbol = `${symbol}${expiryShort}${strike}${type}`;
+    const tradingSymbol = optionInstrument.tradingSymbol;
 
     const tabId = tradingSymbol;
 
@@ -960,9 +973,11 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
         expiry: expiryValue,
 
-        securityId: String(optionSide.securityId || ""),
+        securityId: optionInstrument.providerInstrumentId || optionInstrument.securityId,
 
-        exchangeSegment: optionSide.exchangeSegment || "NSE_FNO",
+        exchangeSegment: optionInstrument.exchangeSegment,
+
+        lotSize: optionInstrument.lotSize,
 
       };
 
@@ -972,7 +987,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
     setActiveTabId(tabId);
 
-  }, [symbol, chain, expiries, selectedExpiry]);
+  }, [symbol, chain, expiries, selectedExpiry, masterInstruments, centralUnderlyingInstrument]);
 
 
 
@@ -1022,9 +1037,19 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
     const expiryLabel = expiries.find(e => e.value === expiryValue)?.label || expiryValue;
 
-    const expiryShort = expiryLabel.replace(/\s+/g, "").substring(0, 9);
+    const optionInstrument = findDhanOptionInstrument(masterInstruments, {
+      underlying: symbol,
+      expiry: expiryValue,
+      strike,
+      optionType: type,
+      underlyingSecurityId: centralUnderlyingInstrument?.securityId,
+    });
+    if (!optionInstrument) {
+      toast.error(`Dhan's instrument master could not resolve ${symbol} ${expiryValue} ${strike} ${type}.`);
+      return null;
+    }
 
-    const tradingSymbol = `${symbol}${expiryShort}${strike}${type}`;
+    const tradingSymbol = optionInstrument.tradingSymbol;
 
     return {
 
@@ -1040,13 +1065,13 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
       expiryLabel: expiryLabel || expiryValue,
 
-      lotSize,
+      lotSize: optionInstrument.lotSize,
 
-      tickSize: 0.05,
+      tickSize: optionInstrument.tickSize ?? 0.05,
 
-      securityId: String(optionSide.securityId || ""),
+      securityId: optionInstrument.providerInstrumentId || optionInstrument.securityId,
 
-      exchangeSegment: optionSide.exchangeSegment || "NSE_FNO",
+      exchangeSegment: optionInstrument.exchangeSegment,
 
       ltp: optionSide.ltp || 0,
 
@@ -1064,7 +1089,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
     };
 
-  }, [chain, expiries, selectedExpiry, symbol, lotSize, pcr, maxPain]);
+  }, [chain, expiries, selectedExpiry, symbol, pcr, maxPain, masterInstruments, centralUnderlyingInstrument]);
 
 
 
@@ -2230,121 +2255,12 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
                                 {isMP && <span className="text-[11px] text-warning/60 font-medium">MAX PAIN</span>}
 
-                                {/* Action Buttons Row */}
-
-                                <div className="flex items-center gap-0.5 mt-0.5">
-
-                                  <Button
-
-                                    variant="ghost"
-
-                                    size="sm"
-
-                                    className="h-5 px-1.5 text-[10px] hover:bg-primary/10 hover:text-primary"
-
-                                    onClick={() => openChart(row.strikePrice, "CE", row)}
-
-                                    title="Open Chart for CE"
-
-                                  >
-
-                                    C
-
-                                  </Button>
-
-                                  <Button
-
-                                    variant="ghost"
-
-                                    size="sm"
-
-                                    className="h-5 px-1.5 text-[10px] hover:bg-bullish/10 hover:text-bullish"
-
-                                    onClick={() => openBuyTicket(row.strikePrice, "CE", row)}
-
-                                    title="Buy CE"
-
-                                  >
-
-                                    B
-
-                                  </Button>
-
-                                  <Button
-
-                                    variant="ghost"
-
-                                    size="sm"
-
-                                    className="h-5 px-1.5 text-[10px] hover:bg-bearish/10 hover:text-bearish"
-
-                                    onClick={() => openSellTicket(row.strikePrice, "CE", row)}
-
-                                    title="Sell CE"
-
-                                  >
-
-                                    S
-
-                                  </Button>
-
-                                  <span className="text-[10px] text-muted-foreground mx-0.5">|</span>
-
-                                  <Button
-
-                                    variant="ghost"
-
-                                    size="sm"
-
-                                    className="h-5 px-1.5 text-[10px] hover:bg-primary/10 hover:text-primary"
-
-                                    onClick={() => openChart(row.strikePrice, "PE", row)}
-
-                                    title="Open Chart for PE"
-
-                                  >
-
-                                    P
-
-                                  </Button>
-
-                                  <Button
-
-                                    variant="ghost"
-
-                                    size="sm"
-
-                                    className="h-5 px-1.5 text-[10px] hover:bg-bullish/10 hover:text-bullish"
-
-                                    onClick={() => openBuyTicket(row.strikePrice, "PE", row)}
-
-                                    title="Buy PE"
-
-                                  >
-
-                                    B
-
-                                  </Button>
-
-                                  <Button
-
-                                    variant="ghost"
-
-                                    size="sm"
-
-                                    className="h-5 px-1.5 text-[10px] hover:bg-bearish/10 hover:text-bearish"
-
-                                    onClick={() => openSellTicket(row.strikePrice, "PE", row)}
-
-                                    title="Sell PE"
-
-                                  >
-
-                                    S
-
-                                  </Button>
-
-                                </div>
+                                <OptionChainStrikeActions
+                                  strike={row.strikePrice}
+                                  onChart={(type) => openChart(row.strikePrice, type, row)}
+                                  onBuy={(type) => openBuyTicket(row.strikePrice, type, row)}
+                                  onSell={(type) => openSellTicket(row.strikePrice, type, row)}
+                                />
 
                               </div>
 

@@ -24,7 +24,7 @@ interface StockChartProps {
   candleOnly?: boolean;
   /** Explain why candles cannot be requested before reporting an empty history. */
   unavailableMessage?: string;
-  /** Kite token for a selected derivative contract. */
+  /** Provider instrument ID for the selected contract. */
   instrumentToken?: string;
   /** If provided, renders as a Sheet (drawer) */
   asSheet?: boolean;
