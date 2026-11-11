@@ -104,7 +104,7 @@ export default function Watchlist() {
   const statusText = quoteQuery.data?.errors.length
     ? `${baseStatusText}. ${quoteQuery.data.errors[0]}`
     : baseStatusText;
-  const isLoading = !instrumentsLoaded || quoteQuery.isLoading;
+  const isLoading = !instrumentsLoaded;
 
   const watchlistRows = useMemo(() => {
     return watchedSymbols
