@@ -35,7 +35,7 @@ vi.mock("@/hooks/useAuth", () => ({
 describe("useInstrumentLookup Founder-global Dhan catalog", () => {
   beforeEach(() => {
     requestTerminalMarketDataMock.mockReset();
-    fetchDhanInstrumentMasterMock.mockReset();
+    fetchDhanInstrumentMasterMock.mockReset().mockResolvedValue([]);
   });
 
   afterEach(() => vi.clearAllMocks());
@@ -114,6 +114,95 @@ describe("useInstrumentLookup Founder-global Dhan catalog", () => {
     expect(saveInstruments).toHaveBeenCalledWith(expect.arrayContaining([
       expect.objectContaining({ providerInstrumentId: "2885", tradingSymbol: "RELIANCE" }),
     ]));
+  });
+
+  it("fills HDFCBANK and INDIA VIX when the central catalog is only partially populated", async () => {
+    requestTerminalMarketDataMock.mockResolvedValue([{
+      provider: "dhan",
+      providerInstrumentId: "13",
+      symbol: "NIFTY",
+      tradingSymbol: "NIFTY",
+      exchange: "NSE",
+      exchangeSegment: "IDX_I",
+      instrumentType: "INDEX",
+      lotSize: 1,
+      tickSize: 0.05,
+    }, {
+      provider: "dhan",
+      providerInstrumentId: "2885",
+      symbol: "RELIANCE INDUSTRIES LTD",
+      tradingSymbol: "RELIANCE",
+      exchange: "NSE",
+      exchangeSegment: "NSE_EQ",
+      instrumentType: "EQUITY",
+      lotSize: 1,
+      tickSize: 0.05,
+      series: "EQ",
+    }]);
+    fetchDhanInstrumentMasterMock.mockResolvedValue([{
+      securityId: "1333",
+      symbol: "HDFC BANK LTD",
+      tradingSymbol: "HDFCBANK",
+      exchange: "NSE",
+      exchangeSegment: "NSE_EQ",
+      instrumentType: "EQUITY",
+      lotSize: 1,
+      tickSize: 0.05,
+      series: "EQ",
+    }, {
+      securityId: "21",
+      symbol: "INDIA VIX",
+      tradingSymbol: "INDIA VIX",
+      exchange: "NSE",
+      exchangeSegment: "IDX_I",
+      instrumentType: "INDEX",
+      lotSize: 1,
+      tickSize: 0.05,
+    }]);
+
+    const { result } = renderLookup();
+
+    await waitFor(() => expect(result.current.instruments).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        securityId: "1333",
+        tradingSymbol: "HDFCBANK",
+        exchangeSegment: "NSE_EQ",
+      }),
+      expect.objectContaining({
+        securityId: "21",
+        tradingSymbol: "INDIA VIX",
+        exchangeSegment: "IDX_I",
+      }),
+    ])));
+    expect(fetchDhanInstrumentMasterMock).toHaveBeenCalledTimes(1);
+    expect(result.current.loadError).toBeNull();
+  });
+
+  it("keeps central instruments and reports an error when the official fallback is unavailable", async () => {
+    const error = new Error("Dhan proxy error 503");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    requestTerminalMarketDataMock.mockResolvedValue([{
+      provider: "dhan",
+      providerInstrumentId: "2885",
+      symbol: "RELIANCE INDUSTRIES LTD",
+      tradingSymbol: "RELIANCE",
+      exchange: "NSE",
+      exchangeSegment: "NSE_EQ",
+      instrumentType: "EQUITY",
+      lotSize: 1,
+      tickSize: 0.05,
+      series: "EQ",
+    }]);
+    fetchDhanInstrumentMasterMock.mockRejectedValue(error);
+
+    const { result } = renderLookup();
+
+    await waitFor(() => expect(result.current.loadError).toBe(
+      "Official Dhan instrument master fallback failed: Dhan proxy error 503",
+    ));
+    expect(result.current.instruments).toMatchObject([{ securityId: "2885", tradingSymbol: "RELIANCE" }]);
+    expect(consoleError).toHaveBeenCalledWith("Official Dhan instrument master fallback failed:", error);
+    consoleError.mockRestore();
   });
 
   it("starts central instrument resolution while the local cache is still loading", async () => {
