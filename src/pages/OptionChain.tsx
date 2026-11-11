@@ -44,16 +44,12 @@ import { toast } from "sonner";
 
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 
-import { useAccountContext } from "@/hooks/useAccountContext";
-import { findDhanOptionInstrument } from "@/lib/marketInstrumentResolver";
-
 import { classifyInstrument } from "@/lib/instrumentClassification";
+import { findDhanOptionInstrument } from "@/lib/marketInstrumentResolver";
 
 import {
 
   requestTerminalMarketData,
-
-  resolveTerminalMarketDataProvider,
 
   type TerminalMarketDataOptionChain,
 
@@ -557,11 +553,11 @@ type OptionTab =
 
       expiry: string;
 
-      lotSize: number;
-
       securityId: string;
 
       exchangeSegment: string;
+
+      lotSize: number;
 
     };
 
@@ -687,14 +683,6 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
 
 
-  const { activeAccountId, accounts } = useAccountContext();
-
-  const marketDataProvider = resolveTerminalMarketDataProvider(
-
-    accounts.find((account) => account.id === activeAccountId)?.broker_provider,
-
-  );
-
   const centralUnderlyingInstrument = useMemo(() => {
 
     const normalizedSymbol = symbol.trim().toUpperCase();
@@ -719,7 +707,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
   const { data, isLoading, refetch, error } = useLiveOptionChain(symbol, selectedExpiry, true, centralUnderlyingInstrument);
 
-  const isChainLoading = isLoading || (!activeAccountId && !isMasterLoaded);
+  const isChainLoading = isLoading;
 
 
 
@@ -738,6 +726,12 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
   const isLive = data?.isLive ?? false;
 
   const afterHours = data?.afterHours ?? false;
+  const cachedAtTimestamp = typeof data?.cachedAt === "number"
+    ? data.cachedAt > 1_000_000_000_000 ? data.cachedAt : data.cachedAt * 1000
+    : data?.cachedAt ? Date.parse(data.cachedAt) : Number.NaN;
+  const cachedMinutesAgo = Number.isFinite(cachedAtTimestamp)
+    ? Math.max(0, Math.round((Date.now() - cachedAtTimestamp) / 60000))
+    : null;
 
   const hasData = chain.length > 0;
 
@@ -1073,6 +1067,8 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
       exchangeSegment: optionInstrument.exchangeSegment,
 
+      instrumentType: optionInstrument.instrumentType === "OPTSTK" ? "OPTSTK" : "OPTIDX",
+
       ltp: optionSide.ltp || 0,
 
       bidPrice: optionSide.bidPrice || 0,
@@ -1305,17 +1301,11 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
     try {
 
-      if (!activeAccountId || !marketDataProvider) {
-
-        throw new Error("Select an active Dhan or Kite account to download option-chain data.");
-
-      }
-
       const chainData = await requestTerminalMarketData<TerminalMarketDataOptionChain>(
 
-        activeAccountId,
+        null,
 
-        marketDataProvider,
+        "dhan",
 
         { operation: "getOptionChain", underlying: symbol.toUpperCase(), expiry: pastExpiry },
 
@@ -1359,7 +1349,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
     }
 
-  }, [activeAccountId, marketDataProvider, symbol]);
+  }, [symbol]);
 
 
 
@@ -1769,7 +1759,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
                 : "Option chain data will be available once the market opens (9:15 AM IST) or when the proxy has cached data."}
 
-              {data?.cachedAt && ` Cached ${Math.round((Date.now() - data.cachedAt) / 60000)} min ago.`}
+              {cachedMinutesAgo !== null && ` Cached ${cachedMinutesAgo} min ago.`}
 
             </p>
 
@@ -1797,11 +1787,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
               ? error.message
 
-              : !activeAccountId
-
-                ? masterLoadError ?? `Central market data could not resolve ${symbol}.`
-
-                : "Select an active account with a connected market-data provider, then retry."}
+              : masterLoadError ?? `Central market data could not resolve ${symbol}.`}
 
           </p>
 
@@ -2703,4 +2689,3 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
   );
 
 }
-

@@ -39,7 +39,7 @@ export function classifyInstrument(instrument: Instrument): InstrumentCategory |
 }
 
 export function canonicalIndexSymbol(symbol: string): string {
-  const key = normalized(symbol).replace(/[^A-Z0-9]/g, "");
+  const key = normalized(symbol).replace(/^(?:NSE|BSE):/, "").replace(/[^A-Z0-9]/g, "");
   return INDEX_SYMBOL_ALIASES[key] ?? symbol;
 }
 

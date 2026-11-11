@@ -1,5 +1,4 @@
 import { useQuery } from "@tanstack/react-query";
-import { useAccountContext } from "@/hooks/useAccountContext";
 import { normalizeCandlePayload } from "@/lib/historicalData";
 import {
   requestTerminalMarketData,
@@ -268,13 +267,11 @@ async function fetchHistorical(
  * React Query hook for chart data. Fetches OHLCV candles from Dhan API.
  */
 export function useChartData(symbol: string, range: string = "3M", enabled: boolean = true, instrumentToken?: string) {
-  const { activeAccountId, accounts } = useAccountContext();
-  const activeAccount = accounts.find((account) => account.id === activeAccountId);
-  const provider = resolveTerminalMarketDataProvider(activeAccount?.broker_provider);
+  const provider = resolveTerminalMarketDataProvider(null);
 
   return useQuery({
-    queryKey: ["chart-data", activeAccountId, provider, symbol, range, instrumentToken],
-    queryFn: () => fetchHistorical(symbol, range, activeAccountId, provider, instrumentToken),
+    queryKey: ["chart-data", "founder-dhan", symbol, range, instrumentToken],
+    queryFn: () => fetchHistorical(symbol, range, null, provider, instrumentToken),
     enabled: !!symbol && enabled,
     staleTime: 5 * 60 * 1000, // 5 min cache
     refetchOnWindowFocus: false,
@@ -286,15 +283,13 @@ export function useChartData(symbol: string, range: string = "3M", enabled: bool
  * Fetches a quick sparkline (close prices only) for mini charts.
  */
 export function useSparklineData(symbol: string, enabled: boolean = true) {
-  const { activeAccountId, accounts } = useAccountContext();
-  const activeAccount = accounts.find((account) => account.id === activeAccountId);
-  const provider = resolveTerminalMarketDataProvider(activeAccount?.broker_provider);
+  const provider = resolveTerminalMarketDataProvider(null);
 
   return useQuery({
-    queryKey: ["sparkline", activeAccountId, provider, symbol],
+    queryKey: ["sparkline", "founder-dhan", symbol],
     queryFn: async (): Promise<number[]> => {
       const candles = await withSparklineRequestSlot(
-        () => fetchHistorical(symbol, "3M", activeAccountId, provider),
+        () => fetchHistorical(symbol, "3M", null, provider),
       );
       if (candles.length > 0) {
         return candles.map(c => c.close);

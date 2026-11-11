@@ -32,6 +32,7 @@ export interface OptionContract {
   tickSize: number;
   securityId: string;
   exchangeSegment: string; // "NSE_FNO"
+  instrumentType: "OPTIDX" | "OPTSTK";
   ltp: number;
   bidPrice: number;
   askPrice: number;
@@ -193,7 +194,7 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
         tradingSymbol: contract.tradingSymbol,
         exchange: "NSE",
         exchangeSegment: contract.exchangeSegment,
-        instrumentType: "OPTIDX",
+        instrumentType: contract.instrumentType,
         lotSize: contract.lotSize,
         tickSize: contract.tickSize,
         expiryDate: contract.expiry,
@@ -288,7 +289,7 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
         displayName: contract.tradingSymbol,
         exchange: "NSE",
         exchangeSegment: contract.exchangeSegment,
-        instrumentType: "OPTIDX",
+        instrumentType: contract.instrumentType,
         lotSize: resolvedLotSize,
         tickSize: contract.tickSize,
         expiryDate: contract.expiry,

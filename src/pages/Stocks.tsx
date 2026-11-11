@@ -3,8 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { useAccountContext } from "@/hooks/useAccountContext";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { InstrumentExplorer } from "@/components/InstrumentExplorer";
-import { isProductionInstrument } from "@/lib/instrumentClassification";
-import { isApprovedStock, APPROVED_200_STOCKS } from "@/lib/approvedInstruments";
+import { resolveApprovedStockUniverse } from "@/lib/marketInstrumentResolver";
 import { getSavedWatchlist, saveWatchlist } from "@/lib/watchlist";
 
 export default function Stocks() {
@@ -19,21 +18,8 @@ export default function Stocks() {
   const initialInstrumentToken = searchParams.get("instrumentToken") ?? undefined;
 
   const rows = useMemo(() => {
-    // Build instrument lookup map from whatever has loaded
-    const bySymbol = new Map<string, typeof instruments[number]>();
-    for (const inst of instruments) {
-      if (!isProductionInstrument(inst)) continue;
-      if (!isApprovedStock(inst.symbol)) continue;
-      // Prefer NSE_EQ segment
-      const existing = bySymbol.get(inst.symbol);
-      if (!existing || inst.exchangeSegment === "NSE_EQ") {
-        bySymbol.set(inst.symbol, inst);
-      }
-    }
-
-    // Always show all 200 approved stocks — use instrument data when available
-    return APPROVED_200_STOCKS.map((stock) => {
-      const inst = bySymbol.get(stock.symbol);
+    return resolveApprovedStockUniverse(instruments).map(({ stock, instrument }) => {
+      const inst = instrument;
       return {
         symbol: stock.symbol,
         chartSymbol: inst?.tradingSymbol ?? stock.symbol,
@@ -45,8 +31,8 @@ export default function Stocks() {
         high: null,
         low: null,
         volume: null,
-        instrument: inst ?? null,
-        searchText: `${stock.symbol} ${stock.name} ${stock.sector}`,
+        instrument: inst,
+        searchText: `${stock.symbol} ${stock.dhanSymbol} ${inst?.tradingSymbol ?? ""} ${stock.name} ${stock.sector}`,
       };
     });
   }, [instruments]);
@@ -66,7 +52,7 @@ export default function Stocks() {
         subtitle="200 approved NSE equities."
         asset="stocks"
         rows={rows}
-        isLoading={false}
+        isLoading={!isLoaded}
         watchedSymbols={watchedSymbols}
         onToggleWatchlist={handleWatchlistToggle}
         activeAccountId={activeAccountId}

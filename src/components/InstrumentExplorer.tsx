@@ -235,7 +235,7 @@ export function InstrumentExplorer({
     return matches.find((instrument) => instrument.exchange === "NSE" || instrument.exchangeSegment === "NSE_EQ") ?? matches[0];
   }, [workspaceInstruments, chartSymbol, workspaceContext]);
 
-  const { data: selectedTerminalQuote } = useQuery({
+  const { data: selectedTerminalQuote, error: selectedTerminalQuoteError } = useQuery({
     queryKey: ["terminal-selected-quote", marketDataAccountId, marketDataProvider, chartSymbol],
     queryFn: async () => {
       if ((!marketDataAccountId && marketDataProvider !== "dhan") || !chartSymbol) return null;
@@ -361,13 +361,11 @@ export function InstrumentExplorer({
       : selectedQuoteIsAvailable
         ? "STALE"
         : "UNAVAILABLE";
-  const chartUnavailableMessage = isAccountLoading
-    ? "Checking account-specific historical data availability."
-    : !activeAccountId
-      ? "Historical market data is currently unavailable for this chart."
-      : !marketDataProvider
-        ? "Historical market data is unavailable for the selected account."
-        : undefined;
+  const chartUnavailableMessage = selectedTerminalQuoteError instanceof Error
+    ? selectedTerminalQuoteError.message
+    : selectedTerminalQuote === null
+      ? "Central Dhan market data is currently unavailable for this chart."
+      : undefined;
 
   const futuresContracts = useMemo(
     () => workspaceInstruments

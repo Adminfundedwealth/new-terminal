@@ -16,6 +16,7 @@ import {
   subscribeToTerminalMarketDataStream,
   toLocalMarketDataInstrument,
   TerminalMarketDataError,
+  type TerminalRealtimeQuoteEvent,
 } from "@/lib/terminalApi";
 import { REALTIME_MOCK_TEST_ACCOUNT_ID } from "@/lib/realtimeMockTestScope";
 
@@ -186,7 +187,6 @@ describe("Main Terminal market-data contract", () => {
 
   it("opens the account/provider realtime stream with JWT auth and parses normalized quote events", async () => {
     const quoteEvent = {
-      account_id: accountId,
       provider: "dhan",
       environment: "production",
       symbol: "NIFTY",
@@ -198,7 +198,7 @@ describe("Main Terminal market-data contract", () => {
       },
     }), { status: 200, headers: { "Content-Type": "text/event-stream" } }));
 
-    const quoteReceived = new Promise<typeof quoteEvent>((resolve) => {
+    const quoteReceived = new Promise<TerminalRealtimeQuoteEvent>((resolve) => {
       const unsubscribe = subscribeToTerminalMarketDataStream(null, "dhan", ["NIFTY"], (event) => {
         unsubscribe();
         resolve(event);

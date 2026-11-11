@@ -4,8 +4,8 @@ import { useAccountContext } from "@/hooks/useAccountContext";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { InstrumentExplorer } from "@/components/InstrumentExplorer";
 import { getSavedWatchlist, saveWatchlist } from "@/lib/watchlist";
-import { classifyInstrument } from "@/lib/instrumentClassification";
 import { APPROVED_INDICES } from "@/lib/approvedIndices";
+import { findApprovedIndexInstrument } from "@/lib/marketInstrumentResolver";
 
 export default function Indices() {
   const navigate = useNavigate();
@@ -13,7 +13,7 @@ export default function Indices() {
   const { activeAccountId, accounts, hasNoAccount, isLoading: isAccountLoading } = useAccountContext();
   const activeAccountProvider = accounts.find((account) => account.id === activeAccountId)?.broker_provider;
   const [watchedSymbols, setWatchedSymbols] = useState<string[]>(() => getSavedWatchlist());
-  const { instruments, loadError } = useInstrumentLookup();
+  const { instruments, isLoaded, loadError } = useInstrumentLookup();
   const initialChartSymbol = searchParams.get("symbol") ?? undefined;
 
   const [exchange, setExchange] = useState<"ALL" | "NSE" | "BSE">("ALL");
@@ -22,17 +22,10 @@ export default function Indices() {
     return APPROVED_INDICES
       .filter((entry) => exchange === "ALL" || entry.exchange === exchange)
       .map((entry) => {
-        const matchedInstrument = instruments.find(
-          (inst) =>
-            classifyInstrument(inst) === "indices" &&
-            (
-              inst.symbol.toUpperCase() === entry.symbol.toUpperCase() ||
-              inst.tradingSymbol.toUpperCase() === entry.symbol.toUpperCase()
-            ),
-        );
+        const matchedInstrument = findApprovedIndexInstrument(instruments, entry);
         return {
           symbol: entry.symbol,
-          chartSymbol: entry.tradingViewSymbol,
+          chartSymbol: matchedInstrument?.tradingSymbol ?? entry.symbol,
           label: entry.displayName,
           ltp: null,
           change: null,
@@ -80,7 +73,7 @@ export default function Indices() {
         subtitle="Cash indices with central Dhan quotes and account-scoped trading."
         asset="indices"
         rows={rows}
-        isLoading={false}
+        isLoading={!isLoaded}
         watchedSymbols={watchedSymbols}
         onToggleWatchlist={handleWatchlistToggle}
         activeAccountId={activeAccountId}

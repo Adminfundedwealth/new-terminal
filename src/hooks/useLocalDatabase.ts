@@ -211,11 +211,7 @@ export function useInstrumentLookup() {
         }
         if (cat === "futures" || cat === "options") return true; // further filtered below/in page
         if (cat === "stocks") {
-          return APPROVED_200_STOCKS.some(stock =>
-            stock.symbol === instrument.symbol.toUpperCase() ||
-            stock.dhanSymbol === instrument.symbol.toUpperCase() ||
-            stock.symbol === instrument.tradingSymbol.toUpperCase()
-          );
+          return isApprovedStock(instrument.symbol) || isApprovedStock(instrument.tradingSymbol);
         }
         return false;
       });
