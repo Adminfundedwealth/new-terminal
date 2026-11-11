@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react";
+import { useQueries, useQuery } from "@tanstack/react-query";
 
 import { OptionOrderPopup, type OptionContract } from "@/components/OptionOrderPopup";
 
@@ -46,11 +47,16 @@ import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 
 import { classifyInstrument } from "@/lib/instrumentClassification";
 import { findDhanOptionInstrument } from "@/lib/marketInstrumentResolver";
+import {
+  optionContractWatchlistKey,
+  readOptionContractWatchlist,
+  saveOptionContractWatchlist,
+} from "@/lib/optionContractWatchlist";
 
 import {
 
   requestTerminalMarketData,
-
+  type TerminalMarketDataQuote,
   type TerminalMarketDataOptionChain,
 
 } from "@/lib/terminalApi";
@@ -68,6 +74,7 @@ const SYMBOL_CATEGORIES: { label: string; symbols: { label: string; value: strin
     symbols: [
 
       { label: "NIFTY 50", value: "NIFTY" },
+      { label: "SENSEX", value: "SENSEX" },
 
       { label: "BANK NIFTY", value: "BANKNIFTY" },
 
@@ -269,7 +276,7 @@ const SYMBOL_CATEGORIES: { label: string; symbols: { label: string; value: strin
 
 const ALL_SYMBOLS = SYMBOL_CATEGORIES.flatMap(cat => cat.symbols);
 
-const INDEX_SYMBOLS = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]);
+const INDEX_SYMBOLS = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"]);
 
 const STOCK_SYMBOLS = new Set(ALL_SYMBOLS.filter(s => !INDEX_SYMBOLS.has(s.value)).map(s => s.value));
 
@@ -561,6 +568,16 @@ type OptionTab =
 
     };
 
+type MultiExpiryRow = {
+  expiry: string;
+  greeksAvailable: boolean;
+  ce: { iv: number; intrinsic: number; timeValue: number; vega: number; theta: number; gamma: number; delta: number; ltp: number; ask: number; bid: number; volume: number };
+  pe: { iv: number; intrinsic: number; timeValue: number; vega: number; theta: number; gamma: number; delta: number; ltp: number; ask: number; bid: number; volume: number };
+};
+
+function contractBasketKey(contract: OptionContract): string {
+  return `${contract.securityId}:${contract.type}`;
+}
 
 
 export default function OptionChain({ defaultMarketView = "stocks" }: { defaultMarketView?: "stocks" | "indices" }) {
@@ -575,21 +592,18 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
   const [symbol, setSymbol] = useState(searchParams.get("symbol") || (defaultMarketView === "indices" ? "NIFTY" : "RELIANCE"));
 
-  const [selectedExpiry, setSelectedExpiry] = useState<string | undefined>(undefined);
+  const [selectedExpiry, setSelectedExpiry] = useState<string | undefined>(searchParams.get("expiry") || undefined);
 
   const [viewMode, setViewMode] = useState<"expiration" | "strike">("expiration");
 
   const [selectedStrike, setSelectedStrike] = useState<number | null>(null);
 
   const [columnConfig, setColumnConfig] = useState({
-
-    iv: true, delta: true, gamma: false, theta: false, vega: false, rho: false,
-
+    iv: true, delta: true, gamma: false, theta: false, vega: false,
     intrinsic: false, timeValue: false, bid: true, ask: true, price: true,
-
     volume: true, oi: true, oiChange: true,
-
   });
+  const [perLot, setPerLot] = useState(false);
 
   const atmRef = useRef<HTMLTableRowElement>(null);
 
@@ -614,11 +628,18 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 //  Order popup state 
 
   const [orderPopup, setOrderPopup] = useState<{ contract: OptionContract; side: "BUY" | "SELL" } | null>(null);
+  const [basket, setBasket] = useState<OptionContract[]>([]);
+  const [optionWatchlist, setOptionWatchlist] = useState<OptionContract[]>(() => readOptionContractWatchlist());
 
 
 
   useEffect(() => {
-
+    const requestedSymbol = searchParams.get("symbol")?.trim().toUpperCase();
+    if (requestedSymbol) {
+      setSymbol(requestedSymbol);
+      setMarketView(INDEX_SYMBOLS.has(requestedSymbol) ? "indices" : "stocks");
+      return;
+    }
     setMarketView(defaultMarketView);
 
     if (defaultMarketView === "indices") {
@@ -631,7 +652,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
     }
 
-  }, [defaultMarketView]);
+  }, [defaultMarketView, searchParams]);
 
 
 
@@ -673,16 +694,6 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
 
 
-  // Legacy quick trade for Strategy Builder (only for multi-leg strategies)
-
-  const quickTrade = useCallback((strike: number, type: "CE" | "PE", action: "BUY" | "SELL") => {
-
-    navigate(`/strategy-builder?${new URLSearchParams({ symbol, strike: String(strike), type, action })}`);
-
-  }, [symbol, navigate]);
-
-
-
   const centralUnderlyingInstrument = useMemo(() => {
 
     const normalizedSymbol = symbol.trim().toUpperCase();
@@ -691,19 +702,55 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
       (instrument.symbol.toUpperCase() === normalizedSymbol || instrument.tradingSymbol.toUpperCase() === normalizedSymbol) &&
 
-      ["NSE_EQ", "IDX_I"].includes(instrument.exchangeSegment) &&
+      ["NSE_EQ", "IDX_I", "BSE_IDX"].includes(instrument.exchangeSegment) &&
 
       instrument.provider === "dhan"
 
     );
 
-    const preferredSegment = INDEX_SYMBOLS.has(normalizedSymbol) ? "IDX_I" : "NSE_EQ";
+    const preferredSegment = normalizedSymbol === "SENSEX"
+      ? "BSE_IDX"
+      : INDEX_SYMBOLS.has(normalizedSymbol) ? "IDX_I" : "NSE_EQ";
 
     const match = candidates.find((instrument) => instrument.exchangeSegment === preferredSegment) ?? candidates[0];
 
-    return match ? { securityId: match.securityId, exchangeSegment: match.exchangeSegment } : undefined;
+    return match ? {
+      securityId: match.providerInstrumentId || match.securityId,
+      exchangeSegment: match.exchangeSegment,
+      exchange: match.exchange,
+      tradingSymbol: match.tradingSymbol,
+      instrumentType: match.instrumentType,
+    } : undefined;
 
   }, [masterInstruments, symbol]);
+  const quoteInstrument = centralUnderlyingInstrument;
+  const underlyingQuoteQuery = useQuery({
+    queryKey: ["option-chain-underlying-quote", symbol, quoteInstrument?.securityId, quoteInstrument?.exchangeSegment],
+    enabled: Boolean(quoteInstrument?.securityId && quoteInstrument.exchangeSegment),
+    queryFn: () => {
+      if (!quoteInstrument) throw new Error(`The instrument catalog could not resolve the ${symbol} underlying quote.`);
+      return requestTerminalMarketData<TerminalMarketDataQuote>(null, "dhan", {
+        operation: "getQuote",
+        instrument: {
+          provider: "dhan",
+          providerInstrumentId: quoteInstrument.securityId,
+          symbol,
+          tradingSymbol: quoteInstrument.tradingSymbol,
+          exchange: quoteInstrument.exchange || (quoteInstrument.exchangeSegment === "BSE_IDX" ? "BSE" : "NSE"),
+          exchangeSegment: quoteInstrument.exchangeSegment,
+          instrumentType: quoteInstrument.instrumentType,
+        },
+      });
+    },
+    staleTime: 3_000,
+    refetchInterval: 5_000,
+    retry: false,
+  });
+  const underlyingQuote = underlyingQuoteQuery.data;
+  const underlyingQuoteTime = underlyingQuote?.timestamp ? Date.parse(underlyingQuote.timestamp) : Number.NaN;
+  const underlyingQuoteFresh = Number.isFinite(underlyingQuoteTime)
+    && Date.now() >= underlyingQuoteTime
+    && Date.now() - underlyingQuoteTime <= 60_000;
 
   const { data, isLoading, refetch, error } = useLiveOptionChain(symbol, selectedExpiry, true, centralUnderlyingInstrument);
 
@@ -714,10 +761,11 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
   const chain = useMemo(() => data?.chain ?? [], [data]);
 
   const expiries = useMemo(() => data?.expiries ?? [], [data]);
+  const activeExpiry = expiries.find((expiry) => expiry.value === (selectedExpiry || expiries[0]?.value));
 
   const spotPrice = data?.spotPrice ?? 0;
 
-  const lotSize = data?.lotSize || 25; // use || to also catch 0 from API
+  const lotSize = data?.lotSize ?? 0;
 
   const stepSize = data?.stepSize ?? 50;
 
@@ -734,6 +782,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     : null;
 
   const hasData = chain.length > 0;
+  const priceDisplayMultiplier = perLot && lotSize > 0 ? lotSize : 1;
 
 
 
@@ -743,9 +792,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
   const totalPEOI = chain.reduce((s, o) => s + o.pe.oi, 0);
 
-  const pcr = totalCEOI > 0 ? (totalPEOI / totalCEOI).toFixed(2) : "0";
-
-  const maxOI = Math.max(...chain.map(o => Math.max(o.ce.oi, o.pe.oi)), 1);
+  const pcr = totalCEOI > 0 ? (totalPEOI / totalCEOI).toFixed(2) : "—";
 
   const maxVol = Math.max(...chain.map(o => Math.max(o.ce.volume, o.pe.volume)), 1);
 
@@ -757,15 +804,14 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
 
 
-//  Unusual Activity Detection: volume > 3x average OI ratio 
+// Volume-spike heuristic compares each side with its mean across the displayed chain.
 
   const unusualActivity = useMemo(() => {
 
     if (chain.length === 0) return { flags: new Map<number, { ce: boolean; pe: boolean }>(), count: 0, hotStrikes: [] as number[] };
 
-    const avgCEOI = totalCEOI / chain.length || 1;
-
-    const avgPEOI = totalPEOI / chain.length || 1;
+    const avgCEVolume = totalCEVol / chain.length;
+    const avgPEVolume = totalPEVol / chain.length;
 
     const flags = new Map<number, { ce: boolean; pe: boolean }>();
 
@@ -773,9 +819,8 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
     chain.forEach(row => {
 
-      const ceUnusual = row.ce.volume > avgCEOI * 3 && row.ce.volume > 50000;
-
-      const peUnusual = row.pe.volume > avgPEOI * 3 && row.pe.volume > 50000;
+      const ceUnusual = avgCEVolume > 0 && row.ce.volume > avgCEVolume * 3;
+      const peUnusual = avgPEVolume > 0 && row.pe.volume > avgPEVolume * 3;
 
       if (ceUnusual || peUnusual) {
 
@@ -789,7 +834,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
     return { flags, count: flags.size, hotStrikes };
 
-  }, [chain, totalCEOI, totalPEOI]);
+  }, [chain, totalCEVol, totalPEVol]);
 
 
 
@@ -858,17 +903,10 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
         break;
 
       case "straddle":
-
-        toast.success(`Added ${strike} Straddle to Strategy Builder`);
-
-        navigate(`/strategy-builder?symbol=${symbol}&strike=${strike}&type=CE&action=BUY`);
-
+        addStraddleToBasket(strike);
         break;
-
       case "alert": 
-
-        toast.success(`Alert set for ${symbol} ${strike} ${type}`); 
-
+        toast.info("Contract-specific option alerts are not supported by the current alert service.");
         break;
 
       case "oi-analysis": 
@@ -1099,6 +1137,63 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
   }, [buildOrderContract]);
 
+  const toggleBasketContract = useCallback((strike: number, type: "CE" | "PE") => {
+    const contract = buildOrderContract(strike, type);
+    if (!contract) {
+      toast.error(`Could not resolve ${symbol} ${strike} ${type} from Dhan's instrument master.`);
+      return;
+    }
+    setBasket((current) => current.some((item) => contractBasketKey(item) === contractBasketKey(contract))
+      ? current.filter((item) => contractBasketKey(item) !== contractBasketKey(contract))
+      : [...current, contract]);
+  }, [buildOrderContract, symbol]);
+
+  const addStraddleToBasket = useCallback((strike: number) => {
+    const call = buildOrderContract(strike, "CE");
+    const put = buildOrderContract(strike, "PE");
+    if (!call || !put) {
+      toast.error(`Could not resolve both ${strike} ${symbol} option contracts from Dhan's instrument master.`);
+      return;
+    }
+    setBasket((current) => {
+      const byId = new Map(current.map((contract) => [contractBasketKey(contract), contract]));
+      byId.set(contractBasketKey(call), call);
+      byId.set(contractBasketKey(put), put);
+      return [...byId.values()];
+    });
+    toast.success(`Added ${strike} CE and PE to the basket.`);
+  }, [buildOrderContract, symbol]);
+
+  const toggleOptionWatchlist = useCallback((strike: number, type: "CE" | "PE") => {
+    const contract = buildOrderContract(strike, type);
+    if (!contract) {
+      toast.error(`Could not resolve ${symbol} ${strike} ${type} from Dhan's instrument master.`);
+      return;
+    }
+    const key = optionContractWatchlistKey(contract);
+    const updated = optionWatchlist.some((item) => optionContractWatchlistKey(item) === key)
+      ? optionWatchlist.filter((item) => optionContractWatchlistKey(item) !== key)
+      : [...optionWatchlist, contract];
+    try {
+      saveOptionContractWatchlist(updated);
+      setOptionWatchlist(updated);
+    } catch (error) {
+      toast.error(`Could not save option watchlist: ${error instanceof Error ? error.message : "browser storage is unavailable."}`);
+    }
+  }, [buildOrderContract, optionWatchlist, symbol]);
+
+  const removeOptionWatchlistContract = (contract: OptionContract) => {
+    const updated = optionWatchlist.filter((item) =>
+      optionContractWatchlistKey(item) !== optionContractWatchlistKey(contract)
+    );
+    try {
+      saveOptionContractWatchlist(updated);
+      setOptionWatchlist(updated);
+    } catch (error) {
+      toast.error(`Could not update option watchlist: ${error instanceof Error ? error.message : "browser storage is unavailable."}`);
+    }
+  };
+
 
 
   const openSellTicket = useCallback((strike: number, type: "CE" | "PE", _row: typeof enrichedChain[0]) => {
@@ -1115,89 +1210,46 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
   // "By Strike" view: show one strike across all expiries
 
-  const byStrikeData = useMemo(() => {
-
-    if (!selectedStrike) return [];
-
-    const row = enrichedChain.find(r => r.strikePrice === selectedStrike);
-
+  const byStrikeQueries = useQueries({
+    queries: expiries.map((expiry) => ({
+      queryKey: ["option-chain-by-strike", symbol, expiry.value],
+      queryFn: () => requestTerminalMarketData<TerminalMarketDataOptionChain>(null, "dhan", {
+        operation: "getOptionChain",
+        underlying: symbol.toUpperCase(),
+        expiry: expiry.value,
+      }),
+      enabled: viewMode === "strike" && Boolean(selectedStrike),
+      staleTime: 3_000,
+      retry: false,
+    })),
+  });
+  const byStrikeData: MultiExpiryRow[] = expiries.flatMap((expiry, index) => {
+    const result = byStrikeQueries[index]?.data;
+    const row = result?.chain.find((option) => option.strikePrice === selectedStrike);
     if (!row) return [];
-
-    // For now show current expiry data; in production would fetch all expiries
-
-    // SIMULATED: Using factor-based approximation until multi-expiry API is integrated
-
-    return expiries.map((exp, i) => {
-
-      const factor = 1 + i * 0.08; // simulate different expiry prices
-
-      return {
-
-        expiry: exp.label,
-
-        daysToExpiry: exp.daysToExpiry,
-
-        ce: {
-
-          ltp: Math.round(row.ce.ltp * factor * 100) / 100,
-
-          iv: row.ce.iv + i * 1.2,
-
-          delta: Math.max(0.01, row.ce.delta - i * 0.05),
-
-          gamma: row.ce.gamma,
-
-          theta: row.ce.theta * (1 + i * 0.3),
-
-          vega: row.ce.vega * (1 + i * 0.2),
-
-          volume: Math.round(row.ce.volume * (1 - i * 0.3)),
-
-          oi: row.ce.oi,
-
-          bid: Math.round(row.ce.ltp * factor * 0.98 * 100) / 100,
-
-          ask: Math.round(row.ce.ltp * factor * 1.02 * 100) / 100,
-
-          intrinsic: Math.max(spotPrice - selectedStrike, 0),
-
-          timeValue: Math.max(row.ce.ltp * factor - Math.max(spotPrice - selectedStrike, 0), 0),
-
-        },
-
-        pe: {
-
-          ltp: Math.round(row.pe.ltp * factor * 100) / 100,
-
-          iv: row.pe.iv + i * 1.5,
-
-          delta: Math.min(-0.01, row.pe.delta + i * 0.04),
-
-          gamma: row.pe.gamma,
-
-          theta: row.pe.theta * (1 + i * 0.3),
-
-          vega: row.pe.vega * (1 + i * 0.2),
-
-          volume: Math.round(row.pe.volume * (1 - i * 0.25)),
-
-          oi: row.pe.oi,
-
-          bid: Math.round(row.pe.ltp * factor * 0.98 * 100) / 100,
-
-          ask: Math.round(row.pe.ltp * factor * 1.02 * 100) / 100,
-
-          intrinsic: Math.max(selectedStrike - spotPrice, 0),
-
-          timeValue: Math.max(row.pe.ltp * factor - Math.max(selectedStrike - spotPrice, 0), 0),
-
-        },
-
-      };
-
-    });
-
-  }, [selectedStrike, enrichedChain, expiries, spotPrice]);
+    const ceIntrinsic = Math.max(spotPrice - row.strikePrice, 0);
+    const peIntrinsic = Math.max(row.strikePrice - spotPrice, 0);
+    return [{
+      expiry: expiry.label,
+      greeksAvailable: result.greeksAvailable,
+      ce: {
+        ...row.ce,
+        ltp: row.ce.ltp,
+        ask: row.ce.askPrice,
+        bid: row.ce.bidPrice,
+        intrinsic: ceIntrinsic,
+        timeValue: Math.max(row.ce.ltp - ceIntrinsic, 0),
+      },
+      pe: {
+        ...row.pe,
+        ltp: row.pe.ltp,
+        ask: row.pe.askPrice,
+        bid: row.pe.bidPrice,
+        intrinsic: peIntrinsic,
+        timeValue: Math.max(row.pe.ltp - peIntrinsic, 0),
+      },
+    }];
+  });
 
 
 
@@ -1355,7 +1407,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
   // Active columns count for colSpan
 
-  const callCols = [columnConfig.iv, columnConfig.intrinsic, columnConfig.timeValue, columnConfig.rho, columnConfig.vega, columnConfig.theta, columnConfig.gamma, columnConfig.delta, columnConfig.price, columnConfig.ask, columnConfig.bid, columnConfig.volume].filter(Boolean).length;
+  const callCols = [columnConfig.iv, columnConfig.intrinsic, columnConfig.timeValue, columnConfig.vega, columnConfig.theta, columnConfig.gamma, columnConfig.delta, columnConfig.price, columnConfig.ask, columnConfig.bid, columnConfig.oi, columnConfig.oiChange, columnConfig.volume].filter(Boolean).length;
 
   const putCols = callCols;
 
@@ -1485,23 +1537,28 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
         <div className="flex items-center gap-1.5">
 
-          <Badge variant="outline" className={`gap-1 text-[11px] ${isLive ? "border-bullish/50 text-bullish" : afterHours ? "border-amber-500/50 text-amber-400" : "border-red-500/30 text-red-400"}`}>
-
-            {isLive ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
-
-            {isLive ? (data?.source === "dhan" ? "DHAN" : "NSE") : afterHours ? "CLOSED" : "OFFLINE"}
-
+          <Badge variant="outline" className={`gap-1 text-[11px] ${isLive && underlyingQuoteFresh ? "border-bullish/50 text-bullish" : afterHours ? "border-amber-500/50 text-amber-400" : "border-red-500/30 text-red-400"}`}>
+            {isLive && underlyingQuoteFresh ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+            {isLive && underlyingQuoteFresh ? "LIVE · DHAN" : afterHours ? "HISTORICAL" : underlyingQuoteQuery.error ? "QUOTE ERROR" : "STALE / OFFLINE"}
           </Badge>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] font-mono">
+            <span>{symbol} <strong className="text-foreground">{underlyingQuote && underlyingQuote.ltp > 0 ? underlyingQuote.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : spotPrice > 0 ? spotPrice.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—"}</strong>
+              {underlyingQuote?.change != null && <span className={underlyingQuote.change >= 0 ? "ml-1 text-bullish" : "ml-1 text-bearish"}>
+                {underlyingQuote.change >= 0 ? "+" : ""}{underlyingQuote.change.toFixed(2)} ({underlyingQuote.changePercent == null ? "—" : `${underlyingQuote.changePercent.toFixed(2)}%`})
+              </span>}
+            </span>
+            <span className="text-muted-foreground">O <b className="text-foreground">{underlyingQuote?.open ?? "—"}</b></span>
+            <span className="text-muted-foreground">H <b className="text-foreground">{underlyingQuote?.high ?? "—"}</b></span>
+            <span className="text-muted-foreground">L <b className="text-foreground">{underlyingQuote?.low ?? "—"}</b></span>
+            <span className="text-muted-foreground">PC <b className="text-foreground">{underlyingQuote?.previousClose ?? "—"}</b></span>
+            {underlyingQuote && !underlyingQuoteFresh && <span className="text-amber-400">HISTORICAL QUOTE</span>}
+            {underlyingQuoteQuery.error && <span className="text-amber-400" title={underlyingQuoteQuery.error.message}>Underlying quote unavailable</span>}
+          </div>
 
-          <span className="text-xs font-mono">
-
-            {symbol} <span className="font-semibold text-foreground">{spotPrice.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
-
-            {afterHours && <span className="text-amber-400/60 ml-1 text-xs">(Last Close)</span>}
-
-          </span>
-
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => refetch()}>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
+            void refetch();
+            void underlyingQuoteQuery.refetch();
+          }}>
 
             <RefreshCw className="h-3.5 w-3.5" />
 
@@ -1672,10 +1729,8 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
 
       {/* Expiry selector */}
-
       {viewMode === "expiration" && expiries.length > 0 && (
-
-        <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center gap-1">
 
           {expiries.slice(0, 5).map((exp, i) => {
 
@@ -1732,9 +1787,29 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
             </Select>
 
           )}
-
+          <div className="ml-auto flex items-center gap-3 pl-2">
+            <span className="text-xs text-muted-foreground">{activeExpiry?.daysToExpiry ?? "—"} DTE · Lot {lotSize > 0 ? lotSize : "—"}</span>
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Switch
+                checked={perLot}
+                onCheckedChange={setPerLot}
+                disabled={lotSize <= 0}
+                aria-label="Show option prices per lot"
+                className="scale-[0.8]"
+              />
+              Per Lot{lotSize > 0 ? ` (${lotSize})` : ""}
+            </label>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              disabled
+              title="Buildup classification is unavailable because the feed does not provide option-price change and OI change together."
+            >
+              Buildup unavailable
+            </Button>
+          </div>
         </div>
-
       )}
 
 
@@ -1897,21 +1972,18 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
       {/* Summary Stats */}
 
-      <div className="grid grid-cols-3 md:grid-cols-6 gap-1.5">
+      <div className="grid grid-cols-4 md:grid-cols-8 gap-1.5">
 
         {[
 
-          { label: "CE OI", value: `${(totalCEOI / 100000).toFixed(1)}L` },
-
-          { label: "PE OI", value: `${(totalPEOI / 100000).toFixed(1)}L` },
-
-          { label: "CE Vol", value: `${(totalCEVol / 100000).toFixed(1)}L` },
-
-          { label: "PE Vol", value: `${(totalPEVol / 100000).toFixed(1)}L` },
-
-          { label: "Straddle", value: atmRow ? (atmRow.ce.ltp + atmRow.pe.ltp).toFixed(2) : "--", className: "text-warning" },
-
-          { label: "PCR", value: pcr, className: Number(pcr) > 1 ? "text-bullish" : "text-bearish" },
+          { label: "CE OI", value: hasData ? `${(totalCEOI / 100000).toFixed(1)}L` : "—" },
+          { label: "PE OI", value: hasData ? `${(totalPEOI / 100000).toFixed(1)}L` : "—" },
+          { label: "CE Vol", value: hasData ? `${(totalCEVol / 100000).toFixed(1)}L` : "—" },
+          { label: "PE Vol", value: hasData ? `${(totalPEVol / 100000).toFixed(1)}L` : "—" },
+          { label: "Straddle", value: atmRow ? ((atmRow.ce.ltp + atmRow.pe.ltp) * priceDisplayMultiplier).toFixed(2) : "—", className: "text-warning" },
+          { label: "PCR", value: hasData ? pcr : "—", className: Number(pcr) > 1 ? "text-bullish" : "text-bearish" },
+          { label: "Max Pain", value: hasData && maxPain > 0 ? maxPain.toLocaleString("en-IN") : "—", className: "text-warning" },
+          { label: "ATM IV", value: atmRow && atmRow.ce.iv + atmRow.pe.iv > 0 ? `${((atmRow.ce.iv + atmRow.pe.iv) / 2).toFixed(1)}%` : "—" },
 
         ].map(stat => (
 
@@ -1937,9 +2009,8 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
           <Flame className="h-3.5 w-3.5 text-orange-500 animate-pulse" />
 
-          <span className="font-semibold text-orange-500">{unusualActivity.count} Unusual Activity</span>
-
-          <span className="text-muted-foreground">strikes detected (Vol &gt; 3x avg OI):</span>
+          <span className="font-semibold text-orange-500">{unusualActivity.count} Volume Spikes</span>
+          <span className="text-muted-foreground">strikes above 3× mean volume for this chain:</span>
 
           <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide">
 
@@ -1949,17 +2020,18 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
               return (
 
-                <Badge key={s} variant="outline" className="text-[11px] gap-1 border-orange-500/30 text-orange-500 shrink-0">
-
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => document.getElementById(`option-strike-${s}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-full border border-orange-500/30 px-2 py-0.5 text-[11px] text-orange-500 hover:bg-orange-500/10"
+                  aria-label={`Jump to strike ${s}`}
+                >
                   {s.toLocaleString("en-IN")}
-
                   {flag.ce && <span className="text-primary">CE</span>}
-
                   {flag.ce && flag.pe && <span className="text-muted-foreground">+</span>}
-
                   {flag.pe && <span className="text-bearish">PE</span>}
-
-                </Badge>
+                </button>
 
               );
 
@@ -1983,19 +2055,16 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
             <span className="font-sans font-semibold text-primary">ATM {atmStrike}</span>
 
-            <span>CE: <span className="text-primary font-medium">{atmRow.ce.ltp.toFixed(2)}</span></span>
-
-            <span>PE: <span className="text-bearish font-medium">{atmRow.pe.ltp.toFixed(2)}</span></span>
-
-            <span>Straddle: <span className="text-warning font-medium">{(atmRow.ce.ltp + atmRow.pe.ltp).toFixed(2)}</span></span>
+            <span>CE: <span className="text-primary font-medium">{atmRow.ce.ltp > 0 ? (atmRow.ce.ltp * priceDisplayMultiplier).toFixed(2) : "—"}</span></span>
+            <span>PE: <span className="text-bearish font-medium">{atmRow.pe.ltp > 0 ? (atmRow.pe.ltp * priceDisplayMultiplier).toFixed(2) : "—"}</span></span>
+            <span>Straddle: <span className="text-warning font-medium">{atmRow.ce.ltp + atmRow.pe.ltp > 0 ? ((atmRow.ce.ltp + atmRow.pe.ltp) * priceDisplayMultiplier).toFixed(2) : "—"}</span></span>
 
           </div>
 
           <div className="flex items-center gap-3 text-muted-foreground">
 
-            <span>MP: <span className="text-warning">{maxPain.toLocaleString("en-IN")}</span></span>
-
-            <span>IV: {((atmRow.ce.iv + atmRow.pe.iv) / 2).toFixed(1)}%</span>
+            <span>MP: <span className="text-warning">{maxPain > 0 ? maxPain.toLocaleString("en-IN") : "—"}</span></span>
+            <span>IV: {(atmRow.ce.iv + atmRow.pe.iv) > 0 ? `${((atmRow.ce.iv + atmRow.pe.iv) / 2).toFixed(1)}%` : "—"}</span>
 
           </div>
 
@@ -2063,7 +2132,6 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
                     {columnConfig.timeValue && <TableHead className="text-right">Time</TableHead>}
 
-                    {columnConfig.rho && <TableHead className="text-right">Rho</TableHead>}
 
                     {columnConfig.vega && <TableHead className="text-right">Vega</TableHead>}
 
@@ -2080,6 +2148,8 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                     {columnConfig.bid && <TableHead className="text-right">Bid</TableHead>}
 
                     {columnConfig.volume && <TableHead className="text-right">Volume</TableHead>}
+                    {columnConfig.oi && <TableHead className="text-right">OI</TableHead>}
+                    {columnConfig.oiChange && <TableHead className="text-right">OI Chg</TableHead>}
 
                     {/* Strike + IV */}
 
@@ -2090,6 +2160,8 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                     {/* Put columns: normal order */}
 
                     {columnConfig.volume && <TableHead className="text-left">Volume</TableHead>}
+                    {columnConfig.oi && <TableHead className="text-left">OI</TableHead>}
+                    {columnConfig.oiChange && <TableHead className="text-left">OI Chg</TableHead>}
 
                     {columnConfig.bid && <TableHead className="text-left">Bid</TableHead>}
 
@@ -2105,7 +2177,6 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
                     {columnConfig.vega && <TableHead className="text-left">Vega</TableHead>}
 
-                    {columnConfig.rho && <TableHead className="text-left">Rho</TableHead>}
 
                     {columnConfig.timeValue && <TableHead className="text-left">Time</TableHead>}
 
@@ -2129,7 +2200,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
                     const isMP = row.strikePrice === maxPain;
 
-                    const avgIV = ((row.ce.iv + row.pe.iv) / 2).toFixed(1);
+                    const avgIV = row.ce.iv + row.pe.iv > 0 ? ((row.ce.iv + row.pe.iv) / 2).toFixed(1) : "—";
 
                     const uaFlag = unusualActivity.flags.get(row.strikePrice);
 
@@ -2149,7 +2220,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
                           <TableRow
 
-                            ref={isATM ? atmRef : undefined}
+                            id={`option-strike-${row.strikePrice}`}
 
                             className={`text-xs sm:text-[11px] font-mono cursor-context-menu transition-colors hover:bg-accent/30 ${
 
@@ -2161,29 +2232,25 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
 {/*  CALL SIDE  */}
 
-                            {columnConfig.iv && <TableCell className={`text-right py-1.5 tabular-nums ${isITMCall ? "text-muted-foreground/70" : ""}`}>{row.ce.iv.toFixed(1)}</TableCell>}
+                            {columnConfig.iv && <TableCell className={`text-right py-1.5 tabular-nums ${isITMCall ? "text-muted-foreground/70" : ""}`}>{row.ce.iv > 0 ? row.ce.iv.toFixed(1) : "—"}</TableCell>}
 
                             {columnConfig.intrinsic && <TableCell className={`text-right py-1.5 tabular-nums ${row.ce.intrinsic > 0 ? "" : "text-muted-foreground/50"}`}>{row.ce.intrinsic.toFixed(2)}</TableCell>}
 
                             {columnConfig.timeValue && <TableCell className="text-right py-1.5 tabular-nums">{row.ce.timeValue.toFixed(2)}</TableCell>}
 
-                            {columnConfig.rho && <TableCell className="text-right py-1.5 tabular-nums text-muted-foreground">0.{Math.round(row.ce.delta * 22).toString().padStart(2, "0")}</TableCell>}
 
-                            {columnConfig.vega && <TableCell className="text-right py-1.5 tabular-nums">{row.ce.vega.toFixed(2)}</TableCell>}
-
-                            {columnConfig.theta && <TableCell className="text-right py-1.5 tabular-nums text-bearish/80">{row.ce.theta.toFixed(2)}</TableCell>}
-
-                            {columnConfig.gamma && <TableCell className="text-right py-1.5 tabular-nums">{row.ce.gamma.toFixed(4)}</TableCell>}
-
-                            {columnConfig.delta && <TableCell className="text-right py-1.5 tabular-nums font-medium">{row.ce.delta.toFixed(2)}</TableCell>}
+                            {columnConfig.vega && <TableCell className="text-right py-1.5 tabular-nums">{data?.greeksAvailable ? row.ce.vega.toFixed(2) : "—"}</TableCell>}
+                            {columnConfig.theta && <TableCell className="text-right py-1.5 tabular-nums text-bearish/80">{data?.greeksAvailable ? row.ce.theta.toFixed(2) : "—"}</TableCell>}
+                            {columnConfig.gamma && <TableCell className="text-right py-1.5 tabular-nums">{data?.greeksAvailable ? row.ce.gamma.toFixed(4) : "—"}</TableCell>}
+                            {columnConfig.delta && <TableCell className="text-right py-1.5 tabular-nums font-medium">{data?.greeksAvailable ? row.ce.delta.toFixed(2) : "—"}</TableCell>}
 
                             {columnConfig.price && (
 
                               <TableCell className="text-right py-1.5 font-semibold">
 
-                                <button onClick={() => quickTrade(row.strikePrice, "CE", "BUY")} className="hover:text-primary transition-colors">
+                                <button onClick={() => openBuyTicket(row.strikePrice, "CE", row)} className="hover:text-primary transition-colors">
 
-                                  {row.ce.ltp.toFixed(2)}
+                                  {row.ce.ltp > 0 ? (row.ce.ltp * priceDisplayMultiplier).toFixed(2) : "—"}
 
                                 </button>
 
@@ -2191,9 +2258,8 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
                             )}
 
-                            {columnConfig.ask && <TableCell className="text-right py-1.5 tabular-nums">{row.ce.askPrice.toFixed(2)}</TableCell>}
-
-                            {columnConfig.bid && <TableCell className="text-right py-1.5 tabular-nums">{row.ce.bidPrice.toFixed(2)}</TableCell>}
+                            {columnConfig.ask && <TableCell className="text-right py-1.5 tabular-nums">{row.ce.askPrice > 0 ? (row.ce.askPrice * priceDisplayMultiplier).toFixed(2) : "—"}</TableCell>}
+                            {columnConfig.bid && <TableCell className="text-right py-1.5 tabular-nums">{row.ce.bidPrice > 0 ? (row.ce.bidPrice * priceDisplayMultiplier).toFixed(2) : "—"}</TableCell>}
 
                             {columnConfig.volume && (
 
@@ -2210,6 +2276,8 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                               </TableCell>
 
                             )}
+                            {columnConfig.oi && <TableCell className="text-right py-1.5 tabular-nums">{row.ce.oi.toLocaleString("en-IN")}</TableCell>}
+                            {columnConfig.oiChange && <TableCell className="text-right py-1.5 tabular-nums">{data?.oiChangeAvailable === true ? row.ce.oiChange.toLocaleString("en-IN") : "—"}</TableCell>}
 
 
 
@@ -2246,6 +2314,29 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                                   onChart={(type) => openChart(row.strikePrice, type, row)}
                                   onBuy={(type) => openBuyTicket(row.strikePrice, type, row)}
                                   onSell={(type) => openSellTicket(row.strikePrice, type, row)}
+                                  isSelected={(type) => basket.some((contract) =>
+                                    contract.underlying === symbol
+                                    && contract.expiry === (selectedExpiry || expiries[0]?.value || "")
+                                    && contract.strike === row.strikePrice
+                                    && contract.type === type
+                                  )}
+                                  onToggleSelection={(type) => toggleBasketContract(row.strikePrice, type)}
+                                  isInWatchlist={(type) => optionWatchlist.some((contract) =>
+                                    contract.underlying === symbol
+                                    && contract.expiry === (selectedExpiry || expiries[0]?.value || "")
+                                    && contract.strike === row.strikePrice
+                                    && contract.type === type
+                                  )}
+                                  onToggleWatchlist={(type) => toggleOptionWatchlist(row.strikePrice, type)}
+                                  onFullscreen={(type) => {
+                                    void document.documentElement.requestFullscreen().catch((error: unknown) => {
+                                      toast.error(`Could not open fullscreen chart: ${error instanceof Error ? error.message : "fullscreen is unavailable."}`);
+                                    });
+                                    openChart(row.strikePrice, type, row);
+                                  }}
+                                  onAlert={(type) => toast.info(`Option contract alerts are unsupported for ${symbol} ${row.strikePrice} ${type}.`)}
+                                  onForeverOrder={(type) => toast.info(`Forever orders are unsupported for ${symbol} ${row.strikePrice} ${type} in the current order service.`)}
+                                  resolveContract={(type) => buildOrderContract(row.strikePrice, type)}
                                 />
 
                               </div>
@@ -2273,18 +2364,19 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                               </TableCell>
 
                             )}
+                            {columnConfig.oi && <TableCell className="text-left py-1.5 tabular-nums">{row.pe.oi.toLocaleString("en-IN")}</TableCell>}
+                            {columnConfig.oiChange && <TableCell className="text-left py-1.5 tabular-nums">{data?.oiChangeAvailable === true ? row.pe.oiChange.toLocaleString("en-IN") : "—"}</TableCell>}
 
-                            {columnConfig.bid && <TableCell className="text-left py-1.5 tabular-nums">{row.pe.bidPrice.toFixed(2)}</TableCell>}
-
-                            {columnConfig.ask && <TableCell className="text-left py-1.5 tabular-nums">{row.pe.askPrice.toFixed(2)}</TableCell>}
+                            {columnConfig.bid && <TableCell className="text-left py-1.5 tabular-nums">{row.pe.bidPrice > 0 ? (row.pe.bidPrice * priceDisplayMultiplier).toFixed(2) : "—"}</TableCell>}
+                            {columnConfig.ask && <TableCell className="text-left py-1.5 tabular-nums">{row.pe.askPrice > 0 ? (row.pe.askPrice * priceDisplayMultiplier).toFixed(2) : "—"}</TableCell>}
 
                             {columnConfig.price && (
 
                               <TableCell className="text-left py-1.5 font-semibold">
 
-                                <button onClick={() => quickTrade(row.strikePrice, "PE", "BUY")} className="hover:text-bearish transition-colors">
+                                <button onClick={() => openBuyTicket(row.strikePrice, "PE", row)} className="hover:text-bearish transition-colors">
 
-                                  {row.pe.ltp.toFixed(2)}
+                                  {row.pe.ltp > 0 ? (row.pe.ltp * priceDisplayMultiplier).toFixed(2) : "—"}
 
                                 </button>
 
@@ -2292,21 +2384,17 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
                             )}
 
-                            {columnConfig.delta && <TableCell className="text-left py-1.5 tabular-nums font-medium">{row.pe.delta.toFixed(2)}</TableCell>}
+                            {columnConfig.delta && <TableCell className="text-left py-1.5 tabular-nums font-medium">{data?.greeksAvailable ? row.pe.delta.toFixed(2) : "—"}</TableCell>}
+                            {columnConfig.gamma && <TableCell className="text-left py-1.5 tabular-nums">{data?.greeksAvailable ? row.pe.gamma.toFixed(4) : "—"}</TableCell>}
+                            {columnConfig.theta && <TableCell className="text-left py-1.5 tabular-nums text-bearish/80">{data?.greeksAvailable ? row.pe.theta.toFixed(2) : "—"}</TableCell>}
+                            {columnConfig.vega && <TableCell className="text-left py-1.5 tabular-nums">{data?.greeksAvailable ? row.pe.vega.toFixed(2) : "—"}</TableCell>}
 
-                            {columnConfig.gamma && <TableCell className="text-left py-1.5 tabular-nums">{row.pe.gamma.toFixed(4)}</TableCell>}
-
-                            {columnConfig.theta && <TableCell className="text-left py-1.5 tabular-nums text-bearish/80">{row.pe.theta.toFixed(2)}</TableCell>}
-
-                            {columnConfig.vega && <TableCell className="text-left py-1.5 tabular-nums">{row.pe.vega.toFixed(2)}</TableCell>}
-
-                            {columnConfig.rho && <TableCell className="text-left py-1.5 tabular-nums text-muted-foreground">-0.{Math.round(Math.abs(row.pe.delta) * 22).toString().padStart(2, "0")}</TableCell>}
 
                             {columnConfig.timeValue && <TableCell className="text-left py-1.5 tabular-nums">{row.pe.timeValue.toFixed(2)}</TableCell>}
 
                             {columnConfig.intrinsic && <TableCell className={`text-left py-1.5 tabular-nums ${row.pe.intrinsic > 0 ? "" : "text-muted-foreground/50"}`}>{row.pe.intrinsic.toFixed(2)}</TableCell>}
 
-                            {columnConfig.iv && <TableCell className={`text-left py-1.5 tabular-nums ${isITMPut ? "text-muted-foreground/70" : ""}`}>{row.pe.iv.toFixed(1)}</TableCell>}
+                            {columnConfig.iv && <TableCell className={`text-left py-1.5 tabular-nums ${isITMPut ? "text-muted-foreground/70" : ""}`}>{row.pe.iv > 0 ? row.pe.iv.toFixed(1) : "—"}</TableCell>}
 
                           </TableRow>
 
@@ -2453,28 +2541,22 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
               <div className="flex flex-col items-center justify-center h-40 text-muted-foreground gap-2">
 
                 <Crosshair className="h-8 w-8 opacity-20" />
-
-                <p className="text-sm">Select a strike price above to compare across expiries</p>
-
-                <p className="text-xs opacity-60">Use the strike selector in the header bar</p>
+                <p className="text-sm">
+                  {byStrikeQueries.some((query) => query.isLoading)
+                    ? "Loading verified option-chain data for each expiry…"
+                    : byStrikeQueries.some((query) => query.error)
+                      ? `Could not load expiry comparison: ${byStrikeQueries.find((query) => query.error)?.error instanceof Error ? (byStrikeQueries.find((query) => query.error)?.error as Error).message : "Dhan request failed."}`
+                      : selectedStrike
+                        ? "No expiry returned data for this strike."
+                        : "Select a strike price above to compare across expiries."}
+                </p>
+                <p className="text-xs opacity-60">Values below come from Dhan option-chain responses for the corresponding expiry.</p>
 
               </div>
 
             ) : (
 
               <>
-
-              <div className="flex items-center gap-2 px-3 py-1.5 border-b border-amber-500/20 bg-amber-500/5">
-
-                <Badge variant="outline" className="text-xs h-4 px-1.5 border-amber-500/40 text-amber-600 gap-1">
-
-                  Simulated
-
-                </Badge>
-
-                <span className="text-[11px] text-muted-foreground">Multi-expiry data is approximated from current expiry. Live multi-expiry API integration pending.</span>
-
-              </div>
 
               <Table>
 
@@ -2498,7 +2580,6 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
                     {columnConfig.timeValue && <TableHead className="text-right">Time</TableHead>}
 
-                    {columnConfig.rho && <TableHead className="text-right">Rho</TableHead>}
 
                     {columnConfig.vega && <TableHead className="text-right">Vega</TableHead>}
 
@@ -2534,7 +2615,6 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
                     {columnConfig.vega && <TableHead className="text-left">Vega</TableHead>}
 
-                    {columnConfig.rho && <TableHead className="text-left">Rho</TableHead>}
 
                     {columnConfig.timeValue && <TableHead className="text-left">Time</TableHead>}
 
@@ -2558,15 +2638,14 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
                       {columnConfig.timeValue && <TableCell className="text-right py-1.5 tabular-nums">{row.ce.timeValue.toFixed(2)}</TableCell>}
 
-                      {columnConfig.rho && <TableCell className="text-right py-1.5 tabular-nums">0.{Math.round(row.ce.delta * 22).toString().padStart(2, "0")}</TableCell>}
 
-                      {columnConfig.vega && <TableCell className="text-right py-1.5 tabular-nums">{row.ce.vega.toFixed(2)}</TableCell>}
+                      {columnConfig.vega && <TableCell className="text-right py-1.5 tabular-nums">{row.greeksAvailable ? row.ce.vega.toFixed(2) : "—"}</TableCell>}
 
-                      {columnConfig.theta && <TableCell className="text-right py-1.5 tabular-nums text-bearish/80">{row.ce.theta.toFixed(2)}</TableCell>}
+                      {columnConfig.theta && <TableCell className="text-right py-1.5 tabular-nums text-bearish/80">{row.greeksAvailable ? row.ce.theta.toFixed(2) : "—"}</TableCell>}
 
-                      {columnConfig.gamma && <TableCell className="text-right py-1.5 tabular-nums">{row.ce.gamma.toFixed(4)}</TableCell>}
+                      {columnConfig.gamma && <TableCell className="text-right py-1.5 tabular-nums">{row.greeksAvailable ? row.ce.gamma.toFixed(4) : "—"}</TableCell>}
 
-                      {columnConfig.delta && <TableCell className="text-right py-1.5 tabular-nums font-medium">{row.ce.delta.toFixed(2)}</TableCell>}
+                      {columnConfig.delta && <TableCell className="text-right py-1.5 tabular-nums font-medium">{row.greeksAvailable ? row.ce.delta.toFixed(2) : "—"}</TableCell>}
 
                       {columnConfig.price && <TableCell className="text-right py-1.5 font-semibold">{row.ce.ltp.toFixed(2)}</TableCell>}
 
@@ -2586,15 +2665,14 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
                       {columnConfig.price && <TableCell className="text-left py-1.5 font-semibold">{row.pe.ltp.toFixed(2)}</TableCell>}
 
-                      {columnConfig.delta && <TableCell className="text-left py-1.5 tabular-nums font-medium">{row.pe.delta.toFixed(2)}</TableCell>}
+                      {columnConfig.delta && <TableCell className="text-left py-1.5 tabular-nums font-medium">{row.greeksAvailable ? row.pe.delta.toFixed(2) : "—"}</TableCell>}
 
-                      {columnConfig.gamma && <TableCell className="text-left py-1.5 tabular-nums">{row.pe.gamma.toFixed(4)}</TableCell>}
+                      {columnConfig.gamma && <TableCell className="text-left py-1.5 tabular-nums">{row.greeksAvailable ? row.pe.gamma.toFixed(4) : "—"}</TableCell>}
 
-                      {columnConfig.theta && <TableCell className="text-left py-1.5 tabular-nums text-bearish/80">{row.pe.theta.toFixed(2)}</TableCell>}
+                      {columnConfig.theta && <TableCell className="text-left py-1.5 tabular-nums text-bearish/80">{row.greeksAvailable ? row.pe.theta.toFixed(2) : "—"}</TableCell>}
 
-                      {columnConfig.vega && <TableCell className="text-left py-1.5 tabular-nums">{row.pe.vega.toFixed(2)}</TableCell>}
+                      {columnConfig.vega && <TableCell className="text-left py-1.5 tabular-nums">{row.greeksAvailable ? row.pe.vega.toFixed(2) : "—"}</TableCell>}
 
-                      {columnConfig.rho && <TableCell className="text-left py-1.5 tabular-nums">-0.{Math.round(Math.abs(row.pe.delta) * 22).toString().padStart(2, "0")}</TableCell>}
 
                       {columnConfig.timeValue && <TableCell className="text-left py-1.5 tabular-nums">{row.pe.timeValue.toFixed(2)}</TableCell>}
 
@@ -2619,6 +2697,79 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
         </Card>
 
       )}
+
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-card px-3 py-2">
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="outline" size="sm" className="h-8 text-xs">
+              In Basket <Badge variant="secondary" className="ml-1">{basket.length}</Badge>
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-80 p-3" align="start">
+            <p className="mb-2 text-xs font-semibold">Selected option contracts</p>
+            {basket.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Select CE/PE using the check buttons beside each strike.</p>
+            ) : (
+              <div className="space-y-2">
+                {basket.map((contract) => (
+                  <div key={contractBasketKey(contract)} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="min-w-0 truncate">{contract.tradingSymbol} · {contract.lotSize > 0 ? `${contract.lotSize} qty/lot` : "lot size unavailable"}</span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2"
+                      onClick={() => setBasket((current) => current.filter((item) => contractBasketKey(item) !== contractBasketKey(contract)))}
+                      aria-label={`Remove ${contract.tradingSymbol} from basket`}
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </PopoverContent>
+        </Popover>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="outline" size="sm" className="h-8 text-xs">
+              In Watchlist <Badge variant="secondary" className="ml-1">{optionWatchlist.length}</Badge>
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-80 p-3" align="start">
+            <p className="mb-2 text-xs font-semibold">Saved option contracts</p>
+            {optionWatchlist.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Use the star beside a CE/PE contract to save it.</p>
+            ) : (
+              <div className="space-y-2">
+                {optionWatchlist.map((contract) => (
+                  <div key={optionContractWatchlistKey(contract)} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="min-w-0 truncate">{contract.tradingSymbol} · {contract.expiryLabel}</span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2"
+                      onClick={() => removeOptionWatchlistContract(contract)}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </PopoverContent>
+        </Popover>
+        <Button
+          size="sm"
+          className="h-8 text-xs"
+          disabled={basket.length === 0}
+          onClick={() => navigate(`/strategy-builder?symbol=${encodeURIComponent(symbol)}`, {
+            state: { optionContracts: basket },
+          })}
+        >
+          <Layers className="mr-1.5 h-3.5 w-3.5" />
+          Build Your Strategy
+        </Button>
+      </div>
 
       {/* ── Close Option Chain conditional ───────────────────────────────── */}
 

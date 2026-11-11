@@ -231,11 +231,12 @@ export function useLiveOptionChain(symbol: string, expiry?: string, enabled = tr
         : 50;
 
       if (!hasChainData && !isAfterHours) return null;
+      const instrumentLotSize = optionInstrument?.lotSize ?? 0;
       return {
         chain: result.chain,
         spotPrice: result.spotPrice,
         expiries,
-        lotSize: optionInstrument?.lotSize ?? 0,
+        lotSize: instrumentLotSize > 0 ? instrumentLotSize : 0,
         stepSize,
         maxPain: hasChainData ? getMaxPain(result.chain) : 0,
         totalCEOI: result.totalCEOI,
@@ -243,6 +244,7 @@ export function useLiveOptionChain(symbol: string, expiry?: string, enabled = tr
         isLive: hasChainData && !isAfterHours,
         afterHours: isAfterHours,
         source: "source" in result ? result.source : result.provider,
+        greeksAvailable: result.greeksAvailable,
         cachedAt: result.cachedAt ?? null,
         oiChangeAvailable: "oiChangeAvailable" in result && typeof result.oiChangeAvailable === "boolean"
           ? result.oiChangeAvailable

@@ -4,20 +4,21 @@
  * Matches the Dhan-style reference design with:
  *   - Live LTP / bid / ask from central Dhan market data
  *   - Market Depth (bid/ask ladder)
- *   - Full order-type controls: Market, Limit, SL, Trail
+ *   - Order-type controls: Market, Limit, Stop Loss Limit, Stop Loss Market
  *   - Lots × lotSize quantity
- *   - Target / Stop Loss / Trail Jump toggles
+ *   - Target and stop-loss controls
  *   - Product / Validity selectors
  *   - Margin + available-funds display
  *   - Order submission via createTerminalOrder (simulated account safe)
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { X, Zap, TrendingUp, TrendingDown, AlertTriangle, RefreshCw, Info } from "lucide-react";
+import { X, Zap, TrendingUp, TrendingDown, RefreshCw, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAccountContext } from "@/hooks/useAccountContext";
 import { createTerminalOrder, requestTerminalMarketData, type CreateOrderRequest } from "@/lib/terminalApi";
 import { createClientOrderId } from "@/lib/terminalApi";
+import { isWithinNseSessionAt } from "@/lib/marketApi";
 import { toast } from "sonner";
 
 /* ─── Contract identity passed in from OptionChain ─────────────────────── */
@@ -49,52 +50,10 @@ export interface OptionOrderPopupProps {
 }
 
 /* ─── Types ─────────────────────────────────────────────────────────────── */
-type OrderMode = "Market" | "Limit" | "SL" | "Trail";
+type OrderMode = "Market" | "Limit" | "SL" | "SL-M";
 type TicketMode = "Trading" | "Normal";
 type ProductType = "Intraday (MIS)" | "Normal (NRML)" | "CNC";
 type ValidityType = "Day" | "IOC" | "GTC";
-
-/* ─── Static lot-size fallback map (NSE F&O) ────────────────────────────── */
-const NSE_FNO_LOT_SIZES: Record<string, number> = {
-  NIFTY: 25,
-  BANKNIFTY: 15,
-  FINNIFTY: 40,
-  MIDCPNIFTY: 75,
-  RELIANCE: 250,
-  TCS: 150,
-  HDFCBANK: 550,
-  INFY: 400,
-  ICICIBANK: 700,
-  HINDUNILVR: 300,
-  SBIN: 1500,
-  BHARTIARTL: 500,
-  ITC: 3200,
-  KOTAKBANK: 400,
-  LT: 150,
-  AXISBANK: 1200,
-  ASIANPAINT: 200,
-  MARUTI: 25,
-  TATAMOTORS: 2850,
-  SUNPHARMA: 350,
-  TITAN: 375,
-  WIPRO: 1500,
-  BAJFINANCE: 125,
-  HCLTECH: 700,
-  NTPC: 4000,
-  POWERGRID: 4500,
-  ONGC: 3850,
-  ADANIENT: 250,
-  COALINDIA: 4200,
-  DRREDDY: 125,
-  CIPLA: 650,
-};
-
-/** Returns a non-zero lot size for the contract, using the static map as fallback. */
-function resolveLotSize(contract: OptionContract): number {
-  if (contract.lotSize > 0) return contract.lotSize;
-  const sym = contract.underlying.toUpperCase();
-  return NSE_FNO_LOT_SIZES[sym] ?? 1;
-}
 
 interface DepthLevel {
   price: number;
@@ -118,9 +77,9 @@ const fmtPct = (n: number) => (n >= 0 ? `+${fmt(n)}%` : `${fmt(n)}%`);
 export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrderPopupProps) {
   /* — account — */
   const { activeAccountId, accounts, hasNoAccount } = useAccountContext();
-  const availableFunds = 10_000_000; // ₹10,00,000.00 — from account; hardcoded if not fetched
-  const isSimulated = !accounts.find(a => a.id === activeAccountId)?.broker_provider
-    || accounts.find(a => a.id === activeAccountId)?.status !== "active";
+  const activeAccount = accounts.find(a => a.id === activeAccountId);
+  const availableFunds = activeAccount?.available_margin ?? null;
+  const isSimulated = !activeAccount?.broker_provider || activeAccount.status !== "active";
 
   /* — side / ticket mode — */
   const [side, setSide] = useState<"BUY" | "SELL">(initialSide);
@@ -129,28 +88,18 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
 
   /* — price inputs — */
   const [lots, setLots] = useState(1);
-  const resolvedLotSize = resolveLotSize(contract);
+  const resolvedLotSize = contract.lotSize;
   const qty = lots * resolvedLotSize;
+  const contractExchange = contract.exchangeSegment.toUpperCase().startsWith("BSE") ? "BSE" : "NSE";
 
   const [limitPrice, setLimitPrice] = useState(fmt(contract.ltp));
   const [triggerPrice, setTriggerPrice] = useState(fmt(contract.ltp));
-  const [limitEnabled, setLimitEnabled] = useState(false);
 
-  const [targetEnabled, setTargetEnabled] = useState(true);
-  const [targetPrice, setTargetPrice] = useState(
-    fmt(side === "BUY" ? contract.ltp * 1.05 : contract.ltp * 0.95)
-  );
-  const [tgTrailEnabled, setTgTrailEnabled] = useState(false);
-  const [tgTrailJump, setTgTrailJump] = useState("5");
+  const [targetEnabled, setTargetEnabled] = useState(false);
+  const [targetPrice, setTargetPrice] = useState("");
 
-  const [slEnabled, setSlEnabled] = useState(true);
-  const [slPrice, setSlPrice] = useState(
-    fmt(side === "BUY" ? contract.ltp * 0.95 : contract.ltp * 1.05)
-  );
-  const [slTrailEnabled, setSlTrailEnabled] = useState(false);
-  const [slTrailJump, setSlTrailJump] = useState("2");
-
-  const [addTriggerEnabled, setAddTriggerEnabled] = useState(false);
+  const [slEnabled, setSlEnabled] = useState(false);
+  const [slPrice, setSlPrice] = useState("");
 
   const [product, setProduct] = useState<ProductType>("Intraday (MIS)");
   const [validity, setValidity] = useState<ValidityType>("Day");
@@ -159,14 +108,15 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
   const [ltp, setLtp] = useState(contract.ltp);
   const [bid, setBid] = useState(contract.bidPrice);
   const [ask, setAsk] = useState(contract.askPrice);
-  const [ltpChange, setLtpChange] = useState(0);
-  const [ltpChangePct, setLtpChangePct] = useState(0);
+  const [ltpChange, setLtpChange] = useState<number | null>(null);
+  const [ltpChangePct, setLtpChangePct] = useState<number | null>(null);
   // Start as DELAYED (not LIVE) until we confirm a fresh quote — avoids misleading "LIVE" flash
-  const [dataStatus, setDataStatus] = useState<"LIVE" | "DELAYED" | "OFFLINE">(
+  const [dataStatus, setDataStatus] = useState<"LIVE" | "DELAYED" | "HISTORICAL" | "OFFLINE">(
     contract.ltp > 0 ? "DELAYED" : "OFFLINE"
   );
   const [depth, setDepth] = useState<MarketDepth>({ bids: [], asks: [], timestamp: null });
   const [depthLoading, setDepthLoading] = useState(true);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
 
   /* — order state — */
   const [orderState, setOrderState] = useState<"idle" | "confirming" | "submitting" | "done" | "error">("idle");
@@ -175,14 +125,15 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
   const submittingRef = useRef(false);
 
   /* — computed margin (rough estimate: ltp × qty × 0.15) — */
-  const marginRequired = ltp * qty * 0.15;
-  const fundsInsufficient = marginRequired > availableFunds;
+  const premiumValue = ltp > 0 ? ltp * qty : null;
 
   /* ── Fetch live quote + depth ───────────────────────────────────────── */
   const fetchMarketData = useCallback(async () => {
+    setDepthLoading(true);
     if (!contract.securityId) {
       // No security ID — keep using LTP from option chain (DELAYED), not OFFLINE
       setDataStatus(contract.ltp > 0 ? "DELAYED" : "OFFLINE");
+      setQuoteError("Contract security ID is unavailable; live quote and depth cannot be requested.");
       setDepthLoading(false);
       return;
     }
@@ -192,7 +143,7 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
         providerInstrumentId: contract.securityId,
         symbol: contract.underlying,
         tradingSymbol: contract.tradingSymbol,
-        exchange: "NSE",
+        exchange: contractExchange,
         exchangeSegment: contract.exchangeSegment,
         instrumentType: contract.instrumentType,
         lotSize: contract.lotSize,
@@ -215,25 +166,29 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
 
       if (quote && typeof quote.ltp === "number") {
         setLtp(quote.ltp);
-        setBid(quote.ltp * 0.998);  // Dhan getQuote does not provide bid/ask — use LTP approximation
-        setAsk(quote.ltp * 1.002);
-        setLtpChange(quote.change ?? 0);
-        setLtpChangePct(quote.changePercent ?? 0);
-        setDataStatus("LIVE");
-        // Dhan getQuote does not supply market depth — show honest unavailable state
+        setLtpChange(quote.change);
+        setLtpChangePct(quote.changePercent);
+        const quoteTimestamp = Date.parse(quote.timestamp);
+        const isFresh = Number.isFinite(quoteTimestamp)
+          && Date.now() >= quoteTimestamp
+          && Date.now() - quoteTimestamp <= 60_000;
+        const isLive = isFresh && isWithinNseSessionAt();
+        setDataStatus(isLive ? "LIVE" : isWithinNseSessionAt() ? "DELAYED" : "HISTORICAL");
+        setQuoteError(isLive ? null : "The latest quote is historical or outside market hours; it is not labelled live.");
         setDepth({ bids: [], asks: [], timestamp: quote.timestamp ?? null });
       } else {
         // Quote returned but no valid LTP — market closed / outside hours, data is stale
         // Keep existing LTP from option chain; show DELAYED rather than OFFLINE
         setDataStatus("DELAYED");
+        setQuoteError("Dhan returned no usable LTP for this contract.");
       }
-    } catch {
-      // Network/API error — if we already have LTP from the chain, show DELAYED not OFFLINE
-      setDataStatus(ltp > 0 ? "DELAYED" : "OFFLINE");
+    } catch (error) {
+      setQuoteError(error instanceof Error ? error.message : "The central Dhan quote request failed.");
+      setDataStatus(contract.ltp > 0 ? "DELAYED" : "OFFLINE");
     } finally {
       setDepthLoading(false);
     }
-  }, [contract, ltp]);
+  }, [contract, contractExchange]);
 
   /* poll every 5 s */
   useEffect(() => {
@@ -242,17 +197,28 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
     return () => clearInterval(id);
   }, [fetchMarketData]);
 
-  /* ── Keep target / SL defaults in sync with LTP ────────────────────── */
-  useEffect(() => {
-    setTargetPrice(fmt(side === "BUY" ? ltp * 1.05 : ltp * 0.95));
-    setSlPrice(fmt(side === "BUY" ? ltp * 0.95 : ltp * 1.05));
-  }, [side, ltp]);
+  const beginOrderPreview = () => {
+    if (!activeAccountId) {
+      toast.error("Select an active trading account first.");
+      return;
+    }
+    if (!contract.securityId || !contract.tradingSymbol || !contract.exchangeSegment || resolvedLotSize <= 0) {
+      toast.error("The option contract identity or lot size is unavailable. The order was not submitted.");
+      return;
+    }
+    setOrderMessage("");
+    setOrderState("confirming");
+  };
 
   /* ── Submit order ───────────────────────────────────────────────────── */
   const handleSubmit = async () => {
     if (submittingRef.current) return;
     if (!activeAccountId) {
       toast.error("Select an active trading account first.");
+      return;
+    }
+    if (!contract.securityId || !contract.tradingSymbol || !contract.exchangeSegment || resolvedLotSize <= 0) {
+      toast.error("The option contract identity or lot size is unavailable. The order was not submitted.");
       return;
     }
 
@@ -262,18 +228,24 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
     const parsedSL = slEnabled ? Number(slPrice) : undefined;
 
     /* Basic validation */
-    if ((mode === "Limit" || (mode === "Trail" && limitEnabled)) && parsedLimit <= 0) {
+    if ((mode === "Limit" || mode === "SL") && (!Number.isFinite(parsedLimit) || parsedLimit <= 0)) {
       setOrderState("error"); setOrderMessage("Enter a valid limit price."); return;
     }
-    if ((mode === "SL" || mode === "Trail") && parsedTrigger <= 0) {
+    if ((mode === "SL" || mode === "SL-M") && (!Number.isFinite(parsedTrigger) || parsedTrigger <= 0)) {
       setOrderState("error"); setOrderMessage("Enter a valid trigger price."); return;
+    }
+    if (parsedTarget !== undefined && (!Number.isFinite(parsedTarget) || parsedTarget <= 0)) {
+      setOrderState("error"); setOrderMessage("Enter a valid target price or disable Target."); return;
+    }
+    if (parsedSL !== undefined && (!Number.isFinite(parsedSL) || parsedSL <= 0)) {
+      setOrderState("error"); setOrderMessage("Enter a valid stop-loss price or disable Stop Loss."); return;
     }
 
     const orderTypeMap: Record<OrderMode, CreateOrderRequest["order_type"]> = {
       Market: "MARKET",
       Limit: "LIMIT",
       SL: "SL",
-      Trail: "SL-M",
+      "SL-M": "SL-M",
     };
 
     submittingRef.current = true;
@@ -287,7 +259,7 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
         symbol: contract.underlying,
         tradingSymbol: contract.tradingSymbol,
         displayName: contract.tradingSymbol,
-        exchange: "NSE",
+        exchange: contractExchange,
         exchangeSegment: contract.exchangeSegment,
         instrumentType: contract.instrumentType,
         lotSize: resolvedLotSize,
@@ -302,13 +274,13 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
         account_id: activeAccountId,
         client_order_id: `oc-${createClientOrderId()}`,
         symbol: contract.tradingSymbol,
-        exchange: "NSE",
+        exchange: contractExchange,
         segment: contract.exchangeSegment,
         side,
         quantity: qty,
         order_type: orderTypeMap[mode],
-        ...(mode === "Limit" || (mode === "Trail" && limitEnabled) ? { price: parsedLimit } : {}),
-        ...(mode === "SL" || mode === "Trail" ? { trigger_price: parsedTrigger } : {}),
+        ...(mode === "Limit" || mode === "SL" ? { price: parsedLimit } : {}),
+        ...(mode === "SL" || mode === "SL-M" ? { trigger_price: parsedTrigger } : {}),
         ...(parsedTarget !== undefined ? { take_profit: parsedTarget } : {}),
         ...(parsedSL !== undefined ? { stop_loss: parsedSL } : {}),
         time_in_force: validity === "Day" ? "DAY" : validity === "IOC" ? "IOC" : "GTC",
@@ -344,8 +316,7 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
 
   /* ── Render ─────────────────────────────────────────────────────────── */
   const isBuy = side === "BUY";
-  const statusColor = dataStatus === "LIVE" ? "text-emerald-400" : dataStatus === "DELAYED" ? "text-amber-400" : "text-red-400";
-  const changeColor = ltpChange >= 0 ? "text-emerald-400" : "text-red-400";
+  const changeColor = (ltpChange ?? 0) >= 0 ? "text-emerald-400" : "text-red-400";
 
   return (
     /* Backdrop */
@@ -364,25 +335,25 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
           <div className="flex flex-col gap-0.5 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-base font-bold text-foreground">{contract.tradingSymbol}</span>
-              <span className="text-[10px] font-semibold text-muted-foreground border border-border px-1.5 py-0.5 rounded">NSE</span>
+              <span className="text-[10px] font-semibold text-muted-foreground border border-border px-1.5 py-0.5 rounded">{contractExchange}</span>
               <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                 dataStatus === "LIVE" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400" :
-                dataStatus === "DELAYED" ? "border-amber-500/40 bg-amber-500/10 text-amber-400" :
+                dataStatus === "DELAYED" || dataStatus === "HISTORICAL" ? "border-amber-500/40 bg-amber-500/10 text-amber-400" :
                 "border-red-500/40 bg-red-500/10 text-red-400"
               }`}>
-                {dataStatus === "LIVE" ? "● LIVE" : dataStatus === "DELAYED" ? "○ DELAYED" : "○ OFFLINE"}
+                {dataStatus === "LIVE" ? "● LIVE" : dataStatus === "DELAYED" ? "○ DELAYED" : dataStatus === "HISTORICAL" ? "○ HISTORICAL" : "○ OFFLINE"}
               </span>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-2xl font-bold text-foreground">₹{fmt(ltp)}</span>
               <span className={`text-sm font-semibold ${changeColor}`}>
-                {fmtChange(ltpChange)} ({fmtPct(ltpChangePct)})
-                {ltpChange >= 0 ? <TrendingUp className="inline h-3.5 w-3.5 ml-1" /> : <TrendingDown className="inline h-3.5 w-3.5 ml-1" />}
+                {ltpChange == null ? "—" : `${fmtChange(ltpChange)} (${ltpChangePct == null ? "—" : fmtPct(ltpChangePct)})`}
+                {ltpChange != null && (ltpChange >= 0 ? <TrendingUp className="inline h-3.5 w-3.5 ml-1" /> : <TrendingDown className="inline h-3.5 w-3.5 ml-1" />)}
               </span>
             </div>
           </div>
           <div className="flex items-center gap-6 text-xs text-muted-foreground shrink-0">
-            <span>Lot Size: <span className="font-semibold text-foreground">{resolvedLotSize}</span></span>
+            <span>Lot Size: <span className="font-semibold text-foreground">{resolvedLotSize > 0 ? resolvedLotSize : "—"}</span></span>
             <span>Expiry: <span className="font-semibold text-foreground">{contract.expiryLabel}</span></span>
           </div>
           <button
@@ -427,22 +398,21 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
               </div>
             </div>
 
-            {/* Order type tabs — Trading mode: Market/Limit/SL/Trail; Normal mode: Market/Limit only */}
+            {/* Order type tabs — trailing stops are not supported by the order gateway. */}
             <div className="flex items-center gap-0 border-b border-border pb-0 text-sm">
               {(ticketMode === "Trading"
-                ? (["Market", "Limit", "SL", "Trail"] as OrderMode[])
+                ? (["Market", "Limit", "SL", "SL-M"] as OrderMode[])
                 : (["Market", "Limit"] as OrderMode[])
               ).map(m => (
                 <button key={m} onClick={() => setMode(m)}
                   className={`px-4 py-2 font-medium border-b-2 transition-colors ${mode === m
                     ? "border-emerald-400 text-emerald-400"
                     : "border-transparent text-muted-foreground hover:text-foreground"}`}
-                >{m === "Trail" ? "⚡ TRAIL" : m}</button>
+                >{m === "SL" ? "SL Limit" : m === "SL-M" ? "SL Market" : m}</button>
               ))}
               {ticketMode === "Trading" && (
-                <div className="ml-auto flex items-center gap-1 text-xs text-muted-foreground pr-1">
-                  <span>VWAP:</span>
-                  <span className="font-semibold text-foreground">₹{fmt(ltp * 0.998)}</span>
+                <div className="ml-auto pr-1 text-[10px] text-muted-foreground">
+                  Trailing stop loss is not supported by the connected order service.
                 </div>
               )}
             </div>
@@ -466,28 +436,14 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
                 </div>
               </div>
 
-              {/* Price input — shown for Limit / SL / Trail (both modes), hidden for Market */}
-              {mode !== "Market" && (
+              {/* Price input — shown for limit-bearing order types. */}
+              {(mode === "Limit" || mode === "SL") && (
                 <div className="flex flex-col gap-1">
-                  <div className="flex items-center gap-2">
-                    {mode === "Trail" && ticketMode === "Trading" && (
-                      <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
-                        <input type="checkbox" checked={limitEnabled} onChange={e => setLimitEnabled(e.target.checked)}
-                          className="accent-emerald-500 h-3.5 w-3.5" />
-                        Limit
-                      </label>
-                    )}
-                    {(mode !== "Trail" || ticketMode === "Normal") && (
-                      <label className="text-xs text-muted-foreground">
-                        {mode === "Limit" ? "Limit Price" : mode === "SL" ? "Limit Price" : "Price"}
-                      </label>
-                    )}
-                  </div>
+                  <label className="text-xs text-muted-foreground">{mode === "SL" ? "Stop Limit Price" : "Limit Price"}</label>
                   <div className="flex items-center gap-0 border border-border rounded-lg overflow-hidden bg-muted/20">
                     <span className="pl-3 text-muted-foreground text-sm">₹</span>
                     <input value={limitPrice} onChange={e => setLimitPrice(e.target.value)}
-                      disabled={mode === "Trail" && ticketMode === "Trading" && !limitEnabled}
-                      className="flex-1 bg-transparent px-2 py-2 text-sm font-semibold text-foreground outline-none disabled:opacity-40"
+                      className="flex-1 bg-transparent px-2 py-2 text-sm font-semibold text-foreground outline-none"
                       type="number" step={contract.tickSize} min={0}
                     />
                     <div className="flex flex-col border-l border-border">
@@ -500,8 +456,8 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
                 </div>
               )}
 
-              {/* Trigger price — SL / Trail (Trading mode only) */}
-              {ticketMode === "Trading" && (mode === "SL" || mode === "Trail") && (
+              {/* Trigger price — SL / SL Market */}
+              {ticketMode === "Trading" && (mode === "SL" || mode === "SL-M") && (
                 <div className="flex flex-col gap-1">
                   <label className="text-xs text-muted-foreground">Trigger Price</label>
                   <div className="flex items-center gap-0 border border-border rounded-lg overflow-hidden bg-muted/20">
@@ -518,7 +474,7 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
               {mode === "Market" && (
                 <div className="flex items-end">
                   <button
-                    onClick={() => void handleSubmit()}
+                    onClick={beginOrderPreview}
                     disabled={orderState === "submitting" || orderState === "done"}
                     className={`w-full h-10 flex items-center justify-center gap-2 rounded-lg font-bold text-sm text-white transition-all ${
                       isBuy ? "bg-emerald-600 hover:bg-emerald-500" : "bg-red-600 hover:bg-red-500"
@@ -580,42 +536,6 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
             </div>
             )}
 
-            {/* Trail jump row — Trading mode only */}
-            {ticketMode === "Trading" && (
-            <div className="flex items-center gap-4 flex-wrap text-xs">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={tgTrailEnabled} onChange={e => setTgTrailEnabled(e.target.checked)}
-                  className="accent-emerald-500 h-3.5 w-3.5" />
-                <span className="text-muted-foreground">TG Trail Jump</span>
-                <Info className="h-3 w-3 text-muted-foreground/60" />
-                {tgTrailEnabled && (
-                  <input value={tgTrailJump} onChange={e => setTgTrailJump(e.target.value)}
-                    className="w-14 rounded border border-border bg-muted/20 px-2 py-1 text-foreground outline-none text-center"
-                    type="number" min={0}
-                  />
-                )}
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={slTrailEnabled} onChange={e => setSlTrailEnabled(e.target.checked)}
-                  className="accent-emerald-500 h-3.5 w-3.5" />
-                <span className="text-muted-foreground">SL Trail Jump</span>
-                <Info className="h-3 w-3 text-muted-foreground/60" />
-                {slTrailEnabled && (
-                  <input value={slTrailJump} onChange={e => setSlTrailJump(e.target.value)}
-                    className="w-14 rounded border border-border bg-muted/20 px-2 py-1 text-foreground outline-none text-center"
-                    type="number" min={0}
-                  />
-                )}
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={addTriggerEnabled} onChange={e => setAddTriggerEnabled(e.target.checked)}
-                  className="accent-emerald-500 h-3.5 w-3.5" />
-                <span className="text-muted-foreground">Add Trigger Price</span>
-                <Info className="h-3 w-3 text-muted-foreground/60" />
-              </label>
-            </div>
-            )}
-
             {/* Product + Validity */}
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1">
@@ -643,32 +563,44 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
             {/* Footer: margin + funds */}
             <div className="flex items-center gap-3 flex-wrap text-xs border-t border-border pt-3">
               <span className="text-muted-foreground">
-                Margin: <span className="font-semibold text-foreground">₹{fmt(marginRequired)} (1x)</span>
+                Premium value: <span className="font-semibold text-foreground">{premiumValue === null ? "—" : `₹${fmt(premiumValue)}`}</span>
               </span>
               <span className="text-muted-foreground">
-                Available: <span className="font-semibold text-foreground">₹{fmt(availableFunds)}</span>
+                Available margin: <span className="font-semibold text-foreground">{availableFunds === null ? "Unavailable" : `₹${fmt(availableFunds)}`}</span>
               </span>
-              <span className="text-muted-foreground">Validity of Order: 1 Day</span>
-              <button className="ml-auto text-cyan-400 hover:underline flex items-center gap-1">
+              <span className="text-muted-foreground">Margin estimate: unavailable</span>
+              <button type="button" onClick={() => toast.info("A margin estimator is not available from the connected order service.")} className="ml-auto text-cyan-400 hover:underline flex items-center gap-1">
                 <span>Order Estimator</span>
               </button>
             </div>
-
-            {/* Funds warning */}
-            {fundsInsufficient && (
-              <div className="flex items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs">
-                <div className="flex items-center gap-2 text-amber-400">
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                  <span>Fund limit insufficient by ₹{fmt(marginRequired - availableFunds)}</span>
-                </div>
-                <button className="text-emerald-400 font-semibold hover:underline whitespace-nowrap">+ Add Funds</button>
-              </div>
-            )}
+            {quoteError && <p role="status" className="text-[11px] text-amber-400">{quoteError}</p>}
 
             {/* Error / success message */}
             {orderState === "error" && (
               <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
                 {orderMessage}
+              </div>
+            )}
+            {orderState === "confirming" && (
+              <div className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-3 text-xs">
+                <p className="font-semibold text-amber-300">Review order before submitting</p>
+                <p className="text-muted-foreground">
+                  {side} {qty} {contract.tradingSymbol} ({lots} × {resolvedLotSize}) · {mode} · {product} · {validity}
+                  {mode === "Limit" || mode === "SL" ? ` · Limit ₹${limitPrice}` : ""}
+                  {mode === "SL" || mode === "SL-M" ? ` · Trigger ₹${triggerPrice}` : ""}
+                </p>
+                {premiumValue !== null && <p className="text-muted-foreground">Indicative premium value: ₹{fmt(premiumValue)}</p>}
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setOrderState("idle")}>Back</Button>
+                  <Button
+                    size="sm"
+                    onClick={() => void handleSubmit()}
+                    disabled={orderState === "submitting"}
+                    className={isBuy ? "bg-emerald-600 text-white hover:bg-emerald-500" : "bg-red-600 text-white hover:bg-red-500"}
+                  >
+                    Confirm and submit
+                  </Button>
+                </div>
               </div>
             )}
             {orderState === "done" && (
@@ -678,10 +610,10 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
               </div>
             )}
 
-            {/* Submit button for Limit / SL / Trail orders (Market uses inline Instant button) */}
+            {/* Submit button for non-market orders; Market uses the inline button. */}
             {mode !== "Market" && (
               <Button
-                onClick={() => void handleSubmit()}
+                onClick={beginOrderPreview}
                 disabled={orderState === "submitting" || orderState === "done"}
                 className={`h-11 w-full font-bold text-sm text-white ${
                   isBuy ? "bg-emerald-600 hover:bg-emerald-500" : "bg-red-600 hover:bg-red-500"
@@ -727,7 +659,7 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
 
               {depth.bids.length === 0 && depth.asks.length === 0 ? (
                 <div className="text-[11px] text-muted-foreground text-center py-4">
-                  {depthLoading ? "Loading depth..." : "Market depth not available from Dhan for this contract."}
+                  {depthLoading ? "Checking Dhan market-data availability..." : "Market depth is unavailable from the connected Dhan quote service for this contract."}
                 </div>
               ) : (
                 <div className="space-y-0.5">
@@ -760,7 +692,7 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
                 </div>
               )}
 
-              {depth.timestamp && (
+              {depth.bids.length > 0 && depth.timestamp && (
                 <p className="text-[9px] text-muted-foreground/50 mt-1 text-right">
                   {new Date(depth.timestamp).toLocaleTimeString("en-IN")}
                 </p>
@@ -771,11 +703,11 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
             <div className="flex items-center gap-2 text-xs">
               <div className="flex-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-center">
                 <div className="text-[10px] text-muted-foreground">Bid</div>
-                <div className="font-bold text-emerald-400">₹{fmt(bid)}</div>
+                <div className="font-bold text-emerald-400">{bid > 0 ? `₹${fmt(bid)}` : "—"}</div>
               </div>
               <div className="flex-1 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-center">
                 <div className="text-[10px] text-muted-foreground">Ask</div>
-                <div className="font-bold text-red-400">₹{fmt(ask)}</div>
+                <div className="font-bold text-red-400">{ask > 0 ? `₹${fmt(ask)}` : "—"}</div>
               </div>
             </div>
 

@@ -16,6 +16,11 @@ import { fetchCentralMarketQuotes } from "@/lib/centralMarketQuotes";
 import { findWatchlistInstrument } from "@/lib/watchlistInstrument";
 import { DEFAULT_WATCHLIST_SYMBOLS } from "@/lib/defaultWatchlist";
 import { useQuery } from "@tanstack/react-query";
+import {
+  optionContractWatchlistKey,
+  readOptionContractWatchlist,
+  saveOptionContractWatchlist,
+} from "@/lib/optionContractWatchlist";
 
 const STORAGE_KEY = "optionsdesk_watchlist";
 const DEFAULT_WATCHLIST = [...new Set([
@@ -60,6 +65,7 @@ export default function Watchlist() {
   const [search, setSearch] = useState("");
   const [addSymbol, setAddSymbol] = useState("");
   const [addSymbolError, setAddSymbolError] = useState<string | null>(null);
+  const [optionContracts, setOptionContracts] = useState(() => readOptionContractWatchlist());
   const { instruments, isLoaded: instrumentsLoaded, loadError: instrumentLoadError } = useInstrumentLookup();
   const { data: marketStatusData } = useMarketStatus();
 
@@ -194,6 +200,18 @@ export default function Watchlist() {
     saveWatchlist(updated);
   };
 
+  const removeOptionContract = (securityId: string, type: "CE" | "PE") => {
+    const updated = optionContracts.filter((contract) =>
+      optionContractWatchlistKey(contract) !== `${securityId}:${type}`
+    );
+    try {
+      saveOptionContractWatchlist(updated);
+      setOptionContracts(updated);
+    } catch (error) {
+      setAddSymbolError(`Could not update saved option contracts: ${error instanceof Error ? error.message : "browser storage is unavailable."}`);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -237,6 +255,51 @@ export default function Watchlist() {
         <p className="text-xs text-amber-500" role="status">
           No supported cash-equity or index instrument found for {unresolvedSymbols.length} watchlist symbol{unresolvedSymbols.length === 1 ? "" : "s"}: {unresolvedSymbols.join(", ")}
         </p>
+      )}
+
+      {optionContracts.length > 0 && (
+        <Card>
+          <CardContent className="p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <h2 className="text-sm font-semibold">Saved option contracts</h2>
+              <span className="text-xs text-muted-foreground">{optionContracts.length} contracts · saved quote is a snapshot</span>
+            </div>
+            <div className="space-y-1">
+              {optionContracts.map((contract) => (
+                <div key={optionContractWatchlistKey(contract)} className="flex flex-wrap items-center justify-between gap-2 rounded border px-2 py-1.5 text-xs">
+                  <div className="min-w-0">
+                    <span className="font-medium">{contract.tradingSymbol}</span>
+                    <span className="ml-2 text-muted-foreground">
+                      {contract.underlying} · {contract.expiryLabel} · {contract.lotSize > 0 ? `${contract.lotSize} qty/lot` : "lot size unavailable"}
+                    </span>
+                    <span className="ml-2 text-muted-foreground">
+                      {contract.ltp > 0 ? `Saved LTP ₹${contract.ltp.toFixed(2)} (snapshot)` : "LTP unavailable"}
+                    </span>
+                  </div>
+                  <div className="flex gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => navigate(`/option-chain?${new URLSearchParams({ symbol: contract.underlying, expiry: contract.expiry })}`)}
+                    >
+                      Open chain
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => removeOptionContract(contract.securityId, contract.type)}
+                      aria-label={`Remove ${contract.tradingSymbol} from option watchlist`}
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       <Card>
