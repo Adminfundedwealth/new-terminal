@@ -1,4 +1,4 @@
-﻿import { useState, useMemo, useRef, useCallback, useEffect } from "react";
+import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { OptionOrderPopup, type OptionContract } from "@/components/OptionOrderPopup";
 import { OptionContractChartTab, type ChartTab } from "@/components/OptionContractChartTab";
 import { useSearchParams, useNavigate } from "react-router-dom";
@@ -28,7 +28,7 @@ import {
   type TerminalMarketDataOptionChain,
 } from "@/lib/terminalApi";
 
-// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Symbol categories for organized browsing ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
+//  Symbol categories for organized browsing 
 const SYMBOL_CATEGORIES: { label: string; symbols: { label: string; value: string }[] }[] = [
   {
     label: "Indices",
@@ -137,7 +137,7 @@ const ALL_SYMBOLS = SYMBOL_CATEGORIES.flatMap(cat => cat.symbols);
 const INDEX_SYMBOLS = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]);
 const STOCK_SYMBOLS = new Set(ALL_SYMBOLS.filter(s => !INDEX_SYMBOLS.has(s.value)).map(s => s.value));
 
-// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Searchable Symbol Selector Component ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
+//  Searchable Symbol Selector Component 
 function SymbolSearch({ value, onSelect, categories }: { value: string; onSelect: (v: string) => void; categories: { label: string; symbols: { label: string; value: string }[] }[] }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -221,7 +221,7 @@ function SymbolSearch({ value, onSelect, categories }: { value: string; onSelect
   );
 }
 
-// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Volume Bar ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
+//  Volume Bar 
 function VolumeBar({ value, max, side }: { value: number; max: number; side: "call" | "put" }) {
   const pct = Math.min((value / max) * 100, 100);
   return (
@@ -239,7 +239,7 @@ function VolumeBar({ value, max, side }: { value: number; max: number; side: "ca
   );
 }
 
-// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ OI Bar (colored by value intensity with smooth animations) ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
+//  OI Bar (colored by value intensity with smooth animations) 
 function OIBar({ value, max, side }: { value: number; max: number; side: "call" | "put" }) {
   const pct = Math.min((value / max) * 100, 100);
   const isHigh = pct > 60;
@@ -304,7 +304,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
   const [openTabs, setOpenTabs] = useState<OptionTab[]>([{ kind: "chain" }]);
   const [activeTabId, setActiveTabId] = useState<string>("chain");
 
-  // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Order popup state ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
+//  Order popup state 
   const [orderPopup, setOrderPopup] = useState<{ contract: OptionContract; side: "BUY" | "SELL" } | null>(null);
 
   useEffect(() => {
@@ -378,7 +378,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
   const totalPEVol = chain.reduce((s, o) => s + o.pe.volume, 0);
   const atmRow = chain.find(o => o.strikePrice === atmStrike);
 
-  // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Unusual Activity Detection: volume > 3x average OI ratio ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
+//  Unusual Activity Detection: volume > 3x average OI ratio 
   const unusualActivity = useMemo(() => {
     if (chain.length === 0) return { flags: new Map<number, { ce: boolean; pe: boolean }>(), count: 0, hotStrikes: [] as number[] };
     const avgCEOI = totalCEOI / chain.length || 1;
@@ -591,7 +591,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
   const allStrikes = enrichedChain.map(r => r.strikePrice);
 
-  // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Keyboard Navigation: J/K to move, G to jump to ATM ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
+//  Keyboard Navigation: J/K to move, G to jump to ATM 
   useEffect(() => {
     if (viewMode !== "expiration" || !hasData) return;
     const handler = (e: KeyboardEvent) => {
@@ -612,7 +612,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     return () => window.removeEventListener("keydown", handler);
   }, [viewMode, hasData, enrichedChain, atmStrike, scrollToATM]);
 
-  // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ CSV Download: Export current option chain ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
+//  CSV Download: Export current option chain 
   const downloadCSV = useCallback(() => {
     if (enrichedChain.length === 0) {
       toast.error("No data to export");
@@ -635,7 +635,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     toast.success(`Exported ${enrichedChain.length} strikes to CSV`);
   }, [enrichedChain, symbol, expiries, selectedExpiry]);
 
-  // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Download a past expiry option chain through Terminal OS ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
+//  Download a past expiry option chain through Terminal OS 
   const downloadPastOC = useCallback(async (pastExpiry: string) => {
     setIsDownloadingPast(true);
     try {
@@ -996,7 +996,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
         </div>
       )}
 
-      {/* ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â BY EXPIRATION VIEW ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â */}
+{/*  BY EXPIRATION VIEW  */}
       {viewMode === "expiration" && (
         <Card>
           <CardContent className="p-0 overflow-auto max-h-[65vh]">
@@ -1019,9 +1019,9 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                     <TableHead className="text-center font-bold bg-accent/50 border-x-2 border-border" colSpan={2}>Strike Ãƒâ€šÃ‚Â· IV%</TableHead>
                     <TableHead className="text-center text-bearish font-bold" colSpan={putCols}>Puts</TableHead>
                   </TableRow>
-                  {/* Column sub-headers ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â calls reversed order */}
+{/* Column sub-headers  calls reversed order */}
                   <TableRow className="text-[11px] text-muted-foreground">
-                    {/* Call columns: reversed ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â leftmost is least important */}
+{/* Call columns: reversed  leftmost is least important */}
                     {columnConfig.iv && <TableHead className="text-right">IV%</TableHead>}
                     {columnConfig.intrinsic && <TableHead className="text-right">Intr.</TableHead>}
                     {columnConfig.timeValue && <TableHead className="text-right">Time</TableHead>}
@@ -1073,7 +1073,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                               isATM ? "bg-primary/[0.08] border-y-2 border-primary/30 shadow-[inset_0_0_20px_hsl(var(--primary)/0.06)]" : ""
                             } ${hasUA ? "bg-orange-500/[0.04]" : ""} ${isFocused ? "ring-1 ring-primary/60 bg-primary/[0.04]" : ""}`}
                           >
-                            {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ CALL SIDE ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+{/*  CALL SIDE  */}
                             {columnConfig.iv && <TableCell className={`text-right py-1.5 tabular-nums ${isITMCall ? "text-muted-foreground/70" : ""}`}>{row.ce.iv.toFixed(1)}</TableCell>}
                             {columnConfig.intrinsic && <TableCell className={`text-right py-1.5 tabular-nums ${row.ce.intrinsic > 0 ? "" : "text-muted-foreground/50"}`}>{row.ce.intrinsic.toFixed(2)}</TableCell>}
                             {columnConfig.timeValue && <TableCell className="text-right py-1.5 tabular-nums">{row.ce.timeValue.toFixed(2)}</TableCell>}
@@ -1100,7 +1100,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                               </TableCell>
                             )}
 
-                            {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ STRIKE ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+{/*  STRIKE  */}
                             <TableCell className="text-center bg-accent/50 border-l-2 border-border py-1.5">
                               <div className="flex flex-col items-center gap-1">
                                 <div className="flex items-center gap-1">
@@ -1176,7 +1176,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                             </TableCell>
                             <TableCell className="text-center py-1.5 bg-accent/50 border-r-2 border-border text-muted-foreground">{avgIV}</TableCell>
 
-                            {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ PUT SIDE ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+{/*  PUT SIDE  */}
                             {columnConfig.volume && (
                               <TableCell className="text-left py-1.5">
                                 <div className="flex items-center gap-0.5">
@@ -1208,22 +1208,22 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                           <ContextMenuSub>
                             <ContextMenuSubTrigger className="gap-2"><BarChart3 className="h-3.5 w-3.5 text-primary" /> Chart</ContextMenuSubTrigger>
                             <ContextMenuSubContent>
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "chart", row)} className="text-xs">Chart CE @ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹{row.ce.ltp.toFixed(2)}</ContextMenuItem>
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "PE", "chart", row)} className="text-xs">Chart PE @ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹{row.pe.ltp.toFixed(2)}</ContextMenuItem>
+                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "chart", row)} className="text-xs">Chart CE @ ₹{row.ce.ltp.toFixed(2)}</ContextMenuItem>
+                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "PE", "chart", row)} className="text-xs">Chart PE @ ₹{row.pe.ltp.toFixed(2)}</ContextMenuItem>
                             </ContextMenuSubContent>
                           </ContextMenuSub>
                           <ContextMenuSub>
                             <ContextMenuSubTrigger className="gap-2"><TrendingUp className="h-3.5 w-3.5 text-primary" /> Buy</ContextMenuSubTrigger>
                             <ContextMenuSubContent>
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "buy", row)} className="text-xs">Buy CE @ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹{row.ce.ltp.toFixed(2)}</ContextMenuItem>
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "PE", "buy", row)} className="text-xs">Buy PE @ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹{row.pe.ltp.toFixed(2)}</ContextMenuItem>
+                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "buy", row)} className="text-xs">Buy CE @ ₹{row.ce.ltp.toFixed(2)}</ContextMenuItem>
+                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "PE", "buy", row)} className="text-xs">Buy PE @ ₹{row.pe.ltp.toFixed(2)}</ContextMenuItem>
                             </ContextMenuSubContent>
                           </ContextMenuSub>
                           <ContextMenuSub>
                             <ContextMenuSubTrigger className="gap-2"><TrendingDown className="h-3.5 w-3.5 text-bearish" /> Sell</ContextMenuSubTrigger>
                             <ContextMenuSubContent>
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "sell", row)} className="text-xs">Sell CE @ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹{row.ce.ltp.toFixed(2)}</ContextMenuItem>
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "PE", "sell", row)} className="text-xs">Sell PE @ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹{row.pe.ltp.toFixed(2)}</ContextMenuItem>
+                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "sell", row)} className="text-xs">Sell CE @ ₹{row.ce.ltp.toFixed(2)}</ContextMenuItem>
+                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "PE", "sell", row)} className="text-xs">Sell PE @ ₹{row.pe.ltp.toFixed(2)}</ContextMenuItem>
                             </ContextMenuSubContent>
                           </ContextMenuSub>
                           <ContextMenuSeparator />
@@ -1238,7 +1238,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                     );
                   })}
                 </TableBody>
-                {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Sticky Summary Footer ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+{/*  Sticky Summary Footer  */}
                 {hasData && (
                   <tfoot className="sticky bottom-0 z-10 bg-card border-t-2 border-primary/20">
                     <tr className="text-xs font-mono font-semibold">
@@ -1268,7 +1268,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
         </Card>
       )}
 
-      {/* ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â BY STRIKE VIEW ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â */}
+{/*  BY STRIKE VIEW  */}
       {viewMode === "strike" && (
         <Card>
           <CardContent className="p-0 overflow-auto">

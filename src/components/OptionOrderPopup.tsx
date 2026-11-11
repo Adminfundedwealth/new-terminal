@@ -49,8 +49,51 @@ export interface OptionOrderPopupProps {
 
 /* ─── Types ─────────────────────────────────────────────────────────────── */
 type OrderMode = "Market" | "Limit" | "SL" | "Trail";
+type TicketMode = "Trading" | "Normal";
 type ProductType = "Intraday (MIS)" | "Normal (NRML)" | "CNC";
 type ValidityType = "Day" | "IOC" | "GTC";
+
+/* ─── Static lot-size fallback map (NSE F&O) ────────────────────────────── */
+const NSE_FNO_LOT_SIZES: Record<string, number> = {
+  NIFTY: 25,
+  BANKNIFTY: 15,
+  FINNIFTY: 40,
+  MIDCPNIFTY: 75,
+  RELIANCE: 250,
+  TCS: 150,
+  HDFCBANK: 550,
+  INFY: 400,
+  ICICIBANK: 700,
+  HINDUNILVR: 300,
+  SBIN: 1500,
+  BHARTIARTL: 500,
+  ITC: 3200,
+  KOTAKBANK: 400,
+  LT: 150,
+  AXISBANK: 1200,
+  ASIANPAINT: 200,
+  MARUTI: 25,
+  TATAMOTORS: 2850,
+  SUNPHARMA: 350,
+  TITAN: 375,
+  WIPRO: 1500,
+  BAJFINANCE: 125,
+  HCLTECH: 700,
+  NTPC: 4000,
+  POWERGRID: 4500,
+  ONGC: 3850,
+  ADANIENT: 250,
+  COALINDIA: 4200,
+  DRREDDY: 125,
+  CIPLA: 650,
+};
+
+/** Returns a non-zero lot size for the contract, using the static map as fallback. */
+function resolveLotSize(contract: OptionContract): number {
+  if (contract.lotSize > 0) return contract.lotSize;
+  const sym = contract.underlying.toUpperCase();
+  return NSE_FNO_LOT_SIZES[sym] ?? 1;
+}
 
 interface DepthLevel {
   price: number;
@@ -78,13 +121,15 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
   const isSimulated = !accounts.find(a => a.id === activeAccountId)?.broker_provider
     || accounts.find(a => a.id === activeAccountId)?.status !== "active";
 
-  /* — side / mode — */
+  /* — side / ticket mode — */
   const [side, setSide] = useState<"BUY" | "SELL">(initialSide);
+  const [ticketMode, setTicketMode] = useState<TicketMode>("Trading");
   const [mode, setMode] = useState<OrderMode>("Market");
 
   /* — price inputs — */
   const [lots, setLots] = useState(1);
-  const qty = lots * contract.lotSize;
+  const resolvedLotSize = resolveLotSize(contract);
+  const qty = lots * resolvedLotSize;
 
   const [limitPrice, setLimitPrice] = useState(fmt(contract.ltp));
   const [triggerPrice, setTriggerPrice] = useState(fmt(contract.ltp));
@@ -173,9 +218,11 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
         // Dhan getQuote does not supply market depth — show honest unavailable state
         setDepth({ bids: [], asks: [], timestamp: quote.timestamp ?? null });
       } else {
+        // Quote returned but no valid LTP — market is closed, data is stale
         setDataStatus("DELAYED");
       }
     } catch {
+      // Network / API unreachable — genuinely offline
       setDataStatus("OFFLINE");
     } finally {
       setDepthLoading(false);
@@ -237,7 +284,7 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
         exchange: "NSE",
         exchangeSegment: contract.exchangeSegment,
         instrumentType: "OPTIDX",
-        lotSize: contract.lotSize,
+        lotSize: resolvedLotSize,
         tickSize: contract.tickSize,
         expiryDate: contract.expiry,
         strikePrice: contract.strike,
@@ -329,7 +376,7 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
             </div>
           </div>
           <div className="flex items-center gap-6 text-xs text-muted-foreground shrink-0">
-            <span>Lot Size: <span className="font-semibold text-foreground">{contract.lotSize}</span></span>
+            <span>Lot Size: <span className="font-semibold text-foreground">{resolvedLotSize}</span></span>
             <span>Expiry: <span className="font-semibold text-foreground">{contract.expiryLabel}</span></span>
           </div>
           <button
@@ -350,9 +397,11 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
             {/* Trading mode + Buy/Sell toggle */}
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="flex gap-1 p-0.5 rounded-lg bg-muted border border-border text-xs font-semibold">
-                {(["Trading", "Normal"] as const).map(m => (
+                {(["Trading", "Normal"] as TicketMode[]).map(m => (
                   <button key={m}
-                    className={`px-3 py-1.5 rounded-md transition-colors ${m === "Trading" ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" : "text-muted-foreground hover:text-foreground"}`}
+                    onClick={() => setTicketMode(m)}
+                    aria-pressed={ticketMode === m}
+                    className={`px-3 py-1.5 rounded-md transition-colors ${ticketMode === m ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" : "text-muted-foreground hover:text-foreground"}`}
                   >{m}</button>
                 ))}
               </div>
@@ -368,7 +417,8 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
               </div>
             </div>
 
-            {/* Order type tabs */}
+            {/* Order type tabs — Trading mode only */}
+            {ticketMode === "Trading" && (
             <div className="flex items-center gap-0 border-b border-border pb-0 text-sm">
               {(["Market", "Limit", "SL", "Trail"] as OrderMode[]).map(m => (
                 <button key={m} onClick={() => setMode(m)}
@@ -382,6 +432,7 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
                 <span className="font-semibold text-foreground">₹{fmt(ltp * 0.998)}</span>
               </div>
             </div>
+            )}
 
             {/* Lot + Price row */}
             <div className="grid grid-cols-2 gap-3">
@@ -402,8 +453,8 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
                 </div>
               </div>
 
-              {/* Limit price — shown for Limit / SL / Trail */}
-              {mode !== "Market" && (
+              {/* Limit price — shown for Limit / SL / Trail (Trading mode) */}
+              {ticketMode === "Trading" && mode !== "Market" && (
                 <div className="flex flex-col gap-1">
                   <div className="flex items-center gap-2">
                     {mode === "Trail" && (
@@ -432,8 +483,28 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
                 </div>
               )}
 
-              {/* Trigger price — SL / Trail */}
-              {(mode === "SL" || mode === "Trail") && (
+              {/* Normal mode — price input */}
+              {ticketMode === "Normal" && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-muted-foreground">Price</label>
+                  <div className="flex items-center gap-0 border border-border rounded-lg overflow-hidden bg-muted/20">
+                    <span className="pl-3 text-muted-foreground text-sm">₹</span>
+                    <input value={limitPrice} onChange={e => setLimitPrice(e.target.value)}
+                      className="flex-1 bg-transparent px-2 py-2 text-sm font-semibold text-foreground outline-none"
+                      type="number" step={contract.tickSize} min={0}
+                    />
+                    <div className="flex flex-col border-l border-border">
+                      <button onClick={() => setLimitPrice(v => fmt(Math.max(0, Number(v) + contract.tickSize)))}
+                        className="px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-muted text-[10px]">▲</button>
+                      <button onClick={() => setLimitPrice(v => fmt(Math.max(0, Number(v) - contract.tickSize)))}
+                        className="px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-muted text-[10px]">▼</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Trigger price — SL / Trail (Trading mode) */}
+              {ticketMode === "Trading" && (mode === "SL" || mode === "Trail") && (
                 <div className="flex flex-col gap-1">
                   <label className="text-xs text-muted-foreground">Trigger Price</label>
                   <div className="flex items-center gap-0 border border-border rounded-lg overflow-hidden bg-muted/20">
@@ -446,8 +517,8 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
                 </div>
               )}
 
-              {/* Market — Instant button when market order */}
-              {mode === "Market" && (
+              {/* Market — Instant button when market order (Trading mode) */}
+              {ticketMode === "Trading" && mode === "Market" && (
                 <div className="flex items-end">
                   <button
                     onClick={() => void handleSubmit()}
@@ -463,7 +534,8 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
               )}
             </div>
 
-            {/* Target + Stop Loss */}
+            {/* Target + Stop Loss — Trading mode only */}
+            {ticketMode === "Trading" && (
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1">
                 <label className="flex items-center gap-2 text-xs cursor-pointer">
@@ -509,8 +581,10 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
                 </div>
               </div>
             </div>
+            )}
 
-            {/* Trail jump row */}
+            {/* Trail jump row — Trading mode only */}
+            {ticketMode === "Trading" && (
             <div className="flex items-center gap-4 flex-wrap text-xs">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" checked={tgTrailEnabled} onChange={e => setTgTrailEnabled(e.target.checked)}
@@ -543,6 +617,7 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
                 <Info className="h-3 w-3 text-muted-foreground/60" />
               </label>
             </div>
+            )}
 
             {/* Product + Validity */}
             <div className="grid grid-cols-2 gap-3">
@@ -606,8 +681,8 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
               </div>
             )}
 
-            {/* Submit button for non-market modes */}
-            {mode !== "Market" && (
+            {/* Submit button for non-market modes (Trading) or any Normal mode */}
+            {(ticketMode === "Normal" || mode !== "Market") && (
               <Button
                 onClick={() => void handleSubmit()}
                 disabled={orderState === "submitting" || orderState === "done"}
