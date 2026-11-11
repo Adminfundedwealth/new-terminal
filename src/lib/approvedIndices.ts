@@ -29,7 +29,7 @@ export const APPROVED_INDICES: ApprovedIndex[] = [
   { symbol: "BANKNIFTY",           displayName: "NIFTY BANK",             exchange: "NSE", tradingViewSymbol: "NSE:BANKNIFTY",           segment: "IDX_I", category: "Sectoral" },
   { symbol: "FINNIFTY",            displayName: "FIN NIFTY",              exchange: "NSE", tradingViewSymbol: "NSE:FINNIFTY",            segment: "IDX_I", category: "Sectoral" },
   { symbol: "INDIAVIX",            displayName: "INDIA VIX",              exchange: "NSE", tradingViewSymbol: "NSE:INDIAVIX",            segment: "IDX_I", category: "Thematic" },
-  { symbol: "NIFTY_MIDCAP_SELECT", displayName: "NIFTY MIDCAP SELECT",    exchange: "NSE", tradingViewSymbol: "NSE:NIFTY_MIDCAP_SELECT", segment: "IDX_I", category: "Broad" },
+  { symbol: "NIFTYMIDCAP",         displayName: "NIFTY MIDCAP",           exchange: "NSE", tradingViewSymbol: "NSE:NIFTYMIDCAP",         segment: "IDX_I", category: "Broad" },
   { symbol: "NIFTYSMALLCAP50",     displayName: "NIFTY SMALLCAP 50",      exchange: "NSE", tradingViewSymbol: "NSE:NIFTYSMALLCAP50",     segment: "IDX_I", category: "Broad" },
   { symbol: "NIFTYMIDCAP50",       displayName: "NIFTY MIDCAP 50",        exchange: "NSE", tradingViewSymbol: "NSE:NIFTYMIDCAP50",       segment: "IDX_I", category: "Broad" },
   { symbol: "NIFTY100",            displayName: "NIFTY 100",              exchange: "NSE", tradingViewSymbol: "NSE:NIFTY100",            segment: "IDX_I", category: "Broad" },
