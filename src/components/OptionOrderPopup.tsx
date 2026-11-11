@@ -160,7 +160,10 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
   const [ask, setAsk] = useState(contract.askPrice);
   const [ltpChange, setLtpChange] = useState(0);
   const [ltpChangePct, setLtpChangePct] = useState(0);
-  const [dataStatus, setDataStatus] = useState<"LIVE" | "DELAYED" | "OFFLINE">("LIVE");
+  // Start as DELAYED (not LIVE) until we confirm a fresh quote — avoids misleading "LIVE" flash
+  const [dataStatus, setDataStatus] = useState<"LIVE" | "DELAYED" | "OFFLINE">(
+    contract.ltp > 0 ? "DELAYED" : "OFFLINE"
+  );
   const [depth, setDepth] = useState<MarketDepth>({ bids: [], asks: [], timestamp: null });
   const [depthLoading, setDepthLoading] = useState(true);
 
@@ -177,7 +180,8 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
   /* ── Fetch live quote + depth ───────────────────────────────────────── */
   const fetchMarketData = useCallback(async () => {
     if (!contract.securityId) {
-      setDataStatus("OFFLINE");
+      // No security ID — keep using LTP from option chain (DELAYED), not OFFLINE
+      setDataStatus(contract.ltp > 0 ? "DELAYED" : "OFFLINE");
       setDepthLoading(false);
       return;
     }
@@ -218,16 +222,17 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
         // Dhan getQuote does not supply market depth — show honest unavailable state
         setDepth({ bids: [], asks: [], timestamp: quote.timestamp ?? null });
       } else {
-        // Quote returned but no valid LTP — market is closed, data is stale
+        // Quote returned but no valid LTP — market closed / outside hours, data is stale
+        // Keep existing LTP from option chain; show DELAYED rather than OFFLINE
         setDataStatus("DELAYED");
       }
     } catch {
-      // Network / API unreachable — genuinely offline
-      setDataStatus("OFFLINE");
+      // Network/API error — if we already have LTP from the chain, show DELAYED not OFFLINE
+      setDataStatus(ltp > 0 ? "DELAYED" : "OFFLINE");
     } finally {
       setDepthLoading(false);
     }
-  }, [contract]);
+  }, [contract, ltp]);
 
   /* poll every 5 s */
   useEffect(() => {
@@ -401,7 +406,11 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
                   <button key={m}
                     onClick={() => setTicketMode(m)}
                     aria-pressed={ticketMode === m}
-                    className={`px-3 py-1.5 rounded-md transition-colors ${ticketMode === m ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" : "text-muted-foreground hover:text-foreground"}`}
+                    className={`px-3 py-1.5 rounded-md transition-colors ${
+                      ticketMode === m
+                        ? "bg-amber-500 text-white shadow-sm"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted/80"
+                    }`}
                   >{m}</button>
                 ))}
               </div>
@@ -417,22 +426,25 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
               </div>
             </div>
 
-            {/* Order type tabs — Trading mode only */}
-            {ticketMode === "Trading" && (
+            {/* Order type tabs — Trading mode: Market/Limit/SL/Trail; Normal mode: Market/Limit only */}
             <div className="flex items-center gap-0 border-b border-border pb-0 text-sm">
-              {(["Market", "Limit", "SL", "Trail"] as OrderMode[]).map(m => (
+              {(ticketMode === "Trading"
+                ? (["Market", "Limit", "SL", "Trail"] as OrderMode[])
+                : (["Market", "Limit"] as OrderMode[])
+              ).map(m => (
                 <button key={m} onClick={() => setMode(m)}
                   className={`px-4 py-2 font-medium border-b-2 transition-colors ${mode === m
                     ? "border-emerald-400 text-emerald-400"
                     : "border-transparent text-muted-foreground hover:text-foreground"}`}
                 >{m === "Trail" ? "⚡ TRAIL" : m}</button>
               ))}
-              <div className="ml-auto flex items-center gap-1 text-xs text-muted-foreground pr-1">
-                <span>VWAP:</span>
-                <span className="font-semibold text-foreground">₹{fmt(ltp * 0.998)}</span>
-              </div>
+              {ticketMode === "Trading" && (
+                <div className="ml-auto flex items-center gap-1 text-xs text-muted-foreground pr-1">
+                  <span>VWAP:</span>
+                  <span className="font-semibold text-foreground">₹{fmt(ltp * 0.998)}</span>
+                </div>
+              )}
             </div>
-            )}
 
             {/* Lot + Price row */}
             <div className="grid grid-cols-2 gap-3">
@@ -453,23 +465,27 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
                 </div>
               </div>
 
-              {/* Limit price — shown for Limit / SL / Trail (Trading mode) */}
-              {ticketMode === "Trading" && mode !== "Market" && (
+              {/* Price input — shown for Limit / SL / Trail (both modes), hidden for Market */}
+              {mode !== "Market" && (
                 <div className="flex flex-col gap-1">
                   <div className="flex items-center gap-2">
-                    {mode === "Trail" && (
+                    {mode === "Trail" && ticketMode === "Trading" && (
                       <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
                         <input type="checkbox" checked={limitEnabled} onChange={e => setLimitEnabled(e.target.checked)}
                           className="accent-emerald-500 h-3.5 w-3.5" />
                         Limit
                       </label>
                     )}
-                    {mode !== "Trail" && <label className="text-xs text-muted-foreground">Limit Price</label>}
+                    {(mode !== "Trail" || ticketMode === "Normal") && (
+                      <label className="text-xs text-muted-foreground">
+                        {mode === "Limit" ? "Limit Price" : mode === "SL" ? "Limit Price" : "Price"}
+                      </label>
+                    )}
                   </div>
                   <div className="flex items-center gap-0 border border-border rounded-lg overflow-hidden bg-muted/20">
                     <span className="pl-3 text-muted-foreground text-sm">₹</span>
                     <input value={limitPrice} onChange={e => setLimitPrice(e.target.value)}
-                      disabled={mode === "Trail" && !limitEnabled}
+                      disabled={mode === "Trail" && ticketMode === "Trading" && !limitEnabled}
                       className="flex-1 bg-transparent px-2 py-2 text-sm font-semibold text-foreground outline-none disabled:opacity-40"
                       type="number" step={contract.tickSize} min={0}
                     />
@@ -483,27 +499,7 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
                 </div>
               )}
 
-              {/* Normal mode — price input */}
-              {ticketMode === "Normal" && (
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs text-muted-foreground">Price</label>
-                  <div className="flex items-center gap-0 border border-border rounded-lg overflow-hidden bg-muted/20">
-                    <span className="pl-3 text-muted-foreground text-sm">₹</span>
-                    <input value={limitPrice} onChange={e => setLimitPrice(e.target.value)}
-                      className="flex-1 bg-transparent px-2 py-2 text-sm font-semibold text-foreground outline-none"
-                      type="number" step={contract.tickSize} min={0}
-                    />
-                    <div className="flex flex-col border-l border-border">
-                      <button onClick={() => setLimitPrice(v => fmt(Math.max(0, Number(v) + contract.tickSize)))}
-                        className="px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-muted text-[10px]">▲</button>
-                      <button onClick={() => setLimitPrice(v => fmt(Math.max(0, Number(v) - contract.tickSize)))}
-                        className="px-2 py-1 text-muted-foreground hover:text-foreground hover:bg-muted text-[10px]">▼</button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Trigger price — SL / Trail (Trading mode) */}
+              {/* Trigger price — SL / Trail (Trading mode only) */}
               {ticketMode === "Trading" && (mode === "SL" || mode === "Trail") && (
                 <div className="flex flex-col gap-1">
                   <label className="text-xs text-muted-foreground">Trigger Price</label>
@@ -517,8 +513,8 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
                 </div>
               )}
 
-              {/* Market — Instant button when market order (Trading mode) */}
-              {ticketMode === "Trading" && mode === "Market" && (
+              {/* Instant Buy/Sell button when Market order */}
+              {mode === "Market" && (
                 <div className="flex items-end">
                   <button
                     onClick={() => void handleSubmit()}
@@ -534,8 +530,8 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
               )}
             </div>
 
-            {/* Target + Stop Loss — Trading mode only */}
-            {ticketMode === "Trading" && (
+            {/* Target + Stop Loss — Trading mode only, or Normal+Limit */}
+            {(ticketMode === "Trading" || (ticketMode === "Normal" && mode === "Limit")) && (
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1">
                 <label className="flex items-center gap-2 text-xs cursor-pointer">
@@ -681,8 +677,8 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
               </div>
             )}
 
-            {/* Submit button for non-market modes (Trading) or any Normal mode */}
-            {(ticketMode === "Normal" || mode !== "Market") && (
+            {/* Submit button for Limit / SL / Trail orders (Market uses inline Instant button) */}
+            {mode !== "Market" && (
               <Button
                 onClick={() => void handleSubmit()}
                 disabled={orderState === "submitting" || orderState === "done"}

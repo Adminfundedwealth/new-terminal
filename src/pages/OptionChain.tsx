@@ -361,7 +361,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
   const chain = useMemo(() => data?.chain ?? [], [data]);
   const expiries = useMemo(() => data?.expiries ?? [], [data]);
   const spotPrice = data?.spotPrice ?? 0;
-  const lotSize = data?.lotSize ?? 25;
+  const lotSize = data?.lotSize || 25; // use || to also catch 0 from API
   const stepSize = data?.stepSize ?? 50;
   const maxPain = data?.maxPain ?? 0;
   const isLive = data?.isLive ?? false;
