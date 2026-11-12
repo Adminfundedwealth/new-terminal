@@ -6,7 +6,12 @@ import type { OptionData } from "@/lib/mockData";
 import { deserializeCanonicalOrder, type CanonicalOrderRow, type CanonicalOrder } from "@/lib/orderModel";
 import { REALTIME_MOCK_TEST_ACCOUNT_ID } from "@/lib/realtimeMockTestScope";
 
-const TERMINAL_OS_BASE = (import.meta.env.VITE_TERMINAL_OS_URL || "").replace(/\/$/, "");
+export function resolveTerminalOsBase(configuredUrl: string | undefined, isProduction: boolean): string {
+  const defaultUrl = isProduction ? "https://terminal-os.fundedwealth.com" : "";
+  return (configuredUrl || defaultUrl).replace(/\/$/, "");
+}
+
+const TERMINAL_OS_BASE = resolveTerminalOsBase(import.meta.env.VITE_TERMINAL_OS_URL, import.meta.env.PROD);
 
 export interface TerminalAccount {
   id: string;

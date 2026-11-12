@@ -12,6 +12,7 @@ import {
   fetchTerminalMarketDataStatus,
   requestTerminalMarketData,
   requestTerminalRealtimeTicket,
+  resolveTerminalOsBase,
   resolveTerminalMarketDataProvider,
   subscribeToTerminalMarketDataStream,
   toLocalMarketDataInstrument,
@@ -36,6 +37,12 @@ afterEach(() => {
 });
 
 describe("Main Terminal market-data contract", () => {
+  it("uses the Founder Terminal OS host by default only in production", () => {
+    expect(resolveTerminalOsBase(undefined, true)).toBe("https://terminal-os.fundedwealth.com");
+    expect(resolveTerminalOsBase(undefined, false)).toBe("");
+    expect(resolveTerminalOsBase("https://terminal-api.example.test/", true)).toBe("https://terminal-api.example.test");
+  });
+
   it("uses Founder-global Dhan regardless of customer broker mapping", () => {
     expect(resolveTerminalMarketDataProvider(null)).toBe("dhan");
     expect(resolveTerminalMarketDataProvider("")).toBe("dhan");
