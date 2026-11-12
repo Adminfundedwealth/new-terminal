@@ -3,8 +3,6 @@ import { Clock } from "lucide-react";
 
 export const StatusFooter = () => {
   const [time, setTime] = useState(new Date());
-  const healthLabel = "UNKNOWN";
-  const healthClassName = "text-amber-500";
 
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 1000);
@@ -29,11 +27,6 @@ export const StatusFooter = () => {
         <div className="flex items-center gap-1.5 sm:border-l sm:border-border sm:pl-4">
           <Clock size={12} />
           <span>{time.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span>
-        </div>
-
-        <div className="hidden items-center gap-1.5 border-l border-border pl-4 sm:flex">
-          <span>Terminal OS</span>
-          <span className={healthClassName}>{healthLabel}</span>
         </div>
 
       </div>

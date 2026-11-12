@@ -612,15 +612,25 @@ async function getCustomerAccessToken(): Promise<string> {
 }
 
 async function readMarketDataResponse<T>(response: Response): Promise<T> {
-  let payload: { data?: T; error?: { code?: string } };
+  let payload: { data?: T | null; error?: { code?: string } } | null;
   try {
     payload = await response.json() as { data?: T; error?: { code?: string } };
   } catch {
     if (!response.ok) throw normalizeMarketDataError(response.status);
     throw new TerminalMarketDataError("PROVIDER_ERROR", response.status);
   }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    if (!response.ok) throw normalizeMarketDataError(response.status);
+    throw new TerminalMarketDataError("PROVIDER_ERROR", response.status);
+  }
   if (!response.ok) {
     throw normalizeMarketDataError(response.status, payload.error?.code);
+  }
+  if (payload.error) {
+    throw normalizeMarketDataError(response.status, payload.error.code);
+  }
+  if (!("data" in payload) || payload.data == null) {
+    throw new TerminalMarketDataError("PROVIDER_ERROR", response.status);
   }
   return payload.data as T;
 }

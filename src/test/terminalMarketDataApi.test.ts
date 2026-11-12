@@ -320,4 +320,18 @@ describe("Main Terminal market-data contract", () => {
     expect(failure).toMatchObject({ code, status });
     expect((failure as Error).message).not.toContain("raw secret text");
   });
+
+  it.each([
+    [{ error: { code: "UPSTREAM_ERROR" } }, "PROVIDER_UNAVAILABLE"],
+    [{ result: [] }, "PROVIDER_ERROR"],
+    [null, "PROVIDER_ERROR"],
+    [{ data: null }, "PROVIDER_ERROR"],
+  ] as const)("rejects an invalid successful market-data envelope", async (payload, code) => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(payload), { status: 200 }));
+
+    const failure = await requestTerminalMarketData(accountId, "dhan", { operation: "authenticate" })
+      .catch((reason: unknown) => reason);
+
+    expect(failure).toMatchObject({ code, status: 200 });
+  });
 });

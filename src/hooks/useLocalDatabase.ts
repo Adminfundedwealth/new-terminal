@@ -198,12 +198,23 @@ export function useInstrumentLookup() {
   const gatewayQuery = useQuery({
     queryKey: ["terminal-instrument-catalog", "founder-dhan"],
     queryFn: async () => {
+      let catalogError: string | null = null;
       let instrumentMasterError: string | null = null;
-      const remote = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(
-        null,
-        "dhan",
-        { operation: "listInstruments" },
-      );
+      let remote: TerminalMarketDataInstrument[] = [];
+      try {
+        const catalog = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(
+          null,
+          "dhan",
+          { operation: "listInstruments" },
+        );
+        if (!Array.isArray(catalog)) throw new Error("Terminal OS returned an invalid Dhan instrument catalog.");
+        remote = catalog;
+      } catch (error) {
+        catalogError = error instanceof Error
+          ? `Founder Dhan instrument catalog failed: ${error.message}`
+          : "Founder Dhan instrument catalog failed.";
+        console.error("Founder Dhan instrument catalog failed:", error);
+      }
       const allRemote = remote
         .filter((instrument) => instrument.providerInstrumentId && instrument.symbol && instrument.tradingSymbol)
         .map(toLocalMarketDataInstrument);
@@ -293,7 +304,12 @@ export function useInstrumentLookup() {
         });
         instruments.push(...officialInstruments);
       }
-      if (instruments.length === 0) throw new Error("Terminal OS returned an empty Dhan instrument catalog.");
+      const loadErrors = [catalogError, instrumentMasterError].filter((error): error is string => Boolean(error));
+      if (instruments.length === 0) {
+        throw new Error(loadErrors.length
+          ? loadErrors.join(" ")
+          : "Terminal OS returned an empty Dhan instrument catalog.");
+      }
       const BATCH_SIZE = 2000;
       try {
         for (let i = 0; i < instruments.length; i += BATCH_SIZE) {
@@ -302,7 +318,7 @@ export function useInstrumentLookup() {
       } catch (error) {
         console.error("Founder Dhan instruments could not be cached locally:", error);
       }
-      return { instruments, loadError: instrumentMasterError };
+      return { instruments, loadError: loadErrors.length ? loadErrors.join(" ") : null };
     },
     retry: false,
     staleTime: 6 * 60 * 60 * 1000,
