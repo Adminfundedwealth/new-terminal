@@ -599,8 +599,8 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
   const [selectedStrike, setSelectedStrike] = useState<number | null>(null);
 
   const [columnConfig, setColumnConfig] = useState({
-    iv: true, delta: true, gamma: false, theta: false, vega: false,
-    intrinsic: false, timeValue: false, bid: true, ask: true, price: true,
+    iv: true, delta: true, gamma: false, theta: true, vega: false,
+    intrinsic: false, timeValue: false, bid: false, ask: false, price: true,
     volume: true, oi: true, oiChange: true,
   });
   const [perLot, setPerLot] = useState(false);
@@ -723,6 +723,9 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     } : undefined;
 
   }, [masterInstruments, symbol]);
+  const underlyingExchangeLabel = centralUnderlyingInstrument?.exchangeSegment === "BSE_IDX" ? "BSE"
+    : centralUnderlyingInstrument?.exchangeSegment === "NSE_EQ" || centralUnderlyingInstrument?.exchangeSegment === "IDX_I" ? "NSE"
+      : undefined;
   const quoteInstrument = centralUnderlyingInstrument;
   const underlyingQuoteQuery = useQuery({
     queryKey: ["option-chain-underlying-quote", symbol, quoteInstrument?.securityId, quoteInstrument?.exchangeSegment],
@@ -1487,100 +1490,68 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
         <>
 
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+      <section className="space-y-3 rounded-xl border border-border/80 bg-card/80 p-3 shadow-sm">
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
 
-          <SymbolSearch value={symbol} onSelect={(v) => { setSymbol(v); setSelectedExpiry(undefined); }} categories={visibleCategories} />
+          <div className="flex flex-wrap items-center gap-3">
 
-
-
-          <ToggleGroup type="single" value={marketView} onValueChange={(v) => v && setMarketView(v as "stocks" | "indices")} className="bg-muted rounded-md p-0.5">
-
-            <ToggleGroupItem value="stocks" className="text-xs h-7 px-3 data-[state=on]:bg-background data-[state=on]:shadow-sm rounded">
-
-              Stocks
-
-            </ToggleGroupItem>
-
-            <ToggleGroupItem value="indices" className="text-xs h-7 px-3 data-[state=on]:bg-background data-[state=on]:shadow-sm rounded">
-
-              Indices
-
-            </ToggleGroupItem>
-
-          </ToggleGroup>
+            <SymbolSearch value={symbol} onSelect={(v) => { setSymbol(v); setSelectedExpiry(undefined); }} categories={visibleCategories} />
 
 
+            <ToggleGroup type="single" value={marketView} onValueChange={(v) => v && setMarketView(v as "stocks" | "indices")} className="bg-muted rounded-md p-0.5">
 
-          {/* View Mode Tabs */}
+              <ToggleGroupItem value="stocks" className="text-xs h-7 px-3 data-[state=on]:bg-background data-[state=on]:shadow-sm rounded">Stocks</ToggleGroupItem>
 
-          <ToggleGroup type="single" value={viewMode} onValueChange={(v) => v && setViewMode(v as any)} className="bg-muted rounded-md p-0.5">
+              <ToggleGroupItem value="indices" className="text-xs h-7 px-3 data-[state=on]:bg-background data-[state=on]:shadow-sm rounded">Indices</ToggleGroupItem>
 
-            <ToggleGroupItem value="expiration" className="text-xs h-7 px-3 data-[state=on]:bg-background data-[state=on]:shadow-sm rounded">
+            </ToggleGroup>
 
-              By expiration
+            <ToggleGroup type="single" value={viewMode} onValueChange={(v) => v && setViewMode(v as "expiration" | "strike")} className="bg-muted rounded-md p-0.5">
 
-            </ToggleGroupItem>
+              <ToggleGroupItem value="expiration" className="text-xs h-7 px-3 data-[state=on]:bg-background data-[state=on]:shadow-sm rounded">By expiration</ToggleGroupItem>
 
-            <ToggleGroupItem value="strike" className="text-xs h-7 px-3 data-[state=on]:bg-background data-[state=on]:shadow-sm rounded">
+              <ToggleGroupItem value="strike" className="text-xs h-7 px-3 data-[state=on]:bg-background data-[state=on]:shadow-sm rounded">By strike</ToggleGroupItem>
 
-              By strike
+            </ToggleGroup>
 
-            </ToggleGroupItem>
-
-          </ToggleGroup>
-
-        </div>
-
-
-
-        <div className="flex items-center gap-1.5">
-
-          <Badge variant="outline" className={`gap-1 text-[11px] ${isLive && underlyingQuoteFresh ? "border-bullish/50 text-bullish" : afterHours ? "border-amber-500/50 text-amber-400" : "border-red-500/30 text-red-400"}`}>
-            {isLive && underlyingQuoteFresh ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
-            {isLive && underlyingQuoteFresh ? "LIVE · DHAN" : afterHours ? "HISTORICAL" : underlyingQuoteQuery.error ? "QUOTE ERROR" : "STALE / OFFLINE"}
-          </Badge>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] font-mono">
-            <span>{symbol} <strong className="text-foreground">{underlyingQuote && underlyingQuote.ltp > 0 ? underlyingQuote.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : spotPrice > 0 ? spotPrice.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—"}</strong>
-              {underlyingQuote?.change != null && <span className={underlyingQuote.change >= 0 ? "ml-1 text-bullish" : "ml-1 text-bearish"}>
-                {underlyingQuote.change >= 0 ? "+" : ""}{underlyingQuote.change.toFixed(2)} ({underlyingQuote.changePercent == null ? "—" : `${underlyingQuote.changePercent.toFixed(2)}%`})
-              </span>}
-            </span>
-            <span className="text-muted-foreground">O <b className="text-foreground">{underlyingQuote?.open ?? "—"}</b></span>
-            <span className="text-muted-foreground">H <b className="text-foreground">{underlyingQuote?.high ?? "—"}</b></span>
-            <span className="text-muted-foreground">L <b className="text-foreground">{underlyingQuote?.low ?? "—"}</b></span>
-            <span className="text-muted-foreground">PC <b className="text-foreground">{underlyingQuote?.previousClose ?? "—"}</b></span>
-            {underlyingQuote && !underlyingQuoteFresh && <span className="text-amber-400">HISTORICAL QUOTE</span>}
-            {underlyingQuoteQuery.error && <span className="text-amber-400" title={underlyingQuoteQuery.error.message}>Underlying quote unavailable</span>}
           </div>
 
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
-            void refetch();
-            void underlyingQuoteQuery.refetch();
-          }}>
 
-            <RefreshCw className="h-3.5 w-3.5" />
 
-          </Button>
+          <div className="flex items-center gap-1.5">
 
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={scrollToATM}>
+            <Badge variant="outline" className={`gap-1 text-[11px] ${isLive && underlyingQuoteFresh ? "border-bullish/50 text-bullish" : afterHours ? "border-amber-500/50 text-amber-400" : "border-red-500/30 text-red-400"}`}>
+              {isLive && underlyingQuoteFresh ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+              {isLive && underlyingQuoteFresh ? "LIVE · DHAN" : afterHours ? "HISTORICAL" : underlyingQuoteQuery.error ? "QUOTE ERROR" : "STALE / OFFLINE"}
+            </Badge>
 
-            <Crosshair className="h-3.5 w-3.5" />
+            <Button variant="ghost" size="icon" className="h-7 w-7" title="Refresh option chain and quote" aria-label="Refresh option chain and quote" onClick={() => {
+              void refetch();
+              void underlyingQuoteQuery.refetch();
+            }}>
 
-          </Button>
+              <RefreshCw className="h-3.5 w-3.5" />
 
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setShowChart(v => !v)} title="Toggle Price Chart">
+            </Button>
 
-            <BarChart3 className={`h-3.5 w-3.5 ${showChart ? "text-primary" : ""}`} />
+            <Button variant="ghost" size="icon" className="h-7 w-7" title="Scroll to ATM strike" aria-label="Scroll to ATM strike" onClick={scrollToATM}>
 
-          </Button>
+              <Crosshair className="h-3.5 w-3.5" />
 
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={downloadCSV} title="Download CSV">
+            </Button>
 
-            <Download className="h-3.5 w-3.5" />
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setShowChart(v => !v)} title="Toggle Price Chart" aria-label="Toggle Price Chart">
 
-          </Button>
+              <BarChart3 className={`h-3.5 w-3.5 ${showChart ? "text-primary" : ""}`} />
+
+            </Button>
+
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={downloadCSV} title="Download CSV" aria-label="Download CSV">
+
+              <Download className="h-3.5 w-3.5" />
+
+            </Button>
 
 
 
@@ -1590,7 +1561,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
             <PopoverTrigger asChild>
 
-              <Button variant="ghost" size="icon" className="h-7 w-7" title="Download Past Option Chain">
+              <Button variant="ghost" size="icon" className="h-7 w-7" title="Download Past Option Chain" aria-label="Download Past Option Chain">
 
                 <History className="h-3.5 w-3.5" />
 
@@ -1640,7 +1611,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
             <PopoverTrigger asChild>
 
-              <Button variant="ghost" size="icon" className="h-7 w-7"><Settings2 className="h-3.5 w-3.5" /></Button>
+              <Button variant="ghost" size="icon" className="h-7 w-7" title="Configure visible columns" aria-label="Configure visible columns"><Settings2 className="h-3.5 w-3.5" /></Button>
 
             </PopoverTrigger>
 
@@ -1676,7 +1647,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
             <PopoverTrigger asChild>
 
-              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-primary transition-colors" title="Keyboard Shortcuts">
+              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-primary transition-colors" title="Keyboard Shortcuts" aria-label="Keyboard Shortcuts">
 
                 <kbd className="font-mono text-[10px] px-1.5 py-0.5 rounded border border-border/50 bg-accent/30 font-semibold shadow-sm">?</kbd>
 
@@ -1712,9 +1683,44 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
           </Popover>
 
+          </div>
+
         </div>
 
-      </div>
+        <div className="flex flex-wrap items-end justify-between gap-x-5 gap-y-2 border-t border-border/70 pt-2.5">
+          <div className="min-w-[220px]">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="text-sm font-semibold text-foreground">{symbol}</span>
+              {underlyingExchangeLabel && (
+                <Badge variant="outline" className="h-5 px-1.5 text-[9px] font-semibold tracking-wide text-muted-foreground">
+                  {underlyingExchangeLabel}
+                </Badge>
+              )}
+              <strong className="font-mono text-2xl leading-none tracking-tight text-foreground">
+                {underlyingQuote && underlyingQuote.ltp > 0
+                  ? underlyingQuote.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                  : spotPrice > 0
+                    ? spotPrice.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                    : "—"}
+              </strong>
+              {underlyingQuote?.change != null && (
+                <span className={`font-mono text-xs font-medium ${underlyingQuote.change >= 0 ? "text-bullish" : "text-bearish"}`}>
+                  {underlyingQuote.change >= 0 ? "+" : ""}{underlyingQuote.change.toFixed(2)}
+                  ({underlyingQuote.changePercent == null ? "—" : `${underlyingQuote.changePercent.toFixed(2)}%`})
+                </span>
+              )}
+              {underlyingQuote && !underlyingQuoteFresh && <span className="text-[10px] font-semibold tracking-wide text-amber-400">HISTORICAL QUOTE</span>}
+              {underlyingQuoteQuery.error && <span className="text-[10px] text-amber-400" title={underlyingQuoteQuery.error.message}>Underlying quote unavailable</span>}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-x-5 gap-y-1 text-[11px] font-mono">
+            <span className="text-muted-foreground">OPEN <b className="text-foreground">{underlyingQuote?.open ?? "—"}</b></span>
+            <span className="text-muted-foreground">HIGH <b className="text-foreground">{underlyingQuote?.high ?? "—"}</b></span>
+            <span className="text-muted-foreground">LOW <b className="text-foreground">{underlyingQuote?.low ?? "—"}</b></span>
+            <span className="text-muted-foreground">PREV CLOSE <b className="text-foreground">{underlyingQuote?.previousClose ?? "—"}</b></span>
+          </div>
+        </div>
+      </section>
 
 
 
@@ -1730,9 +1736,11 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
       {/* Expiry selector */}
       {viewMode === "expiration" && expiries.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1">
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-card/60 px-3 py-2">
 
-          {expiries.slice(0, 5).map((exp, i) => {
+          <span className="mr-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Expiry</span>
+
+          {expiries.slice(0, 5).map((exp) => {
 
             const parts = exp.label.split(" ");
 
@@ -1746,13 +1754,13 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
                 onClick={() => setSelectedExpiry(exp.value)}
 
-                className={`flex flex-col items-center px-3 py-1.5 rounded-md text-xs transition-all border ${
+                className={`flex min-w-[54px] flex-col items-center rounded-md border px-2.5 py-1 text-xs transition-colors ${
 
                   isSelected
 
-                    ? "bg-primary text-primary-foreground border-primary font-bold shadow-[0_0_15px_-3px_hsl(var(--primary)/0.5)] scale-105"
+                    ? "border-primary/60 bg-primary/10 font-bold text-primary shadow-sm"
 
-                    : "bg-card border-border hover:bg-accent/50 hover:border-primary/30"
+                    : "border-border bg-background/70 hover:border-primary/40 hover:bg-accent/50"
 
                 }`}
 
@@ -1772,7 +1780,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
             <Select value={selectedExpiry || expiries[0]?.value} onValueChange={setSelectedExpiry}>
 
-              <SelectTrigger className="w-[100px] h-8 text-xs"><SelectValue placeholder="More..." /></SelectTrigger>
+              <SelectTrigger className="h-8 w-[112px] text-xs"><SelectValue placeholder="More expiries" /></SelectTrigger>
 
               <SelectContent>
 
@@ -1787,22 +1795,22 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
             </Select>
 
           )}
-          <div className="ml-auto flex items-center gap-3 pl-2">
-            <span className="text-xs text-muted-foreground">{activeExpiry?.daysToExpiry ?? "—"} DTE · Lot {lotSize > 0 ? lotSize : "—"}</span>
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-2 pl-2">
+            <span className="text-[11px] text-muted-foreground"><b className="font-medium text-foreground">{activeExpiry?.daysToExpiry ?? "—"} DTE</b><span className="mx-1.5 text-border">|</span>Lot <b className="font-medium text-foreground">{lotSize > 0 ? lotSize : "—"}</b></span>
+            <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
               <Switch
                 checked={perLot}
                 onCheckedChange={setPerLot}
                 disabled={lotSize <= 0}
                 aria-label="Show option prices per lot"
-                className="scale-[0.8]"
+                className="scale-[0.75]"
               />
               Per Lot{lotSize > 0 ? ` (${lotSize})` : ""}
             </label>
             <Button
               variant="outline"
               size="sm"
-              className="h-7 text-xs"
+              className="h-7 text-[11px]"
               disabled
               title="Buildup classification is unavailable because the feed does not provide option-price change and OI change together."
             >
@@ -1972,7 +1980,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
       {/* Summary Stats */}
 
-      <div className="grid grid-cols-4 md:grid-cols-8 gap-1.5">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
 
         {[
 
@@ -1987,11 +1995,11 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
         ].map(stat => (
 
-          <div key={stat.label} className="bg-card rounded-md border px-2 py-1.5 text-center">
+          <div key={stat.label} className="rounded-lg border border-border/70 bg-card px-2.5 py-2 text-center transition-colors hover:border-primary/30">
 
-            <p className="text-xs text-muted-foreground">{stat.label}</p>
+            <p className="text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">{stat.label}</p>
 
-            <p className={`text-xs font-bold font-mono ${stat.className || ""}`}>{stat.value}</p>
+            <p className={`mt-0.5 text-sm font-bold font-mono tabular-nums ${stat.className || ""}`}>{stat.value}</p>
 
           </div>
 
@@ -2080,7 +2088,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
         <Card>
 
-          <CardContent className="p-0 overflow-auto max-h-[65vh]">
+          <CardContent className="p-0 max-h-[65vh] [&>div]:max-h-[65vh] [&>div]:overflow-auto">
 
             {isChainLoading ? (
 
@@ -2110,80 +2118,60 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
                   {/* CALLS / STRIKE / PUTS header */}
 
-                  <TableRow className="text-xs border-b-2">
+                  <TableRow className="text-xs border-b [&>th]:h-8 [&>th]:px-2 [&>th]:py-1">
 
-                    <TableHead className="text-center text-primary font-bold" colSpan={callCols}>Calls</TableHead>
+                    <TableHead className="text-center text-primary font-bold bg-primary/[0.04]" colSpan={callCols}>Calls (CE)</TableHead>
 
-                    <TableHead className="text-center font-bold bg-accent/50 border-x-2 border-border" colSpan={2}>Strike / IV%</TableHead>
+                    <TableHead className="text-center font-bold bg-accent/50 border-x border-border" colSpan={2}>Strike / PCR</TableHead>
 
-                    <TableHead className="text-center text-bearish font-bold" colSpan={putCols}>Puts</TableHead>
+                    <TableHead className="text-center text-bearish font-bold bg-bearish/[0.04]" colSpan={putCols}>Puts (PE)</TableHead>
 
                   </TableRow>
 
-{/* Column sub-headers  calls reversed order */}
+{/* Dhan-style call columns run from Greeks to price. */}
 
-                  <TableRow className="text-[11px] text-muted-foreground">
-
-{/* Call columns: reversed  leftmost is least important */}
-
-                    {columnConfig.iv && <TableHead className="text-right">IV%</TableHead>}
-
-                    {columnConfig.intrinsic && <TableHead className="text-right">Intr.</TableHead>}
-
-                    {columnConfig.timeValue && <TableHead className="text-right">Time</TableHead>}
-
-
-                    {columnConfig.vega && <TableHead className="text-right">Vega</TableHead>}
+                  <TableRow className="text-[11px] text-muted-foreground [&>th]:h-8 [&>th]:px-2 [&>th]:py-1">
 
                     {columnConfig.theta && <TableHead className="text-right">Theta</TableHead>}
 
-                    {columnConfig.gamma && <TableHead className="text-right">Gamma</TableHead>}
-
                     {columnConfig.delta && <TableHead className="text-right">Delta</TableHead>}
 
-                    {columnConfig.price && <TableHead className="text-right font-semibold text-primary">Price</TableHead>}
-
-                    {columnConfig.ask && <TableHead className="text-right">Ask</TableHead>}
-
-                    {columnConfig.bid && <TableHead className="text-right">Bid</TableHead>}
+                    {columnConfig.iv && <TableHead className="text-right">IV%</TableHead>}
 
                     {columnConfig.volume && <TableHead className="text-right">Volume</TableHead>}
+
                     {columnConfig.oi && <TableHead className="text-right">OI</TableHead>}
                     {columnConfig.oiChange && <TableHead className="text-right">OI Chg</TableHead>}
+                    {columnConfig.price && <TableHead className="text-right font-semibold text-primary">LTP</TableHead>}
 
-                    {/* Strike + IV */}
+                    {columnConfig.ask && <TableHead className="text-right">Ask</TableHead>}
+                    {columnConfig.bid && <TableHead className="text-right">Bid</TableHead>}
+                    {columnConfig.gamma && <TableHead className="text-right">Gamma</TableHead>}
+                    {columnConfig.vega && <TableHead className="text-right">Vega</TableHead>}
+                    {columnConfig.timeValue && <TableHead className="text-right">Time</TableHead>}
+                    {columnConfig.intrinsic && <TableHead className="text-right">Intr.</TableHead>}
 
-                    <TableHead className="text-center bg-accent/50 border-l-2 border-border font-semibold">Strike</TableHead>
+                    {/* Strike and PCR stay in the center lane. */}
 
-                    <TableHead className="text-center bg-accent/50 border-r-2 border-border font-semibold">IV%</TableHead>
+                    <TableHead className="text-center bg-accent/50 border-l border-border font-semibold">Strike</TableHead>
 
-                    {/* Put columns: normal order */}
+                    <TableHead className="text-center bg-accent/50 border-r border-border font-semibold">PCR</TableHead>
 
-                    {columnConfig.volume && <TableHead className="text-left">Volume</TableHead>}
+                    {/* Put columns mirror the call side. */}
+
+                    {columnConfig.price && <TableHead className="text-left font-semibold text-bearish">LTP</TableHead>}
                     {columnConfig.oi && <TableHead className="text-left">OI</TableHead>}
                     {columnConfig.oiChange && <TableHead className="text-left">OI Chg</TableHead>}
-
+                    {columnConfig.volume && <TableHead className="text-left">Volume</TableHead>}
                     {columnConfig.bid && <TableHead className="text-left">Bid</TableHead>}
-
                     {columnConfig.ask && <TableHead className="text-left">Ask</TableHead>}
-
-                    {columnConfig.price && <TableHead className="text-left font-semibold text-bearish">Price</TableHead>}
-
-                    {columnConfig.delta && <TableHead className="text-left">Delta</TableHead>}
-
-                    {columnConfig.gamma && <TableHead className="text-left">Gamma</TableHead>}
-
-                    {columnConfig.theta && <TableHead className="text-left">Theta</TableHead>}
-
-                    {columnConfig.vega && <TableHead className="text-left">Vega</TableHead>}
-
-
-                    {columnConfig.timeValue && <TableHead className="text-left">Time</TableHead>}
-
-                    {columnConfig.intrinsic && <TableHead className="text-left">Intr.</TableHead>}
-
                     {columnConfig.iv && <TableHead className="text-left">IV%</TableHead>}
-
+                    {columnConfig.delta && <TableHead className="text-left">Delta</TableHead>}
+                    {columnConfig.theta && <TableHead className="text-left">Theta</TableHead>}
+                    {columnConfig.gamma && <TableHead className="text-left">Gamma</TableHead>}
+                    {columnConfig.vega && <TableHead className="text-left">Vega</TableHead>}
+                    {columnConfig.timeValue && <TableHead className="text-left">Time</TableHead>}
+                    {columnConfig.intrinsic && <TableHead className="text-left">Intr.</TableHead>}
                   </TableRow>
 
                 </TableHeader>
@@ -2200,7 +2188,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
                     const isMP = row.strikePrice === maxPain;
 
-                    const avgIV = row.ce.iv + row.pe.iv > 0 ? ((row.ce.iv + row.pe.iv) / 2).toFixed(1) : "—";
+                    const rowPCR = row.ce.oi > 0 ? (row.pe.oi / row.ce.oi).toFixed(2) : "—";
 
                     const uaFlag = unusualActivity.flags.get(row.strikePrice);
 
@@ -2222,7 +2210,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
                             id={`option-strike-${row.strikePrice}`}
 
-                            className={`text-xs sm:text-[11px] font-mono cursor-context-menu transition-colors hover:bg-accent/30 ${
+                            className={`group text-xs sm:text-[11px] font-mono cursor-context-menu transition-colors hover:bg-accent/30 [&>td]:px-2 ${
 
                               isATM ? "bg-primary/[0.08] border-y-2 border-primary/30 shadow-[inset_0_0_20px_hsl(var(--primary)/0.06)]" : ""
 
@@ -2232,21 +2220,24 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
 {/*  CALL SIDE  */}
 
-                            {columnConfig.iv && <TableCell className={`text-right py-1.5 tabular-nums ${isITMCall ? "text-muted-foreground/70" : ""}`}>{row.ce.iv > 0 ? row.ce.iv.toFixed(1) : "—"}</TableCell>}
+                            {columnConfig.theta && <TableCell className="text-right py-1 tabular-nums text-bearish/80 bg-primary/[0.025]">{data?.greeksAvailable ? row.ce.theta.toFixed(2) : "—"}</TableCell>}
+                            {columnConfig.delta && <TableCell className="text-right py-1 tabular-nums font-medium bg-primary/[0.025]">{data?.greeksAvailable ? row.ce.delta.toFixed(2) : "—"}</TableCell>}
+                            {columnConfig.iv && <TableCell className={`text-right py-1 tabular-nums bg-primary/[0.025] ${isITMCall ? "text-muted-foreground/70" : ""}`}>{row.ce.iv > 0 ? row.ce.iv.toFixed(1) : "—"}</TableCell>}
 
-                            {columnConfig.intrinsic && <TableCell className={`text-right py-1.5 tabular-nums ${row.ce.intrinsic > 0 ? "" : "text-muted-foreground/50"}`}>{row.ce.intrinsic.toFixed(2)}</TableCell>}
-
-                            {columnConfig.timeValue && <TableCell className="text-right py-1.5 tabular-nums">{row.ce.timeValue.toFixed(2)}</TableCell>}
-
-
-                            {columnConfig.vega && <TableCell className="text-right py-1.5 tabular-nums">{data?.greeksAvailable ? row.ce.vega.toFixed(2) : "—"}</TableCell>}
-                            {columnConfig.theta && <TableCell className="text-right py-1.5 tabular-nums text-bearish/80">{data?.greeksAvailable ? row.ce.theta.toFixed(2) : "—"}</TableCell>}
-                            {columnConfig.gamma && <TableCell className="text-right py-1.5 tabular-nums">{data?.greeksAvailable ? row.ce.gamma.toFixed(4) : "—"}</TableCell>}
-                            {columnConfig.delta && <TableCell className="text-right py-1.5 tabular-nums font-medium">{data?.greeksAvailable ? row.ce.delta.toFixed(2) : "—"}</TableCell>}
+                            {columnConfig.volume && (
+                              <TableCell className="text-right py-1 bg-primary/[0.025]">
+                                <div className="flex items-center justify-end gap-0.5">
+                                  {uaFlag?.ce && <Flame className="h-3 w-3 text-orange-500 shrink-0" />}
+                                  <VolumeBar value={row.ce.volume} max={maxVol} side="call" />
+                                </div>
+                              </TableCell>
+                            )}
+                            {columnConfig.oi && <TableCell className="text-right py-1 tabular-nums bg-primary/[0.025]">{row.ce.oi.toLocaleString("en-IN")}</TableCell>}
+                            {columnConfig.oiChange && <TableCell className="text-right py-1 tabular-nums bg-primary/[0.025]">{data?.oiChangeAvailable === true ? row.ce.oiChange.toLocaleString("en-IN") : "—"}</TableCell>}
 
                             {columnConfig.price && (
 
-                              <TableCell className="text-right py-1.5 font-semibold">
+                              <TableCell className="text-right py-1 font-semibold bg-primary/[0.025]">
 
                                 <button onClick={() => openBuyTicket(row.strikePrice, "CE", row)} className="hover:text-primary transition-colors">
 
@@ -2258,34 +2249,20 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
                             )}
 
-                            {columnConfig.ask && <TableCell className="text-right py-1.5 tabular-nums">{row.ce.askPrice > 0 ? (row.ce.askPrice * priceDisplayMultiplier).toFixed(2) : "—"}</TableCell>}
-                            {columnConfig.bid && <TableCell className="text-right py-1.5 tabular-nums">{row.ce.bidPrice > 0 ? (row.ce.bidPrice * priceDisplayMultiplier).toFixed(2) : "—"}</TableCell>}
-
-                            {columnConfig.volume && (
-
-                              <TableCell className="text-right py-1.5">
-
-                                <div className="flex items-center justify-end gap-0.5">
-
-                                  {uaFlag?.ce && <Flame className="h-3 w-3 text-orange-500 shrink-0" />}
-
-                                  <VolumeBar value={row.ce.volume} max={maxVol} side="call" />
-
-                                </div>
-
-                              </TableCell>
-
-                            )}
-                            {columnConfig.oi && <TableCell className="text-right py-1.5 tabular-nums">{row.ce.oi.toLocaleString("en-IN")}</TableCell>}
-                            {columnConfig.oiChange && <TableCell className="text-right py-1.5 tabular-nums">{data?.oiChangeAvailable === true ? row.ce.oiChange.toLocaleString("en-IN") : "—"}</TableCell>}
+                            {columnConfig.ask && <TableCell className="text-right py-1 tabular-nums bg-primary/[0.025]">{row.ce.askPrice > 0 ? (row.ce.askPrice * priceDisplayMultiplier).toFixed(2) : "—"}</TableCell>}
+                            {columnConfig.bid && <TableCell className="text-right py-1 tabular-nums bg-primary/[0.025]">{row.ce.bidPrice > 0 ? (row.ce.bidPrice * priceDisplayMultiplier).toFixed(2) : "—"}</TableCell>}
+                            {columnConfig.gamma && <TableCell className="text-right py-1 tabular-nums bg-primary/[0.025]">{data?.greeksAvailable ? row.ce.gamma.toFixed(4) : "—"}</TableCell>}
+                            {columnConfig.vega && <TableCell className="text-right py-1 tabular-nums bg-primary/[0.025]">{data?.greeksAvailable ? row.ce.vega.toFixed(2) : "—"}</TableCell>}
+                            {columnConfig.timeValue && <TableCell className="text-right py-1 tabular-nums bg-primary/[0.025]">{row.ce.timeValue.toFixed(2)}</TableCell>}
+                            {columnConfig.intrinsic && <TableCell className={`text-right py-1 tabular-nums bg-primary/[0.025] ${row.ce.intrinsic > 0 ? "" : "text-muted-foreground/50"}`}>{row.ce.intrinsic.toFixed(2)}</TableCell>}
 
 
 
 {/*  STRIKE  */}
 
-                            <TableCell className="text-center bg-accent/50 border-l-2 border-border py-1.5">
+                            <TableCell className="relative text-center bg-accent/50 border-l border-border py-1">
 
-                              <div className="flex flex-col items-center gap-1">
+                              <div className="flex flex-col items-center">
 
                                 <div className="flex items-center gap-1">
 
@@ -2309,6 +2286,8 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
                                 {isMP && <span className="text-[11px] text-warning/60 font-medium">MAX PAIN</span>}
 
+                              </div>
+                              <div className="absolute left-1/2 top-1/2 z-20 flex -translate-x-1/2 -translate-y-1/2 rounded bg-card/95 p-0.5 opacity-0 shadow-lg ring-1 ring-border transition-opacity pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [@media(hover:none)]:relative [@media(hover:none)]:left-auto [@media(hover:none)]:top-auto [@media(hover:none)]:z-auto [@media(hover:none)]:mt-1 [@media(hover:none)]:translate-x-0 [@media(hover:none)]:translate-y-0 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
                                 <OptionChainStrikeActions
                                   strike={row.strikePrice}
                                   onChart={(type) => openChart(row.strikePrice, type, row)}
@@ -2343,36 +2322,15 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
                             </TableCell>
 
-                            <TableCell className="text-center py-1.5 bg-accent/50 border-r-2 border-border text-muted-foreground">{avgIV}</TableCell>
+                            <TableCell className="text-center py-1 bg-accent/50 border-r border-border text-muted-foreground">{rowPCR}</TableCell>
 
 
 
 {/*  PUT SIDE  */}
 
-                            {columnConfig.volume && (
-
-                              <TableCell className="text-left py-1.5">
-
-                                <div className="flex items-center gap-0.5">
-
-                                  <VolumeBar value={row.pe.volume} max={maxVol} side="put" />
-
-                                  {uaFlag?.pe && <Flame className="h-3 w-3 text-orange-500 shrink-0" />}
-
-                                </div>
-
-                              </TableCell>
-
-                            )}
-                            {columnConfig.oi && <TableCell className="text-left py-1.5 tabular-nums">{row.pe.oi.toLocaleString("en-IN")}</TableCell>}
-                            {columnConfig.oiChange && <TableCell className="text-left py-1.5 tabular-nums">{data?.oiChangeAvailable === true ? row.pe.oiChange.toLocaleString("en-IN") : "—"}</TableCell>}
-
-                            {columnConfig.bid && <TableCell className="text-left py-1.5 tabular-nums">{row.pe.bidPrice > 0 ? (row.pe.bidPrice * priceDisplayMultiplier).toFixed(2) : "—"}</TableCell>}
-                            {columnConfig.ask && <TableCell className="text-left py-1.5 tabular-nums">{row.pe.askPrice > 0 ? (row.pe.askPrice * priceDisplayMultiplier).toFixed(2) : "—"}</TableCell>}
-
                             {columnConfig.price && (
 
-                              <TableCell className="text-left py-1.5 font-semibold">
+                              <TableCell className="text-left py-1 font-semibold bg-bearish/[0.025]">
 
                                 <button onClick={() => openBuyTicket(row.strikePrice, "PE", row)} className="hover:text-bearish transition-colors">
 
@@ -2384,17 +2342,25 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
                             )}
 
-                            {columnConfig.delta && <TableCell className="text-left py-1.5 tabular-nums font-medium">{data?.greeksAvailable ? row.pe.delta.toFixed(2) : "—"}</TableCell>}
-                            {columnConfig.gamma && <TableCell className="text-left py-1.5 tabular-nums">{data?.greeksAvailable ? row.pe.gamma.toFixed(4) : "—"}</TableCell>}
-                            {columnConfig.theta && <TableCell className="text-left py-1.5 tabular-nums text-bearish/80">{data?.greeksAvailable ? row.pe.theta.toFixed(2) : "—"}</TableCell>}
-                            {columnConfig.vega && <TableCell className="text-left py-1.5 tabular-nums">{data?.greeksAvailable ? row.pe.vega.toFixed(2) : "—"}</TableCell>}
-
-
-                            {columnConfig.timeValue && <TableCell className="text-left py-1.5 tabular-nums">{row.pe.timeValue.toFixed(2)}</TableCell>}
-
-                            {columnConfig.intrinsic && <TableCell className={`text-left py-1.5 tabular-nums ${row.pe.intrinsic > 0 ? "" : "text-muted-foreground/50"}`}>{row.pe.intrinsic.toFixed(2)}</TableCell>}
-
-                            {columnConfig.iv && <TableCell className={`text-left py-1.5 tabular-nums ${isITMPut ? "text-muted-foreground/70" : ""}`}>{row.pe.iv > 0 ? row.pe.iv.toFixed(1) : "—"}</TableCell>}
+                            {columnConfig.oi && <TableCell className="text-left py-1 tabular-nums bg-bearish/[0.025]">{row.pe.oi.toLocaleString("en-IN")}</TableCell>}
+                            {columnConfig.oiChange && <TableCell className="text-left py-1 tabular-nums bg-bearish/[0.025]">{data?.oiChangeAvailable === true ? row.pe.oiChange.toLocaleString("en-IN") : "—"}</TableCell>}
+                            {columnConfig.volume && (
+                              <TableCell className="text-left py-1 bg-bearish/[0.025]">
+                                <div className="flex items-center gap-0.5">
+                                  <VolumeBar value={row.pe.volume} max={maxVol} side="put" />
+                                  {uaFlag?.pe && <Flame className="h-3 w-3 text-orange-500 shrink-0" />}
+                                </div>
+                              </TableCell>
+                            )}
+                            {columnConfig.bid && <TableCell className="text-left py-1 tabular-nums bg-bearish/[0.025]">{row.pe.bidPrice > 0 ? (row.pe.bidPrice * priceDisplayMultiplier).toFixed(2) : "—"}</TableCell>}
+                            {columnConfig.ask && <TableCell className="text-left py-1 tabular-nums bg-bearish/[0.025]">{row.pe.askPrice > 0 ? (row.pe.askPrice * priceDisplayMultiplier).toFixed(2) : "—"}</TableCell>}
+                            {columnConfig.iv && <TableCell className={`text-left py-1 tabular-nums bg-bearish/[0.025] ${isITMPut ? "text-muted-foreground/70" : ""}`}>{row.pe.iv > 0 ? row.pe.iv.toFixed(1) : "—"}</TableCell>}
+                            {columnConfig.delta && <TableCell className="text-left py-1 tabular-nums font-medium bg-bearish/[0.025]">{data?.greeksAvailable ? row.pe.delta.toFixed(2) : "—"}</TableCell>}
+                            {columnConfig.theta && <TableCell className="text-left py-1 tabular-nums text-bearish/80 bg-bearish/[0.025]">{data?.greeksAvailable ? row.pe.theta.toFixed(2) : "—"}</TableCell>}
+                            {columnConfig.gamma && <TableCell className="text-left py-1 tabular-nums bg-bearish/[0.025]">{data?.greeksAvailable ? row.pe.gamma.toFixed(4) : "—"}</TableCell>}
+                            {columnConfig.vega && <TableCell className="text-left py-1 tabular-nums bg-bearish/[0.025]">{data?.greeksAvailable ? row.pe.vega.toFixed(2) : "—"}</TableCell>}
+                            {columnConfig.timeValue && <TableCell className="text-left py-1 tabular-nums bg-bearish/[0.025]">{row.pe.timeValue.toFixed(2)}</TableCell>}
+                            {columnConfig.intrinsic && <TableCell className={`text-left py-1 tabular-nums bg-bearish/[0.025] ${row.pe.intrinsic > 0 ? "" : "text-muted-foreground/50"}`}>{row.pe.intrinsic.toFixed(2)}</TableCell>}
 
                           </TableRow>
 

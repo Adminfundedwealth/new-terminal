@@ -45,7 +45,7 @@ export function OptionChainStrikeActions({
 
   return (
     <>
-    <div className="flex flex-col items-center gap-0.5 mt-1">
+    <div className="flex flex-col items-center gap-0.5">
       {([
         { type: "CE", label: "CALL", sideClass: "text-primary" },
         { type: "PE", label: "PUT", sideClass: "text-bearish" },
@@ -56,17 +56,17 @@ export function OptionChainStrikeActions({
           aria-label={`${strike} ${label} (${type}) actions`}
           className="flex items-center justify-center gap-0.5"
         >
-          <span className={`w-5 text-left text-[9px] font-bold ${sideClass}`}>{type}</span>
+          <span className={`w-4 text-left text-[9px] font-bold ${sideClass}`}>{type}</span>
           <Button
             variant="ghost"
             size="icon"
-            className={`h-5 w-5 ${isSelected(type) ? "text-primary" : "text-muted-foreground"}`}
+            className={`h-5 w-5 rounded-sm border ${isSelected(type) ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"}`}
             onClick={() => onToggleSelection(type)}
             title={`${isSelected(type) ? "Remove" : "Add"} ${strike} ${type} ${isSelected(type) ? "from" : "to"} basket`}
             aria-label={`${isSelected(type) ? "Remove" : "Add"} ${strike} ${type} ${isSelected(type) ? "from" : "to"} basket`}
             aria-pressed={isSelected(type)}
           >
-            <Check className={`h-3 w-3 ${isSelected(type) ? "opacity-100" : "opacity-25"}`} aria-hidden="true" />
+            <Check className={`h-3 w-3 ${isSelected(type) ? "opacity-100" : "opacity-20"}`} aria-hidden="true" />
           </Button>
           <Button
             variant="ghost"
@@ -82,46 +82,43 @@ export function OptionChainStrikeActions({
           <Button
             variant="ghost"
             size="sm"
-            className="h-6 gap-0.5 px-1 text-[9px] text-primary hover:bg-primary/10 hover:text-primary"
+            className="h-5 w-5 p-0 text-primary hover:bg-primary/10 hover:text-primary"
             onClick={() => onChart(type)}
             title={`Chart ${strike} ${type}`}
             aria-label={`Chart ${strike} ${type}`}
           >
             <BarChart3 className="h-3 w-3" aria-hidden="true" />
-            Chart
           </Button>
           <Button
             variant="ghost"
             size="sm"
-            className="h-6 gap-0.5 px-1 text-[9px] text-bullish hover:bg-bullish/10 hover:text-bullish"
+            className="h-5 w-5 p-0 text-bullish hover:bg-bullish/10 hover:text-bullish"
             onClick={() => onBuy(type)}
             title={`Buy ${strike} ${type}`}
             aria-label={`Buy ${strike} ${type}`}
           >
             <TrendingUp className="h-3 w-3" aria-hidden="true" />
-            Buy
           </Button>
           <Button
             variant="ghost"
             size="sm"
-            className="h-6 gap-0.5 px-1 text-[9px] text-bearish hover:bg-bearish/10 hover:text-bearish"
+            className="h-5 w-5 p-0 text-bearish hover:bg-bearish/10 hover:text-bearish"
             onClick={() => onSell(type)}
             title={`Sell ${strike} ${type}`}
             aria-label={`Sell ${strike} ${type}`}
           >
             <TrendingDown className="h-3 w-3" aria-hidden="true" />
-            Sell
           </Button>
           <Popover open={depthType === type} onOpenChange={(open) => setDepthType(open ? type : null)}>
             <PopoverTrigger asChild>
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-6 px-1 text-[9px] text-muted-foreground"
+                className="h-5 min-w-0 px-1 text-[9px] text-muted-foreground"
                 onClick={() => setDepthType(type)}
                 aria-label={`Market depth ${strike} ${type}`}
               >
-                Depth
+                D
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-64 p-3 text-xs" align="center">
@@ -133,7 +130,7 @@ export function OptionChainStrikeActions({
           </Popover>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-6 w-6" aria-label={`More actions ${strike} ${type}`}>
+              <Button variant="ghost" size="icon" className="h-5 w-5" aria-label={`More actions ${strike} ${type}`}>
                 <MoreHorizontal className="h-3.5 w-3.5" />
               </Button>
             </DropdownMenuTrigger>
