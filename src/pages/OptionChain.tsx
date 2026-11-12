@@ -2209,6 +2209,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                           <TableRow
 
                             id={`option-strike-${row.strikePrice}`}
+                            ref={isATM ? atmRef : undefined}
 
                             className={`group text-xs sm:text-[11px] font-mono cursor-context-menu transition-colors hover:bg-accent/30 [&>td]:px-2 ${
 
