@@ -222,7 +222,7 @@ export function useLiveOptionChain(symbol: string, expiry?: string, enabled = tr
       });
       const optionInstrument = optionInstruments.find((instrument) =>
         ["OPTIDX", "OPTSTK"].includes(instrument.instrumentType.toUpperCase()) &&
-        (!expiry || instrument.expiryDate === expiry)
+        (!expiry || (instrument.expiryDate ?? "").slice(0, 10) === expiry.slice(0, 10))
       );
       const hasChainData = result.chain.length > 0;
       const isAfterHours = result.afterHours ?? false;

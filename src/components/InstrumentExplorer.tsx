@@ -414,7 +414,7 @@ export function InstrumentExplorer({
       instrument.symbol === underlying &&
       instrument.strikePrice === strike &&
       instrument.optionType === optionType &&
-      (!expiry || instrument.expiryDate === expiry)
+      (!expiry || (instrument.expiryDate ?? "").slice(0, 10) === expiry.slice(0, 10))
     );
 
   const selectWorkspaceContext = (context: "stocks" | "options" | "futures") => {

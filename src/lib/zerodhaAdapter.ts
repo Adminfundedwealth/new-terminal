@@ -248,7 +248,7 @@ export class ZerodhaAdapter extends BaseBrokerAdapter {
         (item.exchangeSegment === "NFO" || item.exchangeSegment === "NSE_FNO") &&
         (item.instrumentType === "OPTIDX" || item.instrumentType === "OPTSTK") &&
         item.symbol === underlyingName &&
-        (!expiry || item.expiryDate === expiry)
+        (!expiry || (item.expiryDate ?? "").slice(0, 10) === expiry.slice(0, 10))
       );
       const expiries = [...new Set(contracts.map((item) => item.expiryDate).filter(Boolean) as string[])].sort();
       const selectedExpiry = expiry || expiries[0];
