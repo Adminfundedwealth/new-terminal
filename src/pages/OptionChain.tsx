@@ -39,7 +39,43 @@ import { useLiveOptionChain } from "@/hooks/useMarketData";
 
 import { StockChart } from "@/components/StockChart";
 
-import { OptionChainStrikeActions } from "@/components/OptionChainStrikeActions";
+import {
+  DhanOptionChainTable,
+  DEFAULT_COLUMNS,
+  COLUMN_LABELS,
+  type ColumnConfig,
+  type ColumnKey,
+  type SideFilter,
+} from "@/components/option-chain/DhanOptionChainTable";
+import type { LegAction } from "@/components/option-chain/OptionLegActionBar";
+import { OptionBasketPanel } from "@/components/option-chain/OptionBasketPanel";
+import { OptionAlertDialog, OptionContractDetailsDialog } from "@/components/option-chain/OptionContractDialogs";
+import {
+  detectUnusualActivity,
+  fmtCompact,
+  fmtNum,
+  summarizeChain,
+  toOptionRowViews,
+  topOiRanks,
+  type ActivityItem,
+  type RawOptionChainRow,
+} from "@/lib/optionChainAnalytics";
+import {
+  basketLegKey,
+  dedupeBasket,
+  readOptionBasket,
+  saveOptionBasket,
+  toggleBasketLeg,
+  updateBasketLeg,
+  type OptionBasketLeg,
+} from "@/lib/optionContractBasket";
+import {
+  evaluateOptionAlerts,
+  readOptionAlerts,
+  saveOptionAlerts,
+  type OptionContractAlert,
+} from "@/lib/optionContractAlerts";
+import { useMarketDepth } from "@/hooks/useOptionMarketDepth";
 
 import { toast } from "sonner";
 
@@ -628,7 +664,22 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 //  Order popup state 
 
   const [orderPopup, setOrderPopup] = useState<{ contract: OptionContract; side: "BUY" | "SELL" } | null>(null);
-  const [basket, setBasket] = useState<OptionContract[]>([]);
+  const [basket, setBasketState] = useState<OptionBasketLeg[]>(() => readOptionBasket());
+  const setBasket = useCallback((update: OptionBasketLeg[] | ((current: OptionBasketLeg[]) => OptionBasketLeg[])) => {
+    setBasketState((current) => {
+      const next = dedupeBasket(typeof update === "function" ? update(current) : update);
+      try { saveOptionBasket(next); } catch { /* session storage unavailable: keep in memory */ }
+      return next;
+    });
+  }, []);
+  const [chainColumns, setChainColumns] = useState<ColumnConfig>(DEFAULT_COLUMNS);
+  const [showBuildup, setShowBuildup] = useState(false);
+  const [sideFilter, setSideFilter] = useState<SideFilter>("BOTH");
+  const [highlightedStrike, setHighlightedStrike] = useState<number | null>(null);
+  const [detailsContract, setDetailsContract] = useState<OptionContract | null>(null);
+  const [alertContract, setAlertContract] = useState<OptionContract | null>(null);
+  const [optionAlerts, setOptionAlerts] = useState<OptionContractAlert[]>(() => readOptionAlerts());
+  const [fullscreenTabId, setFullscreenTabId] = useState<string | null>(null);
   const [optionWatchlist, setOptionWatchlist] = useState<OptionContract[]>(() => readOptionContractWatchlist());
 
 
@@ -750,6 +801,23 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     retry: false,
   });
   const underlyingQuote = underlyingQuoteQuery.data;
+  // The LTP endpoint carries no OHLC; Dhan's full quote supplies it when the service exposes it.
+  const underlyingFullQuoteQuery = useMarketDepth(quoteInstrument ? {
+    provider: "dhan",
+    providerInstrumentId: quoteInstrument.securityId,
+    symbol,
+    tradingSymbol: quoteInstrument.tradingSymbol,
+    exchange: quoteInstrument.exchange || (quoteInstrument.exchangeSegment === "BSE_IDX" ? "BSE" : "NSE"),
+    exchangeSegment: quoteInstrument.exchangeSegment,
+    instrumentType: quoteInstrument.instrumentType,
+  } : null, underlyingQuote?.open == null, 15_000);
+  const underlyingFullQuote = underlyingFullQuoteQuery.data;
+  const underlyingOhlc = {
+    open: underlyingQuote?.open ?? underlyingFullQuote?.open ?? null,
+    high: underlyingQuote?.high ?? underlyingFullQuote?.high ?? null,
+    low: underlyingQuote?.low ?? underlyingFullQuote?.low ?? null,
+    previousClose: underlyingQuote?.previousClose ?? underlyingFullQuote?.previousClose ?? null,
+  };
   const underlyingQuoteTime = underlyingQuote?.timestamp ? Date.parse(underlyingQuote.timestamp) : Number.NaN;
   const underlyingQuoteFresh = Number.isFinite(underlyingQuoteTime)
     && Date.now() >= underlyingQuoteTime
@@ -789,7 +857,19 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
 
 
-  const atmStrike = useMemo(() => Math.round(spotPrice / stepSize) * stepSize, [spotPrice, stepSize]);
+  // Null-aware view model: missing Dhan fields stay null and render as "—".
+  const rowViews = useMemo(() => toOptionRowViews(chain as RawOptionChainRow[], {
+    greeksAvailable: Boolean(data?.greeksAvailable),
+    oiChangeAvailable: data?.oiChangeAvailable === true,
+  }), [chain, data?.greeksAvailable, data?.oiChangeAvailable]);
+  const chainSpot = spotPrice > 0 ? spotPrice : null;
+  const chainSummary = useMemo(() => summarizeChain(rowViews, chainSpot), [rowViews, chainSpot]);
+  const activityItems = useMemo(() => detectUnusualActivity(rowViews), [rowViews]);
+  const oiRanks = useMemo(() => ({ CE: topOiRanks(rowViews, "CE"), PE: topOiRanks(rowViews, "PE") }), [rowViews]);
+  const atmStrike = useMemo(
+    () => chainSummary.atmStrike ?? Math.round(spotPrice / stepSize) * stepSize,
+    [chainSummary.atmStrike, spotPrice, stepSize],
+  );
 
   const totalCEOI = chain.reduce((s, o) => s + o.ce.oi, 0);
 
@@ -1085,6 +1165,13 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     }
 
     const tradingSymbol = optionInstrument.tradingSymbol;
+    const resolvedSecurityId = optionInstrument.providerInstrumentId || optionInstrument.securityId;
+    const rawRow = contract as RawOptionChainRow;
+    const reportedSecurityId = (type === "CE" ? rawRow.call : rawRow.put)?.security_id;
+    if (reportedSecurityId && String(reportedSecurityId) !== String(resolvedSecurityId)) {
+      toast.error(`Contract identity mismatch for ${symbol} ${strike} ${type}: chain reports ${reportedSecurityId}, instrument master ${resolvedSecurityId}.`);
+      return null;
+    }
 
     return {
 
@@ -1146,10 +1233,8 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
       toast.error(`Could not resolve ${symbol} ${strike} ${type} from Dhan's instrument master.`);
       return;
     }
-    setBasket((current) => current.some((item) => contractBasketKey(item) === contractBasketKey(contract))
-      ? current.filter((item) => contractBasketKey(item) !== contractBasketKey(contract))
-      : [...current, contract]);
-  }, [buildOrderContract, symbol]);
+    setBasket((current) => toggleBasketLeg(current, contract));
+  }, [buildOrderContract, symbol, setBasket]);
 
   const addStraddleToBasket = useCallback((strike: number) => {
     const call = buildOrderContract(strike, "CE");
@@ -1159,13 +1244,14 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
       return;
     }
     setBasket((current) => {
-      const byId = new Map(current.map((contract) => [contractBasketKey(contract), contract]));
-      byId.set(contractBasketKey(call), call);
-      byId.set(contractBasketKey(put), put);
-      return [...byId.values()];
+      const keys = new Set(current.map(basketLegKey));
+      return [
+        ...current,
+        ...[call, put].filter((contract) => !keys.has(basketLegKey(contract))).map((contract) => ({ ...contract, side: "BUY" as const, lots: 1 })),
+      ];
     });
     toast.success(`Added ${strike} CE and PE to the basket.`);
-  }, [buildOrderContract, symbol]);
+  }, [buildOrderContract, symbol, setBasket]);
 
   const toggleOptionWatchlist = useCallback((strike: number, type: "CE" | "PE") => {
     const contract = buildOrderContract(strike, type);
@@ -1210,6 +1296,114 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
   }, [buildOrderContract]);
 
 
+
+  const currentExpiryValue = selectedExpiry || expiries[0]?.value || "";
+  const legMatches = useCallback((contract: OptionContract, strike: number, type: "CE" | "PE") =>
+    contract.underlying === symbol && contract.expiry === currentExpiryValue && contract.strike === strike && contract.type === type,
+  [symbol, currentExpiryValue]);
+  const isInBasket = useCallback((strike: number, type: "CE" | "PE") => basket.some((leg) => legMatches(leg, strike, type)), [basket, legMatches]);
+  const isInOptionWatchlist = useCallback((strike: number, type: "CE" | "PE") => optionWatchlist.some((item) => legMatches(item, strike, type)), [optionWatchlist, legMatches]);
+
+  const openContractChart = useCallback((strike: number, type: "CE" | "PE", fullscreen: boolean) => {
+    const row = enrichedChain.find((item) => item.strikePrice === strike);
+    if (!row) { toast.error("Contract details not available"); return; }
+    openChart(strike, type, row);
+    if (fullscreen) {
+      const instrument = findDhanOptionInstrument(masterInstruments, {
+        underlying: symbol, expiry: currentExpiryValue, strike, optionType: type,
+        underlyingSecurityId: centralUnderlyingInstrument?.securityId,
+      });
+      if (instrument) setFullscreenTabId(instrument.tradingSymbol);
+    }
+  }, [enrichedChain, openChart, masterInstruments, symbol, currentExpiryValue, centralUnderlyingInstrument]);
+
+  const handleLegAction = useCallback((strike: number, type: "CE" | "PE", action: LegAction) => {
+    const row = enrichedChain.find((item) => item.strikePrice === strike);
+    switch (action) {
+      case "buy": if (row) openBuyTicket(strike, type, row); return;
+      case "sell": if (row) openSellTicket(strike, type, row); return;
+      case "chart": openContractChart(strike, type, false); return;
+      case "fullscreen": openContractChart(strike, type, true); return;
+      case "watchlist": toggleOptionWatchlist(strike, type); return;
+      case "basket": toggleBasketContract(strike, type); return;
+      case "forever":
+        toast.info("Forever (GTT) orders are not supported by the FundedWealth order service. Use a GTC Limit order from the order ticket instead.");
+        return;
+      case "alert": {
+        const contract = buildOrderContract(strike, type);
+        if (contract) setAlertContract(contract);
+        return;
+      }
+      case "details": {
+        const contract = buildOrderContract(strike, type);
+        if (contract) setDetailsContract(contract);
+        return;
+      }
+    }
+  }, [enrichedChain, openBuyTicket, openSellTicket, openContractChart, toggleOptionWatchlist, toggleBasketContract, buildOrderContract]);
+
+  const jumpToStrike = useCallback((strike: number) => {
+    setHighlightedStrike(strike);
+    document.getElementById(`option-strike-${strike}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(() => setHighlightedStrike((current) => current === strike ? null : current), 2500);
+  }, []);
+
+  // Contract alerts are evaluated against each fresh chain snapshot while this page is open.
+  useEffect(() => {
+    if (!optionAlerts.some((alert) => !alert.triggeredAt) || rowViews.length === 0) return;
+    const ltpBySecurityId = new Map<string, number>();
+    for (const row of rowViews) {
+      for (const type of ["CE", "PE"] as const) {
+        const leg = type === "CE" ? row.ce : row.pe;
+        if (leg.ltp === null) continue;
+        const alert = optionAlerts.find((item) => item.underlying === symbol && item.expiry === currentExpiryValue && item.strike === row.strike && item.type === type);
+        if (alert) ltpBySecurityId.set(alert.securityId, leg.ltp);
+      }
+    }
+    const { alerts: next, fired } = evaluateOptionAlerts(optionAlerts, ltpBySecurityId);
+    if (fired.length === 0) return;
+    fired.forEach((alert) => toast.success(`Alert: ${alert.underlying} ${alert.strike} ${alert.type} LTP ${alert.condition === "above" ? "≥" : "≤"} ${alert.price}`));
+    setOptionAlerts(next);
+    try { saveOptionAlerts(next); } catch { /* storage unavailable */ }
+  }, [rowViews, optionAlerts, symbol, currentExpiryValue]);
+
+  const createOptionAlert = (condition: "above" | "below", price: number) => {
+    if (!alertContract) return;
+    const alert: OptionContractAlert = {
+      id: `${alertContract.securityId}-${Date.now()}`,
+      securityId: alertContract.securityId,
+      exchangeSegment: alertContract.exchangeSegment,
+      tradingSymbol: alertContract.tradingSymbol,
+      underlying: alertContract.underlying,
+      expiry: alertContract.expiry,
+      strike: alertContract.strike,
+      type: alertContract.type,
+      condition,
+      price,
+      createdAt: new Date().toISOString(),
+      triggeredAt: null,
+    };
+    const next = [...optionAlerts, alert];
+    try {
+      saveOptionAlerts(next);
+      setOptionAlerts(next);
+      toast.success(`Alert set: ${alert.tradingSymbol} LTP ${condition === "above" ? "≥" : "≤"} ${price}`);
+      setAlertContract(null);
+    } catch (error) {
+      toast.error(`Could not save alert: ${error instanceof Error ? error.message : "browser storage is unavailable."}`);
+    }
+  };
+
+  const deleteOptionAlert = (id: string) => {
+    const next = optionAlerts.filter((alert) => alert.id !== id);
+    setOptionAlerts(next);
+    try { saveOptionAlerts(next); } catch { /* storage unavailable */ }
+  };
+
+  const goToStrategyBuilder = () => {
+    if (basket.length === 0) { toast.info("Select at least one CE/PE contract to build a strategy."); return; }
+    navigate(`/strategy-builder?symbol=${encodeURIComponent(symbol)}`, { state: { optionContracts: basket } });
+  };
 
   // "By Strike" view: show one strike across all expiries
 
@@ -1619,20 +1813,23 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
               <p className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">Show Columns</p>
 
-              <div className="space-y-1.5">
-
-                {Object.entries(columnConfig).map(([key, val]) => (
-
-                  <div key={key} className="flex items-center justify-between">
-
-                    <Label className="text-xs capitalize">{key === "oiChange" ? "OI Change" : key === "timeValue" ? "Time Value" : key}</Label>
-
-                    <Switch checked={val} onCheckedChange={(v) => setColumnConfig({ ...columnConfig, [key]: v })} className="scale-[0.6]" />
-
-                  </div>
-
-                ))}
-
+              <div className="space-y-1.5" data-testid="column-config">
+                {viewMode === "expiration"
+                  ? (Object.keys(chainColumns) as ColumnKey[]).map((key) => (
+                    <div key={key} className="flex items-center justify-between">
+                      <Label htmlFor={`col-${key}`} className="text-xs">{COLUMN_LABELS[key]}</Label>
+                      <Switch id={`col-${key}`} checked={chainColumns[key]} onCheckedChange={(v) => setChainColumns((current) => ({ ...current, [key]: v }))} className="scale-[0.6]" aria-label={`Show ${COLUMN_LABELS[key]} column`} />
+                    </div>
+                  ))
+                  : Object.entries(columnConfig).map(([key, val]) => (
+                    <div key={key} className="flex items-center justify-between">
+                      <Label className="text-xs capitalize">{key === "oiChange" ? "OI Change" : key === "timeValue" ? "Time Value" : key}</Label>
+                      <Switch checked={val} onCheckedChange={(v) => setColumnConfig({ ...columnConfig, [key]: v })} className="scale-[0.6]" aria-label={`Show ${key} column`} />
+                    </div>
+                  ))}
+                {viewMode === "expiration" && (
+                  <Button variant="ghost" size="sm" className="mt-1 h-6 w-full text-[11px]" onClick={() => setChainColumns(DEFAULT_COLUMNS)}>Reset to default</Button>
+                )}
               </div>
 
             </PopoverContent>
@@ -1703,21 +1900,25 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                     ? spotPrice.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                     : "—"}
               </strong>
-              {underlyingQuote?.change != null && (
-                <span className={`font-mono text-xs font-medium ${underlyingQuote.change >= 0 ? "text-bullish" : "text-bearish"}`}>
-                  {underlyingQuote.change >= 0 ? "+" : ""}{underlyingQuote.change.toFixed(2)}
-                  ({underlyingQuote.changePercent == null ? "—" : `${underlyingQuote.changePercent.toFixed(2)}%`})
-                </span>
-              )}
+              {(() => {
+                const change = underlyingQuote?.change ?? underlyingFullQuote?.change ?? null;
+                const changePercent = underlyingQuote?.changePercent ?? underlyingFullQuote?.changePercent ?? null;
+                if (change === null) return <span className="font-mono text-xs text-muted-foreground" title="Previous close not reported">—</span>;
+                return (
+                  <span className={`font-mono text-xs font-medium ${change >= 0 ? "text-bullish" : "text-bearish"}`}>
+                    {change >= 0 ? "+" : ""}{change.toFixed(2)} ({changePercent == null ? "—" : `${changePercent.toFixed(2)}%`})
+                  </span>
+                );
+              })()}
               {underlyingQuote && !underlyingQuoteFresh && <span className="text-[10px] font-semibold tracking-wide text-amber-400">HISTORICAL QUOTE</span>}
               {underlyingQuoteQuery.error && <span className="text-[10px] text-amber-400" title={underlyingQuoteQuery.error.message}>Underlying quote unavailable</span>}
             </div>
           </div>
           <div className="flex flex-wrap gap-x-5 gap-y-1 text-[11px] font-mono">
-            <span className="text-muted-foreground">OPEN <b className="text-foreground">{underlyingQuote?.open ?? "—"}</b></span>
-            <span className="text-muted-foreground">HIGH <b className="text-foreground">{underlyingQuote?.high ?? "—"}</b></span>
-            <span className="text-muted-foreground">LOW <b className="text-foreground">{underlyingQuote?.low ?? "—"}</b></span>
-            <span className="text-muted-foreground">PREV CLOSE <b className="text-foreground">{underlyingQuote?.previousClose ?? "—"}</b></span>
+            <span className="text-muted-foreground">Open: <b className="text-foreground">{fmtNum(underlyingOhlc.open)}</b></span>
+            <span className="text-muted-foreground">High: <b className="text-foreground">{fmtNum(underlyingOhlc.high)}</b></span>
+            <span className="text-muted-foreground">Low: <b className="text-foreground">{fmtNum(underlyingOhlc.low)}</b></span>
+            <span className="text-muted-foreground">Close: <b className="text-foreground">{fmtNum(underlyingOhlc.previousClose)}</b></span>
           </div>
         </div>
       </section>
@@ -1778,9 +1979,9 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
           {expiries.length > 5 && (
 
-            <Select value={selectedExpiry || expiries[0]?.value} onValueChange={setSelectedExpiry}>
+            <Select value={expiries.slice(5).some((e) => e.value === currentExpiryValue) ? currentExpiryValue : ""} onValueChange={setSelectedExpiry}>
 
-              <SelectTrigger className="h-8 w-[112px] text-xs"><SelectValue placeholder="More expiries" /></SelectTrigger>
+              <SelectTrigger className="h-8 w-[112px] text-xs"><SelectValue placeholder="Next Expiry" /></SelectTrigger>
 
               <SelectContent>
 
@@ -1795,27 +1996,37 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
             </Select>
 
           )}
-          <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-2 pl-2">
-            <span className="text-[11px] text-muted-foreground"><b className="font-medium text-foreground">{activeExpiry?.daysToExpiry ?? "—"} DTE</b><span className="mx-1.5 text-border">|</span>Lot <b className="font-medium text-foreground">{lotSize > 0 ? lotSize : "—"}</b></span>
-            <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <Switch
-                checked={perLot}
-                onCheckedChange={setPerLot}
-                disabled={lotSize <= 0}
-                aria-label="Show option prices per lot"
-                className="scale-[0.75]"
-              />
-              Per Lot{lotSize > 0 ? ` (${lotSize})` : ""}
-            </label>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 text-[11px]"
-              disabled
-              title="Buildup classification is unavailable because the feed does not provide option-price change and OI change together."
-            >
-              Buildup unavailable
-            </Button>
+          <div className="ml-auto flex flex-wrap items-end gap-x-6 gap-y-2 pl-2" data-testid="option-chain-stats">
+            {[
+              { label: "ATM IV", value: chainSummary.atmIv === null ? "—" : fmtNum(chainSummary.atmIv) },
+              { label: "Days for Expiry", value: activeExpiry ? String(activeExpiry.daysToExpiry) : "—" },
+              { label: "Market Lot", value: lotSize > 0 ? String(lotSize) : "—" },
+              { label: "PCR", value: fmtNum(chainSummary.pcr) },
+            ].map((stat) => (
+              <div key={stat.label} className="leading-tight">
+                <p className="text-[10px] text-muted-foreground">{stat.label}</p>
+                <p className="font-mono text-sm font-semibold">{stat.value}</p>
+              </div>
+            ))}
+            <div className="leading-tight">
+              <p className="text-[10px] text-muted-foreground">Show by</p>
+              <label className="flex items-center gap-1.5 text-xs" title={lotSize > 0 ? `Multiply option prices by the lot size (${lotSize})` : "Lot size unavailable from the instrument master"}>
+                <input type="checkbox" className="h-3.5 w-3.5 accent-primary" checked={perLot} disabled={lotSize <= 0} onChange={(event) => setPerLot(event.target.checked)} aria-label="Show option prices per lot" />
+                Per Lot
+              </label>
+            </div>
+            <div className="leading-tight">
+              <p className="text-[10px] text-muted-foreground">Show</p>
+              <label className="flex items-center gap-1.5 text-xs" title="Long/short buildup, short covering and long unwinding from reported LTP change and OI change">
+                <input type="checkbox" className="h-3.5 w-3.5 accent-primary" checked={showBuildup} onChange={(event) => setShowBuildup(event.target.checked)} aria-label="Show OI buildup" />
+                Buildup
+              </label>
+            </div>
+            <ToggleGroup type="single" value={sideFilter} onValueChange={(value) => value && setSideFilter(value as SideFilter)} className="rounded-md bg-muted p-0.5" aria-label="Filter calls and puts">
+              {(["BOTH", "CE", "PE"] as const).map((value) => (
+                <ToggleGroupItem key={value} value={value} className="h-6 rounded px-2 text-[11px] data-[state=on]:bg-background">{value === "BOTH" ? "CE + PE" : value}</ToggleGroupItem>
+              ))}
+            </ToggleGroup>
           </div>
         </div>
       )}
@@ -1984,14 +2195,14 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
         {[
 
-          { label: "CE OI", value: hasData ? `${(totalCEOI / 100000).toFixed(1)}L` : "—" },
-          { label: "PE OI", value: hasData ? `${(totalPEOI / 100000).toFixed(1)}L` : "—" },
-          { label: "CE Vol", value: hasData ? `${(totalCEVol / 100000).toFixed(1)}L` : "—" },
-          { label: "PE Vol", value: hasData ? `${(totalPEVol / 100000).toFixed(1)}L` : "—" },
-          { label: "Straddle", value: atmRow ? ((atmRow.ce.ltp + atmRow.pe.ltp) * priceDisplayMultiplier).toFixed(2) : "—", className: "text-warning" },
-          { label: "PCR", value: hasData ? pcr : "—", className: Number(pcr) > 1 ? "text-bullish" : "text-bearish" },
-          { label: "Max Pain", value: hasData && maxPain > 0 ? maxPain.toLocaleString("en-IN") : "—", className: "text-warning" },
-          { label: "ATM IV", value: atmRow && atmRow.ce.iv + atmRow.pe.iv > 0 ? `${((atmRow.ce.iv + atmRow.pe.iv) / 2).toFixed(1)}%` : "—" },
+          { label: "CE OI", value: fmtCompact(chainSummary.totalCeOi) },
+          { label: "PE OI", value: fmtCompact(chainSummary.totalPeOi) },
+          { label: "CE Vol", value: fmtCompact(chainSummary.totalCeVolume) },
+          { label: "PE Vol", value: fmtCompact(chainSummary.totalPeVolume) },
+          { label: "Straddle", value: fmtNum(chainSummary.straddle === null ? null : chainSummary.straddle * priceDisplayMultiplier), className: "text-warning" },
+          { label: "PCR", value: fmtNum(chainSummary.pcr), className: chainSummary.pcr === null ? "" : chainSummary.pcr > 1 ? "text-bullish" : "text-bearish" },
+          { label: "Max Pain", value: chainSummary.maxPain === null ? "—" : chainSummary.maxPain.toLocaleString("en-IN"), className: "text-warning" },
+          { label: "ATM IV", value: chainSummary.atmIv === null ? "—" : `${fmtNum(chainSummary.atmIv)}%` },
 
         ].map(stat => (
 
@@ -2009,491 +2220,91 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
 
 
-      {/* Unusual Activity Banner */}
-
-      {unusualActivity.count > 0 && (
-
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-orange-500/10 border border-orange-500/25 text-xs">
-
-          <Flame className="h-3.5 w-3.5 text-orange-500 animate-pulse" />
-
-          <span className="font-semibold text-orange-500">{unusualActivity.count} Volume Spikes</span>
-          <span className="text-muted-foreground">strikes above 3× mean volume for this chain:</span>
-
+      {/* Unusual Activity: volume spikes and OI buildup/unwinding versus the displayed chain average */}
+      {activityItems.length > 0 && viewMode === "expiration" && (
+        <div className="flex items-center gap-2 rounded-md border border-orange-500/25 bg-orange-500/10 px-3 py-1.5 text-xs" data-testid="unusual-activity">
+          <Flame className="h-3.5 w-3.5 shrink-0 text-orange-500" />
+          <span className="shrink-0 font-semibold text-orange-500">{new Set(activityItems.map((item) => item.strike)).size} Unusual Activity</span>
+          <span className="shrink-0 text-muted-foreground" title="Volume or |OI change| above 3× the chain average for that side">strikes (&gt;3× avg):</span>
           <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide">
-
-            {unusualActivity.hotStrikes.map(s => {
-
-              const flag = unusualActivity.flags.get(s)!;
-
+            {Object.values(activityItems.reduce<Record<string, ActivityItem[]>>((groups, item) => {
+              (groups[`${item.strike}:${item.side}`] ??= []).push(item);
+              return groups;
+            }, {})).map((items) => {
+              const { strike, side } = items[0];
+              const kinds = items.map((item) => item.kind === "VOLUME_SPIKE" ? "Vol" : item.kind === "OI_BUILDUP" ? "OI↑" : "OI↓").join(" ");
               return (
-
                 <button
-                  key={s}
+                  key={`${strike}-${side}`}
                   type="button"
-                  onClick={() => document.getElementById(`option-strike-${s}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-full border border-orange-500/30 px-2 py-0.5 text-[11px] text-orange-500 hover:bg-orange-500/10"
-                  aria-label={`Jump to strike ${s}`}
+                  onClick={() => jumpToStrike(strike)}
+                  className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] hover:bg-orange-500/10 ${side === "CE" ? "border-amber-500/40 text-amber-500" : "border-violet-500/40 text-violet-400"}`}
+                  aria-label={`Jump to ${strike} ${side} unusual activity`}
+                  title={items.map((item) => `${item.kind.replace("_", " ")} ${item.ratio.toFixed(1)}×`).join(", ")}
                 >
-                  {s.toLocaleString("en-IN")}
-                  {flag.ce && <span className="text-primary">CE</span>}
-                  {flag.ce && flag.pe && <span className="text-muted-foreground">+</span>}
-                  {flag.pe && <span className="text-bearish">PE</span>}
+                  {strike.toLocaleString("en-IN")} {side}
+                  <span className="text-[9px] text-muted-foreground">{kinds}</span>
                 </button>
-
               );
-
             })}
-
           </div>
-
         </div>
-
       )}
 
-
-
-      {/* Sticky ATM Bar */}
-
-      {atmRow && viewMode === "expiration" && (
-
-        <div className="sticky top-0 z-20 flex items-center justify-between gap-2 px-3 py-1 rounded bg-primary/5 border border-primary/20 text-xs font-mono">
-
+      {/* ATM summary bar */}
+      {chainSummary.atmRow && viewMode === "expiration" && (
+        <div className="flex items-center justify-between gap-2 rounded border border-primary/20 bg-primary/5 px-3 py-1 font-mono text-xs">
           <div className="flex items-center gap-3">
-
-            <span className="font-sans font-semibold text-primary">ATM {atmStrike}</span>
-
-            <span>CE: <span className="text-primary font-medium">{atmRow.ce.ltp > 0 ? (atmRow.ce.ltp * priceDisplayMultiplier).toFixed(2) : "—"}</span></span>
-            <span>PE: <span className="text-bearish font-medium">{atmRow.pe.ltp > 0 ? (atmRow.pe.ltp * priceDisplayMultiplier).toFixed(2) : "—"}</span></span>
-            <span>Straddle: <span className="text-warning font-medium">{atmRow.ce.ltp + atmRow.pe.ltp > 0 ? ((atmRow.ce.ltp + atmRow.pe.ltp) * priceDisplayMultiplier).toFixed(2) : "—"}</span></span>
-
+            <button type="button" className="font-sans font-semibold text-primary hover:underline" onClick={scrollToATM}>ATM {atmStrike.toLocaleString("en-IN")}</button>
+            <span>CE: <span className="font-medium text-amber-500">{fmtNum(chainSummary.atmRow.ce.ltp === null ? null : chainSummary.atmRow.ce.ltp * priceDisplayMultiplier)}</span></span>
+            <span>PE: <span className="font-medium text-violet-400">{fmtNum(chainSummary.atmRow.pe.ltp === null ? null : chainSummary.atmRow.pe.ltp * priceDisplayMultiplier)}</span></span>
+            <span>Straddle: <span className="font-medium text-warning">{fmtNum(chainSummary.straddle === null ? null : chainSummary.straddle * priceDisplayMultiplier)}</span></span>
           </div>
-
           <div className="flex items-center gap-3 text-muted-foreground">
-
-            <span>MP: <span className="text-warning">{maxPain > 0 ? maxPain.toLocaleString("en-IN") : "—"}</span></span>
-            <span>IV: {(atmRow.ce.iv + atmRow.pe.iv) > 0 ? `${((atmRow.ce.iv + atmRow.pe.iv) / 2).toFixed(1)}%` : "—"}</span>
-
+            <span>MP: <span className="text-warning">{chainSummary.maxPain === null ? "—" : chainSummary.maxPain.toLocaleString("en-IN")}</span></span>
+            <span>IV: {chainSummary.atmIv === null ? "—" : `${fmtNum(chainSummary.atmIv)}%`}</span>
+            {perLot && lotSize > 0 && <span className="text-primary">Prices × {lotSize} (per lot)</span>}
           </div>
-
         </div>
-
       )}
 
-
-
-{/*  BY EXPIRATION VIEW  */}
-
+      {/*  BY EXPIRATION VIEW: Dhan-style CE | Strike | PE chain  */}
       {viewMode === "expiration" && (
-
         <Card>
-
-          <CardContent className="p-0 max-h-[65vh] [&>div]:max-h-[65vh] [&>div]:overflow-auto">
-
+          <CardContent className="max-h-[68vh] overflow-auto p-0" data-testid="option-chain-scroll">
             {isChainLoading ? (
-
-              <div className="p-4 space-y-2">
-
+              <div className="space-y-2 p-4">
                 {Array.from({ length: 12 }).map((_, i) => (
-
-                  <div key={i} className="flex gap-2 items-center">
-
-                    <div className="flex-1 h-6 skeleton-shimmer rounded bg-muted/20" style={{ animationDelay: `${i * 60}ms` }} />
-
-                    <div className="w-16 h-6 skeleton-shimmer rounded bg-primary/5" />
-
-                    <div className="flex-1 h-6 skeleton-shimmer rounded bg-muted/20" style={{ animationDelay: `${i * 60 + 30}ms` }} />
-
+                  <div key={i} className="flex items-center gap-2">
+                    <div className="skeleton-shimmer h-6 flex-1 rounded bg-muted/20" />
+                    <div className="skeleton-shimmer h-6 w-16 rounded bg-primary/5" />
+                    <div className="skeleton-shimmer h-6 flex-1 rounded bg-muted/20" />
                   </div>
-
                 ))}
-
               </div>
-
-            ) : (
-
-              <Table>
-
-                <TableHeader className="sticky top-0 z-10 bg-card">
-
-                  {/* CALLS / STRIKE / PUTS header */}
-
-                  <TableRow className="text-xs border-b [&>th]:h-8 [&>th]:px-2 [&>th]:py-1">
-
-                    <TableHead className="text-center text-primary font-bold bg-primary/[0.04]" colSpan={callCols}>Calls (CE)</TableHead>
-
-                    <TableHead className="text-center font-bold bg-accent/50 border-x border-border" colSpan={2}>Strike / PCR</TableHead>
-
-                    <TableHead className="text-center text-bearish font-bold bg-bearish/[0.04]" colSpan={putCols}>Puts (PE)</TableHead>
-
-                  </TableRow>
-
-{/* Dhan-style call columns run from Greeks to price. */}
-
-                  <TableRow className="text-[11px] text-muted-foreground [&>th]:h-8 [&>th]:px-2 [&>th]:py-1">
-
-                    {columnConfig.theta && <TableHead className="text-right">Theta</TableHead>}
-
-                    {columnConfig.delta && <TableHead className="text-right">Delta</TableHead>}
-
-                    {columnConfig.iv && <TableHead className="text-right">IV%</TableHead>}
-
-                    {columnConfig.volume && <TableHead className="text-right">Volume</TableHead>}
-
-                    {columnConfig.oi && <TableHead className="text-right">OI</TableHead>}
-                    {columnConfig.oiChange && <TableHead className="text-right">OI Chg</TableHead>}
-                    {columnConfig.price && <TableHead className="text-right font-semibold text-primary">LTP</TableHead>}
-
-                    {columnConfig.ask && <TableHead className="text-right">Ask</TableHead>}
-                    {columnConfig.bid && <TableHead className="text-right">Bid</TableHead>}
-                    {columnConfig.gamma && <TableHead className="text-right">Gamma</TableHead>}
-                    {columnConfig.vega && <TableHead className="text-right">Vega</TableHead>}
-                    {columnConfig.timeValue && <TableHead className="text-right">Time</TableHead>}
-                    {columnConfig.intrinsic && <TableHead className="text-right">Intr.</TableHead>}
-
-                    {/* Strike and PCR stay in the center lane. */}
-
-                    <TableHead className="text-center bg-accent/50 border-l border-border font-semibold">Strike</TableHead>
-
-                    <TableHead className="text-center bg-accent/50 border-r border-border font-semibold">PCR</TableHead>
-
-                    {/* Put columns mirror the call side. */}
-
-                    {columnConfig.price && <TableHead className="text-left font-semibold text-bearish">LTP</TableHead>}
-                    {columnConfig.oi && <TableHead className="text-left">OI</TableHead>}
-                    {columnConfig.oiChange && <TableHead className="text-left">OI Chg</TableHead>}
-                    {columnConfig.volume && <TableHead className="text-left">Volume</TableHead>}
-                    {columnConfig.bid && <TableHead className="text-left">Bid</TableHead>}
-                    {columnConfig.ask && <TableHead className="text-left">Ask</TableHead>}
-                    {columnConfig.iv && <TableHead className="text-left">IV%</TableHead>}
-                    {columnConfig.delta && <TableHead className="text-left">Delta</TableHead>}
-                    {columnConfig.theta && <TableHead className="text-left">Theta</TableHead>}
-                    {columnConfig.gamma && <TableHead className="text-left">Gamma</TableHead>}
-                    {columnConfig.vega && <TableHead className="text-left">Vega</TableHead>}
-                    {columnConfig.timeValue && <TableHead className="text-left">Time</TableHead>}
-                    {columnConfig.intrinsic && <TableHead className="text-left">Intr.</TableHead>}
-                  </TableRow>
-
-                </TableHeader>
-
-                <TableBody>
-
-                  {enrichedChain.map((row, idx) => {
-
-                    const isATM = row.strikePrice === atmStrike;
-
-                    const isITMCall = row.strikePrice < spotPrice;
-
-                    const isITMPut = row.strikePrice > spotPrice;
-
-                    const isMP = row.strikePrice === maxPain;
-
-                    const rowPCR = row.ce.oi > 0 ? (row.pe.oi / row.ce.oi).toFixed(2) : "—";
-
-                    const uaFlag = unusualActivity.flags.get(row.strikePrice);
-
-                    const hasUA = !!uaFlag;
-
-
-
-                    const isFocused = idx === focusedStrikeIdx;
-
-
-
-                    return (
-
-                      <ContextMenu key={row.strikePrice}>
-
-                        <ContextMenuTrigger asChild>
-
-                          <TableRow
-
-                            id={`option-strike-${row.strikePrice}`}
-                            ref={isATM ? atmRef : undefined}
-
-                            className={`group text-xs sm:text-[11px] font-mono cursor-context-menu transition-colors hover:bg-accent/30 [&>td]:px-2 ${
-
-                              isATM ? "bg-primary/[0.08] border-y-2 border-primary/30 shadow-[inset_0_0_20px_hsl(var(--primary)/0.06)]" : ""
-
-                            } ${hasUA ? "bg-orange-500/[0.04]" : ""} ${isFocused ? "ring-1 ring-primary/60 bg-primary/[0.04]" : ""}`}
-
-                          >
-
-{/*  CALL SIDE  */}
-
-                            {columnConfig.theta && <TableCell className="text-right py-1 tabular-nums text-bearish/80 bg-primary/[0.025]">{data?.greeksAvailable ? row.ce.theta.toFixed(2) : "—"}</TableCell>}
-                            {columnConfig.delta && <TableCell className="text-right py-1 tabular-nums font-medium bg-primary/[0.025]">{data?.greeksAvailable ? row.ce.delta.toFixed(2) : "—"}</TableCell>}
-                            {columnConfig.iv && <TableCell className={`text-right py-1 tabular-nums bg-primary/[0.025] ${isITMCall ? "text-muted-foreground/70" : ""}`}>{row.ce.iv > 0 ? row.ce.iv.toFixed(1) : "—"}</TableCell>}
-
-                            {columnConfig.volume && (
-                              <TableCell className="text-right py-1 bg-primary/[0.025]">
-                                <div className="flex items-center justify-end gap-0.5">
-                                  {uaFlag?.ce && <Flame className="h-3 w-3 text-orange-500 shrink-0" />}
-                                  <VolumeBar value={row.ce.volume} max={maxVol} side="call" />
-                                </div>
-                              </TableCell>
-                            )}
-                            {columnConfig.oi && <TableCell className="text-right py-1 tabular-nums bg-primary/[0.025]">{row.ce.oi.toLocaleString("en-IN")}</TableCell>}
-                            {columnConfig.oiChange && <TableCell className="text-right py-1 tabular-nums bg-primary/[0.025]">{data?.oiChangeAvailable === true ? row.ce.oiChange.toLocaleString("en-IN") : "—"}</TableCell>}
-
-                            {columnConfig.price && (
-
-                              <TableCell className="text-right py-1 font-semibold bg-primary/[0.025]">
-
-                                <button onClick={() => openBuyTicket(row.strikePrice, "CE", row)} className="hover:text-primary transition-colors">
-
-                                  {row.ce.ltp > 0 ? (row.ce.ltp * priceDisplayMultiplier).toFixed(2) : "—"}
-
-                                </button>
-
-                              </TableCell>
-
-                            )}
-
-                            {columnConfig.ask && <TableCell className="text-right py-1 tabular-nums bg-primary/[0.025]">{row.ce.askPrice > 0 ? (row.ce.askPrice * priceDisplayMultiplier).toFixed(2) : "—"}</TableCell>}
-                            {columnConfig.bid && <TableCell className="text-right py-1 tabular-nums bg-primary/[0.025]">{row.ce.bidPrice > 0 ? (row.ce.bidPrice * priceDisplayMultiplier).toFixed(2) : "—"}</TableCell>}
-                            {columnConfig.gamma && <TableCell className="text-right py-1 tabular-nums bg-primary/[0.025]">{data?.greeksAvailable ? row.ce.gamma.toFixed(4) : "—"}</TableCell>}
-                            {columnConfig.vega && <TableCell className="text-right py-1 tabular-nums bg-primary/[0.025]">{data?.greeksAvailable ? row.ce.vega.toFixed(2) : "—"}</TableCell>}
-                            {columnConfig.timeValue && <TableCell className="text-right py-1 tabular-nums bg-primary/[0.025]">{row.ce.timeValue.toFixed(2)}</TableCell>}
-                            {columnConfig.intrinsic && <TableCell className={`text-right py-1 tabular-nums bg-primary/[0.025] ${row.ce.intrinsic > 0 ? "" : "text-muted-foreground/50"}`}>{row.ce.intrinsic.toFixed(2)}</TableCell>}
-
-
-
-{/*  STRIKE  */}
-
-                            <TableCell className="relative text-center bg-accent/50 border-l border-border py-1">
-
-                              <div className="flex flex-col items-center">
-
-                                <div className="flex items-center gap-1">
-
-                                  <span className={`font-bold text-[11px] ${isATM ? "text-primary" : isMP ? "text-warning" : ""}`}>
-
-                                    {row.strikePrice.toLocaleString("en-IN")}
-
-                                  </span>
-
-                                  {isATM && (
-
-                                    <span className="text-[11px] font-bold bg-primary text-primary-foreground px-1 py-0 rounded-sm leading-tight">
-
-                                      ATM
-
-                                    </span>
-
-                                  )}
-
-                                </div>
-
-                                {isMP && <span className="text-[11px] text-warning/60 font-medium">MAX PAIN</span>}
-
-                              </div>
-                              <div className="absolute left-1/2 top-1/2 z-20 flex -translate-x-1/2 -translate-y-1/2 rounded bg-card/95 p-0.5 opacity-0 shadow-lg ring-1 ring-border transition-opacity pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [@media(hover:none)]:relative [@media(hover:none)]:left-auto [@media(hover:none)]:top-auto [@media(hover:none)]:z-auto [@media(hover:none)]:mt-1 [@media(hover:none)]:translate-x-0 [@media(hover:none)]:translate-y-0 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
-                                <OptionChainStrikeActions
-                                  strike={row.strikePrice}
-                                  onChart={(type) => openChart(row.strikePrice, type, row)}
-                                  onBuy={(type) => openBuyTicket(row.strikePrice, type, row)}
-                                  onSell={(type) => openSellTicket(row.strikePrice, type, row)}
-                                  isSelected={(type) => basket.some((contract) =>
-                                    contract.underlying === symbol
-                                    && contract.expiry === (selectedExpiry || expiries[0]?.value || "")
-                                    && contract.strike === row.strikePrice
-                                    && contract.type === type
-                                  )}
-                                  onToggleSelection={(type) => toggleBasketContract(row.strikePrice, type)}
-                                  isInWatchlist={(type) => optionWatchlist.some((contract) =>
-                                    contract.underlying === symbol
-                                    && contract.expiry === (selectedExpiry || expiries[0]?.value || "")
-                                    && contract.strike === row.strikePrice
-                                    && contract.type === type
-                                  )}
-                                  onToggleWatchlist={(type) => toggleOptionWatchlist(row.strikePrice, type)}
-                                  onFullscreen={(type) => {
-                                    void document.documentElement.requestFullscreen().catch((error: unknown) => {
-                                      toast.error(`Could not open fullscreen chart: ${error instanceof Error ? error.message : "fullscreen is unavailable."}`);
-                                    });
-                                    openChart(row.strikePrice, type, row);
-                                  }}
-                                  onAlert={(type) => toast.info(`Option contract alerts are unsupported for ${symbol} ${row.strikePrice} ${type}.`)}
-                                  onForeverOrder={(type) => toast.info(`Forever orders are unsupported for ${symbol} ${row.strikePrice} ${type} in the current order service.`)}
-                                  resolveContract={(type) => buildOrderContract(row.strikePrice, type)}
-                                />
-
-                              </div>
-
-                            </TableCell>
-
-                            <TableCell className="text-center py-1 bg-accent/50 border-r border-border text-muted-foreground">{rowPCR}</TableCell>
-
-
-
-{/*  PUT SIDE  */}
-
-                            {columnConfig.price && (
-
-                              <TableCell className="text-left py-1 font-semibold bg-bearish/[0.025]">
-
-                                <button onClick={() => openBuyTicket(row.strikePrice, "PE", row)} className="hover:text-bearish transition-colors">
-
-                                  {row.pe.ltp > 0 ? (row.pe.ltp * priceDisplayMultiplier).toFixed(2) : "—"}
-
-                                </button>
-
-                              </TableCell>
-
-                            )}
-
-                            {columnConfig.oi && <TableCell className="text-left py-1 tabular-nums bg-bearish/[0.025]">{row.pe.oi.toLocaleString("en-IN")}</TableCell>}
-                            {columnConfig.oiChange && <TableCell className="text-left py-1 tabular-nums bg-bearish/[0.025]">{data?.oiChangeAvailable === true ? row.pe.oiChange.toLocaleString("en-IN") : "—"}</TableCell>}
-                            {columnConfig.volume && (
-                              <TableCell className="text-left py-1 bg-bearish/[0.025]">
-                                <div className="flex items-center gap-0.5">
-                                  <VolumeBar value={row.pe.volume} max={maxVol} side="put" />
-                                  {uaFlag?.pe && <Flame className="h-3 w-3 text-orange-500 shrink-0" />}
-                                </div>
-                              </TableCell>
-                            )}
-                            {columnConfig.bid && <TableCell className="text-left py-1 tabular-nums bg-bearish/[0.025]">{row.pe.bidPrice > 0 ? (row.pe.bidPrice * priceDisplayMultiplier).toFixed(2) : "—"}</TableCell>}
-                            {columnConfig.ask && <TableCell className="text-left py-1 tabular-nums bg-bearish/[0.025]">{row.pe.askPrice > 0 ? (row.pe.askPrice * priceDisplayMultiplier).toFixed(2) : "—"}</TableCell>}
-                            {columnConfig.iv && <TableCell className={`text-left py-1 tabular-nums bg-bearish/[0.025] ${isITMPut ? "text-muted-foreground/70" : ""}`}>{row.pe.iv > 0 ? row.pe.iv.toFixed(1) : "—"}</TableCell>}
-                            {columnConfig.delta && <TableCell className="text-left py-1 tabular-nums font-medium bg-bearish/[0.025]">{data?.greeksAvailable ? row.pe.delta.toFixed(2) : "—"}</TableCell>}
-                            {columnConfig.theta && <TableCell className="text-left py-1 tabular-nums text-bearish/80 bg-bearish/[0.025]">{data?.greeksAvailable ? row.pe.theta.toFixed(2) : "—"}</TableCell>}
-                            {columnConfig.gamma && <TableCell className="text-left py-1 tabular-nums bg-bearish/[0.025]">{data?.greeksAvailable ? row.pe.gamma.toFixed(4) : "—"}</TableCell>}
-                            {columnConfig.vega && <TableCell className="text-left py-1 tabular-nums bg-bearish/[0.025]">{data?.greeksAvailable ? row.pe.vega.toFixed(2) : "—"}</TableCell>}
-                            {columnConfig.timeValue && <TableCell className="text-left py-1 tabular-nums bg-bearish/[0.025]">{row.pe.timeValue.toFixed(2)}</TableCell>}
-                            {columnConfig.intrinsic && <TableCell className={`text-left py-1 tabular-nums bg-bearish/[0.025] ${row.pe.intrinsic > 0 ? "" : "text-muted-foreground/50"}`}>{row.pe.intrinsic.toFixed(2)}</TableCell>}
-
-                          </TableRow>
-
-                        </ContextMenuTrigger>
-
-                        <ContextMenuContent className="w-48">
-
-                          <ContextMenuSub>
-
-                            <ContextMenuSubTrigger className="gap-2"><BarChart3 className="h-3.5 w-3.5 text-primary" /> Chart</ContextMenuSubTrigger>
-
-                            <ContextMenuSubContent>
-
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "chart", row)} className="text-xs">Chart CE @ ₹{row.ce.ltp.toFixed(2)}</ContextMenuItem>
-
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "PE", "chart", row)} className="text-xs">Chart PE @ ₹{row.pe.ltp.toFixed(2)}</ContextMenuItem>
-
-                            </ContextMenuSubContent>
-
-                          </ContextMenuSub>
-
-                          <ContextMenuSub>
-
-                            <ContextMenuSubTrigger className="gap-2"><TrendingUp className="h-3.5 w-3.5 text-primary" /> Buy</ContextMenuSubTrigger>
-
-                            <ContextMenuSubContent>
-
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "buy", row)} className="text-xs">Buy CE @ ₹{row.ce.ltp.toFixed(2)}</ContextMenuItem>
-
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "PE", "buy", row)} className="text-xs">Buy PE @ ₹{row.pe.ltp.toFixed(2)}</ContextMenuItem>
-
-                            </ContextMenuSubContent>
-
-                          </ContextMenuSub>
-
-                          <ContextMenuSub>
-
-                            <ContextMenuSubTrigger className="gap-2"><TrendingDown className="h-3.5 w-3.5 text-bearish" /> Sell</ContextMenuSubTrigger>
-
-                            <ContextMenuSubContent>
-
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "sell", row)} className="text-xs">Sell CE @ ₹{row.ce.ltp.toFixed(2)}</ContextMenuItem>
-
-                              <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "PE", "sell", row)} className="text-xs">Sell PE @ ₹{row.pe.ltp.toFixed(2)}</ContextMenuItem>
-
-                            </ContextMenuSubContent>
-
-                          </ContextMenuSub>
-
-                          <ContextMenuSeparator />
-
-                          <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "straddle")} className="gap-2 text-xs">
-
-                            <Layers className="h-3.5 w-3.5" /> Build Straddle ({(row.ce.ltp + row.pe.ltp).toFixed(1)})
-
-                          </ContextMenuItem>
-
-                          <ContextMenuItem onClick={() => handleContextAction(row.strikePrice, "CE", "alert")} className="gap-2 text-xs">
-
-                            <Bell className="h-3.5 w-3.5" /> Set Alert
-
-                          </ContextMenuItem>
-
-                        </ContextMenuContent>
-
-                      </ContextMenu>
-
-                    );
-
-                  })}
-
-                </TableBody>
-
-{/*  Sticky Summary Footer  */}
-
-                {hasData && (
-
-                  <tfoot className="sticky bottom-0 z-10 bg-card border-t-2 border-primary/20">
-
-                    <tr className="text-xs font-mono font-semibold">
-
-                      <td colSpan={callCols} className="text-right py-2 px-2">
-
-                        <div className="flex items-center justify-end gap-4">
-
-                          <span className="text-muted-foreground">CE Vol: <span className="text-foreground">{totalCEVol >= 1000000 ? (totalCEVol / 1000000).toFixed(1) + 'M' : (totalCEVol / 1000).toFixed(0) + 'K'}</span></span>
-
-                          <span className="text-muted-foreground">CE OI: <span className="text-primary font-bold">{totalCEOI >= 1000000 ? (totalCEOI / 1000000).toFixed(1) + 'M' : (totalCEOI / 100000).toFixed(1) + 'L'}</span></span>
-
-                        </div>
-
-                      </td>
-
-                      <td colSpan={2} className="text-center py-2 bg-accent/50 border-x-2 border-border">
-
-                        <span className={`text-xs font-bold ${Number(pcr) > 1 ? 'text-bullish' : 'text-bearish'}`}>
-
-                          PCR: {pcr}
-
-                        </span>
-
-                      </td>
-
-                      <td colSpan={callCols} className="text-left py-2 px-2">
-
-                        <div className="flex items-center gap-4">
-
-                          <span className="text-muted-foreground">PE OI: <span className="text-bearish font-bold">{totalPEOI >= 1000000 ? (totalPEOI / 1000000).toFixed(1) + 'M' : (totalPEOI / 100000).toFixed(1) + 'L'}</span></span>
-
-                          <span className="text-muted-foreground">PE Vol: <span className="text-foreground">{totalPEVol >= 1000000 ? (totalPEVol / 1000000).toFixed(1) + 'M' : (totalPEVol / 1000).toFixed(0) + 'K'}</span></span>
-
-                        </div>
-
-                      </td>
-
-                    </tr>
-
-                  </tfoot>
-
-                )}
-
-              </Table>
-
-            )}
-
+            ) : hasData ? (
+              <DhanOptionChainTable
+                rows={rowViews}
+                spot={chainSpot}
+                atmStrike={chainSummary.atmStrike}
+                maxPain={chainSummary.maxPain}
+                columns={chainColumns}
+                sideFilter={sideFilter}
+                perLotMultiplier={priceDisplayMultiplier}
+                showBuildup={showBuildup}
+                activity={activityItems}
+                oiRanks={oiRanks}
+                isInBasket={isInBasket}
+                isInWatchlist={isInOptionWatchlist}
+                onToggleBasket={toggleBasketContract}
+                onAction={handleLegAction}
+                resolveContract={buildOrderContract}
+                highlightedStrike={highlightedStrike}
+              />
+            ) : null}
           </CardContent>
-
         </Card>
-
       )}
-
-
 
 {/*  BY STRIKE VIEW  */}
 
@@ -2665,79 +2476,59 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-card px-3 py-2">
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" size="sm" className="h-8 text-xs">
-              In Basket <Badge variant="secondary" className="ml-1">{basket.length}</Badge>
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-80 p-3" align="start">
-            <p className="mb-2 text-xs font-semibold">Selected option contracts</p>
-            {basket.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Select CE/PE using the check buttons beside each strike.</p>
-            ) : (
-              <div className="space-y-2">
-                {basket.map((contract) => (
-                  <div key={contractBasketKey(contract)} className="flex items-center justify-between gap-2 text-xs">
-                    <span className="min-w-0 truncate">{contract.tradingSymbol} · {contract.lotSize > 0 ? `${contract.lotSize} qty/lot` : "lot size unavailable"}</span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 px-2"
-                      onClick={() => setBasket((current) => current.filter((item) => contractBasketKey(item) !== contractBasketKey(contract)))}
-                      aria-label={`Remove ${contract.tradingSymbol} from basket`}
-                    >
-                      <X className="h-3 w-3" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </PopoverContent>
-        </Popover>
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" size="sm" className="h-8 text-xs">
-              In Watchlist <Badge variant="secondary" className="ml-1">{optionWatchlist.length}</Badge>
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-80 p-3" align="start">
-            <p className="mb-2 text-xs font-semibold">Saved option contracts</p>
-            {optionWatchlist.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Use the star beside a CE/PE contract to save it.</p>
-            ) : (
-              <div className="space-y-2">
-                {optionWatchlist.map((contract) => (
-                  <div key={optionContractWatchlistKey(contract)} className="flex items-center justify-between gap-2 text-xs">
-                    <span className="min-w-0 truncate">{contract.tradingSymbol} · {contract.expiryLabel}</span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 px-2"
-                      onClick={() => removeOptionWatchlistContract(contract)}
-                    >
-                      Remove
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </PopoverContent>
-        </Popover>
-        <Button
-          size="sm"
-          className="h-8 text-xs"
-          disabled={basket.length === 0}
-          onClick={() => navigate(`/strategy-builder?symbol=${encodeURIComponent(symbol)}`, {
-            state: { optionContracts: basket },
-          })}
-        >
+      <div className="sticky bottom-0 z-30 flex flex-wrap items-center justify-between gap-2 rounded-md border bg-card px-3 py-2" data-testid="option-chain-bottom-bar">
+        <div className="flex items-center gap-2">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8 text-xs" aria-label={`In Watchlist ${optionWatchlist.length}`}>
+                In Watchlist <Badge variant="secondary" className="ml-1">{optionWatchlist.length}</Badge>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-96 p-3" align="start" side="top">
+              <p className="mb-2 text-xs font-semibold">Option contracts in Watchlist</p>
+              {optionWatchlist.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Use “Add to Watchlist” from a contract's ⋮ menu.</p>
+              ) : (
+                <div className="max-h-72 space-y-1.5 overflow-y-auto">
+                  {optionWatchlist.map((contract) => (
+                    <div key={optionContractWatchlistKey(contract)} className="flex items-center justify-between gap-2 text-xs">
+                      <span className="min-w-0 truncate">{contract.underlying} {contract.strike} {contract.type} · {contract.expiryLabel}</span>
+                      <div className="flex shrink-0 gap-1">
+                        <Button size="sm" className="h-6 bg-bullish px-1.5 text-[10px] text-white hover:bg-bullish/90" onClick={() => setOrderPopup({ contract, side: "BUY" })}>B</Button>
+                        <Button size="sm" className="h-6 bg-bearish px-1.5 text-[10px] text-white hover:bg-bearish/90" onClick={() => setOrderPopup({ contract, side: "SELL" })}>S</Button>
+                        <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => removeOptionWatchlistContract(contract)} aria-label={`Remove ${contract.tradingSymbol} from watchlist`}>
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8 text-xs" aria-label={`In Basket ${basket.length}`}>
+                In Basket <Badge variant="secondary" className="ml-1">{basket.length}</Badge>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-3" align="start" side="top">
+              <OptionBasketPanel
+                legs={basket}
+                onUpdate={(key, patch) => setBasket((current) => updateBasketLeg(current, key, patch))}
+                onRemove={(key) => setBasket((current) => current.filter((leg) => basketLegKey(leg) !== key))}
+                onClear={() => setBasket([])}
+                onOrderLeg={(leg) => setOrderPopup({ contract: leg, side: leg.side })}
+                onBuildStrategy={goToStrategyBuilder}
+              />
+            </PopoverContent>
+          </Popover>
+        </div>
+        <Button size="sm" variant="outline" className="h-8 text-xs" onClick={goToStrategyBuilder} aria-label={`Build Your Strategy ${basket.length}`}>
           <Layers className="mr-1.5 h-3.5 w-3.5" />
-          Build Your Strategy
+          Build Your Strategy <Badge variant="secondary" className="ml-1">{basket.length}</Badge>
         </Button>
       </div>
-
       {/* ── Close Option Chain conditional ───────────────────────────────── */}
 
       </>
@@ -2754,7 +2545,21 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
         .map(tab => (
 
-          <div key={tab.id} className={activeTabId === tab.id ? "block" : "hidden"}>
+          <div
+            key={tab.id}
+            className={fullscreenTabId === tab.id
+              ? "fixed inset-0 z-50 overflow-auto bg-background p-3"
+              : activeTabId === tab.id ? "block" : "hidden"}
+            data-testid={fullscreenTabId === tab.id ? "fullscreen-option-chart" : undefined}
+          >
+            {fullscreenTabId === tab.id && (
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-sm font-semibold">{tab.label} · {tab.tradingSymbol} · ID {tab.securityId}</span>
+                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setFullscreenTabId(null)} aria-label="Exit fullscreen chart">
+                  <X className="mr-1 h-3.5 w-3.5" /> Exit fullscreen
+                </Button>
+              </div>
+            )}
 
             <OptionContractChartTab
 
@@ -2788,6 +2593,14 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
       {/* Buy/Sell Order Popup — always rendered at the outer level */}
 
+      <OptionContractDetailsDialog contract={detailsContract} onClose={() => setDetailsContract(null)} />
+      <OptionAlertDialog
+        contract={alertContract}
+        alerts={optionAlerts}
+        onCreate={createOptionAlert}
+        onDelete={deleteOptionAlert}
+        onClose={() => setAlertContract(null)}
+      />
       {orderPopup && (
 
         <OptionOrderPopup
