@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Search, Star, TrendingUp, TrendingDown, Radio, Loader2, BarChart3, ExternalLink, X, ArrowLeft } from "lucide-react";
+import { Search, Star, TrendingUp, TrendingDown, Loader2, BarChart3, ExternalLink, X, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,7 @@ import {
   toTerminalMarketDataInstrument,
   type TerminalMarketDataQuote,
 } from "@/lib/terminalApi";
+import { fetchCentralMarketQuotes } from "@/lib/centralMarketQuotes";
 import type { Instrument } from "@/lib/localDatabase";
 
 export type ExplorerAsset = "stocks" | "indices" | "futures";
@@ -46,7 +47,7 @@ export interface ExplorerRow {
   volume: number | null;
   oi?: number | null;
   oiChange?: number | null;
-  isLive?: boolean;
+  isFresh?: boolean;
   searchText?: string;
 }
 
@@ -162,32 +163,56 @@ export function InstrumentExplorer({
       marketDataProvider,
       visibleRows.map((row) => row.instrument?.providerInstrumentId ?? row.instrument?.securityId ?? row.chartSymbol ?? row.symbol),
     ],
-    enabled: Boolean(visibleRows.length > 0 && canLoadMarketData),
+    enabled: Boolean(visibleRows.length > 0 && canLoadMarketData && !isLoading && visibleRows.some((row) => row.instrument)),
     queryFn: async () => {
       const quotes: Record<string, TerminalMarketDataQuote> = {};
       const errors: string[] = [];
       if (!marketDataAccountId && marketDataProvider !== "dhan") throw new Error("Select a FundedWealth trading account to load account-specific quotes.");
-      for (let offset = 0; offset < visibleRows.length; offset += 10) {
-        const batch = visibleRows.slice(offset, offset + 10);
-        const results = await Promise.allSettled(batch.map(async (row) => {
-          const chartSymbol = row.chartSymbol ?? row.symbol;
-          const instrument = row.instrument ?? workspaceInstruments.find((candidate) =>
-            candidate.tradingSymbol.toUpperCase() === chartSymbol.toUpperCase() ||
-            candidate.symbol.toUpperCase() === chartSymbol.toUpperCase()
-          );
-          if (!instrument) throw new Error(`Terminal OS could not resolve ${chartSymbol}.`);
-          const quote = await requestTerminalMarketData<TerminalMarketDataQuote>(
-            marketDataAccountId,
-            marketDataProvider,
-            { operation: "getQuote", instrument: toTerminalMarketDataInstrument(instrument, marketDataProvider) },
-          );
-          return [chartSymbol, quote] as const;
+
+      // Build instrument list from rows that have resolved instruments
+      const resolvedRows = visibleRows.filter((row) => row.instrument);
+      const unresolvedSymbols = visibleRows
+        .filter((row) => !row.instrument)
+        .map((row) => row.chartSymbol ?? row.symbol);
+
+      if (marketDataProvider === "dhan" && resolvedRows.length > 0) {
+        // Batched path: one /marketfeed/quote call for the whole page
+        const targets = resolvedRows.map((row) => ({
+          key: row.chartSymbol ?? row.symbol,
+          instrument: row.instrument as Instrument,
         }));
-        for (const result of results) {
-          if (result.status === "fulfilled") quotes[result.value[0]] = result.value[1];
-          else errors.push(result.reason instanceof Error ? result.reason.message : "A market quote request failed.");
+        const { quotes: batchQuotes, errors: batchErrors } = await fetchCentralMarketQuotes(targets);
+        Object.assign(quotes, batchQuotes);
+        errors.push(...batchErrors);
+      } else {
+        // Fallback: serial getQuote for non-Dhan providers
+        for (let offset = 0; offset < visibleRows.length; offset += 10) {
+          const batch = visibleRows.slice(offset, offset + 10);
+          const results = await Promise.allSettled(batch.map(async (row) => {
+            const chartSymbol = row.chartSymbol ?? row.symbol;
+            const instrument = row.instrument ?? workspaceInstruments.find((candidate) =>
+              candidate.tradingSymbol.toUpperCase() === chartSymbol.toUpperCase() ||
+              candidate.symbol.toUpperCase() === chartSymbol.toUpperCase()
+            );
+            if (!instrument) throw new Error(`Terminal OS could not resolve ${chartSymbol}.`);
+            const quote = await requestTerminalMarketData<TerminalMarketDataQuote>(
+              marketDataAccountId,
+              marketDataProvider,
+              { operation: "getQuote", instrument: toTerminalMarketDataInstrument(instrument, marketDataProvider) },
+            );
+            return [chartSymbol, quote] as const;
+          }));
+          for (const result of results) {
+            if (result.status === "fulfilled") quotes[result.value[0]] = result.value[1];
+            else errors.push(result.reason instanceof Error ? result.reason.message : "A market quote request failed.");
+          }
         }
       }
+
+      if (unresolvedSymbols.length > 0) {
+        errors.push(`Terminal OS could not resolve: ${unresolvedSymbols.slice(0, 3).join(", ")}${unresolvedSymbols.length > 3 ? ` +${unresolvedSymbols.length - 3} more` : ""}.`);
+      }
+
       return { quotes, errors: [...new Set(errors)] };
     },
     staleTime: 5_000,
@@ -214,7 +239,7 @@ export function InstrumentExplorer({
       low: quote.low,
       volume: quote.volume,
       oi: quote.openInterest,
-      isLive: Number.isFinite(quoteAge) && quoteAge >= 0 && quoteAge <= 60_000,
+      isFresh: Number.isFinite(quoteAge) && quoteAge >= 0 && quoteAge <= 60_000,
     };
   }), [visibleRows, visibleQuotesQuery.data]);
 
@@ -235,7 +260,7 @@ export function InstrumentExplorer({
     return matches.find((instrument) => instrument.exchange === "NSE" || instrument.exchangeSegment === "NSE_EQ") ?? matches[0];
   }, [workspaceInstruments, chartSymbol, workspaceContext]);
 
-  const { data: selectedTerminalQuote } = useQuery({
+  const { data: selectedTerminalQuote, error: selectedTerminalQuoteError } = useQuery({
     queryKey: ["terminal-selected-quote", marketDataAccountId, marketDataProvider, chartSymbol],
     queryFn: async () => {
       if ((!marketDataAccountId && marketDataProvider !== "dhan") || !chartSymbol) return null;
@@ -345,7 +370,7 @@ export function InstrumentExplorer({
   const selectedQuoteIsAvailable = Boolean(
     selectedQuote && Number.isFinite(selectedQuote.ltp) && selectedQuote.ltp > 0
   );
-  const selectedQuoteIsLive = Boolean(
+  const selectedQuoteIsFresh = Boolean(
     selectedQuoteIsAvailable && (
       selectedRowQuote?.isLive ||
       (selectedTerminalQuote != null &&
@@ -356,18 +381,16 @@ export function InstrumentExplorer({
   );
   const chartQuoteStatus = workspaceContext === "options" && selectedQuote?.ltp
     ? "AVAILABLE"
-    : selectedQuoteIsLive
-      ? "LIVE"
+    : selectedQuoteIsFresh
+      ? "POLLING"
       : selectedQuoteIsAvailable
         ? "STALE"
         : "UNAVAILABLE";
-  const chartUnavailableMessage = isAccountLoading
-    ? "Checking account-specific historical data availability."
-    : !activeAccountId
-      ? "Historical market data is currently unavailable for this chart."
-      : !marketDataProvider
-        ? "Historical market data is unavailable for the selected account."
-        : undefined;
+  const chartUnavailableMessage = selectedTerminalQuoteError instanceof Error
+    ? selectedTerminalQuoteError.message
+    : selectedTerminalQuote === null
+      ? "Central Dhan market data is currently unavailable for this chart."
+      : undefined;
 
   const futuresContracts = useMemo(
     () => workspaceInstruments
@@ -686,7 +709,7 @@ export function InstrumentExplorer({
                             <TableCell className="font-sans font-medium">
                               <div className="flex items-center gap-2">
                                 <span>{row.contract ?? row.label}</span>
-                                {row.isLive && <Badge variant="outline" className="text-[9px] border-bullish/30 text-bullish"><Radio className="mr-1 h-2 w-2 animate-pulse" />LIVE</Badge>}
+                                {row.isFresh && <Badge variant="outline" className="text-[9px] border-bullish/30 text-bullish">POLLING</Badge>}
                               </div>
                             </TableCell>
                           ) : (
@@ -801,7 +824,7 @@ export function InstrumentExplorer({
               Back to {asset === "indices" ? "Indices" : asset === "futures" ? "Futures" : "Stocks"}
             </button>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className={`rounded-md border px-2 py-1 font-medium ${selectedQuoteIsLive ? "border-bullish/30 bg-bullish/5 text-bullish" : "border-amber-500/30 bg-amber-500/5 text-amber-600"}`}>{chartQuoteStatus}</span>
+              <span className={`rounded-md border px-2 py-1 font-medium ${selectedQuoteIsFresh ? "border-bullish/30 bg-bullish/5 text-bullish" : "border-amber-500/30 bg-amber-500/5 text-amber-600"}`}>{chartQuoteStatus}</span>
               <span>{chartSymbol}</span>
             </div>
           </div>
