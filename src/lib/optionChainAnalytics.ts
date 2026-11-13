@@ -102,10 +102,15 @@ const EMPTY_LEG: OptionLegView = {
 
 function fromRawLeg(leg: RawOptionLeg | null | undefined): OptionLegView {
   if (!leg) return EMPTY_LEG;
+  // Dhan reports untraded contracts with zero price/OI/volume and zero Greeks; those zeros are not data.
+  const untraded = !(Number(leg.ltp) > 0) && !(Number(leg.oi) > 0) && !(Number(leg.volume) > 0);
+  if (untraded) {
+    return { ...EMPTY_LEG, present: true, iv: positive(leg.iv), securityId: leg.security_id ? String(leg.security_id) : null };
+  }
   const greeks = leg.greeks ?? null;
   return {
     present: true,
-    ltp: finite(leg.ltp),
+    ltp: positive(leg.ltp),
     change: finite(leg.change),
     changePercent: finite(leg.change_percent),
     bid: positive(leg.bid),
@@ -128,6 +133,7 @@ function fromRawLeg(leg: RawOptionLeg | null | undefined): OptionLegView {
 /** Legacy legs are zero-filled, so zeros are only trusted where the feed flags the field as available. */
 function fromLegacyLeg(leg: LegacyOptionLeg | undefined, caps: ChainCapabilities): OptionLegView {
   if (!leg) return EMPTY_LEG;
+  if (!(leg.ltp > 0) && !(leg.oi > 0) && !(leg.volume > 0)) return { ...EMPTY_LEG, present: true, iv: positive(leg.iv) };
   return {
     ...EMPTY_LEG,
     present: true,
@@ -215,6 +221,14 @@ export function summarizeChain(rows: OptionRowView[], spot: number | null): Chai
     atmIv: ivs.length ? ivs.reduce((a, b) => a + b, 0) / ivs.length : null,
     maxPain: computeMaxPain(rows),
   };
+}
+
+/** Dhan-style window: `count` listed strikes either side of ATM (all strikes when count is null). */
+export function strikesAroundAtm(rows: OptionRowView[], atmStrike: number | null, count: number | null): OptionRowView[] {
+  if (count === null || atmStrike === null) return rows;
+  const index = rows.findIndex((row) => row.strike === atmStrike);
+  if (index < 0) return rows;
+  return rows.slice(Math.max(0, index - count), index + count + 1);
 }
 
 export function strikePcr(row: OptionRowView): number | null {

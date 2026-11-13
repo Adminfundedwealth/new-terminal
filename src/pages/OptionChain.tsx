@@ -52,6 +52,7 @@ import { OptionBasketPanel } from "@/components/option-chain/OptionBasketPanel";
 import { OptionAlertDialog, OptionContractDetailsDialog } from "@/components/option-chain/OptionContractDialogs";
 import {
   detectUnusualActivity,
+  strikesAroundAtm,
   fmtCompact,
   fmtNum,
   summarizeChain,
@@ -76,6 +77,7 @@ import {
   type OptionContractAlert,
 } from "@/lib/optionContractAlerts";
 import { useMarketDepth } from "@/hooks/useOptionMarketDepth";
+import { isWithinNseSessionAt } from "@/lib/marketApi";
 
 import { toast } from "sonner";
 
@@ -853,7 +855,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     : null;
 
   const hasData = chain.length > 0;
-  const priceDisplayMultiplier = perLot && lotSize > 0 ? lotSize : 1;
+  
 
 
 
@@ -870,6 +872,26 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     () => chainSummary.atmStrike ?? Math.round(spotPrice / stepSize) * stepSize,
     [chainSummary.atmStrike, spotPrice, stepSize],
   );
+  const [strikeWindow, setStrikeWindow] = useState<number | null>(15);
+  const visibleRows = useMemo(() => strikesAroundAtm(rowViews, chainSummary.atmStrike, strikeWindow), [rowViews, chainSummary.atmStrike, strikeWindow]);
+  const atmLotInstrument = useMemo(() => chainSummary.atmStrike === null ? undefined : findDhanOptionInstrument(masterInstruments, {
+    underlying: symbol,
+    expiry: selectedExpiry || data?.expiries?.[0]?.value || "",
+    strike: chainSummary.atmStrike,
+    optionType: "CE",
+    underlyingSecurityId: centralUnderlyingInstrument?.securityId,
+  }), [chainSummary.atmStrike, masterInstruments, symbol, selectedExpiry, data?.expiries, centralUnderlyingInstrument]);
+  const marketLot = lotSize > 0 ? lotSize : (atmLotInstrument?.lotSize ?? 0);
+  const chainIsLive = isLive && isWithinNseSessionAt();
+  const priceDisplayMultiplier = perLot && marketLot > 0 ? marketLot : 1;
+  // Centre the chain on ATM once per symbol/expiry load, like Dhan.
+  const centredKey = useRef("");
+  useEffect(() => {
+    const key = `${symbol}:${selectedExpiry ?? ""}:${chainSummary.atmStrike}:${strikeWindow}`;
+    if (chainSummary.atmStrike === null || centredKey.current === key || viewMode !== "expiration") return;
+    centredKey.current = key;
+    window.setTimeout(() => document.getElementById(`option-strike-${chainSummary.atmStrike}`)?.scrollIntoView({ block: "center" }), 150);
+  }, [symbol, selectedExpiry, chainSummary.atmStrike, strikeWindow, viewMode, visibleRows.length]);
 
   const totalCEOI = chain.reduce((s, o) => s + o.ce.oi, 0);
 
@@ -945,7 +967,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
     if (viewMode === "expiration") {
 
-      atmRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      document.getElementById(`option-strike-${atmStrike}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
 
     } else {
 
@@ -1715,9 +1737,9 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
           <div className="flex items-center gap-1.5">
 
-            <Badge variant="outline" className={`gap-1 text-[11px] ${isLive && underlyingQuoteFresh ? "border-bullish/50 text-bullish" : afterHours ? "border-amber-500/50 text-amber-400" : "border-red-500/30 text-red-400"}`}>
-              {isLive && underlyingQuoteFresh ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
-              {isLive && underlyingQuoteFresh ? "LIVE · DHAN" : afterHours ? "HISTORICAL" : underlyingQuoteQuery.error ? "QUOTE ERROR" : "STALE / OFFLINE"}
+            <Badge variant="outline" className={`gap-1 text-[11px] ${chainIsLive ? "border-bullish/50 text-bullish" : afterHours ? "border-amber-500/50 text-amber-400" : "border-red-500/30 text-red-400"}`}>
+              {chainIsLive ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+              {chainIsLive ? "LIVE · DHAN" : hasData && !isWithinNseSessionAt() ? "MARKET CLOSED" : afterHours ? "HISTORICAL" : hasData ? "DELAYED" : "OFFLINE"}
             </Badge>
 
             <Button variant="ghost" size="icon" className="h-7 w-7" title="Refresh option chain and quote" aria-label="Refresh option chain and quote" onClick={() => {
@@ -2000,7 +2022,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
             {[
               { label: "ATM IV", value: chainSummary.atmIv === null ? "—" : fmtNum(chainSummary.atmIv) },
               { label: "Days for Expiry", value: activeExpiry ? String(activeExpiry.daysToExpiry) : "—" },
-              { label: "Market Lot", value: lotSize > 0 ? String(lotSize) : "—" },
+              { label: "Market Lot", value: marketLot > 0 ? String(marketLot) : "—" },
               { label: "PCR", value: fmtNum(chainSummary.pcr) },
             ].map((stat) => (
               <div key={stat.label} className="leading-tight">
@@ -2011,7 +2033,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
             <div className="leading-tight">
               <p className="text-[10px] text-muted-foreground">Show by</p>
               <label className="flex items-center gap-1.5 text-xs" title={lotSize > 0 ? `Multiply option prices by the lot size (${lotSize})` : "Lot size unavailable from the instrument master"}>
-                <input type="checkbox" className="h-3.5 w-3.5 accent-primary" checked={perLot} disabled={lotSize <= 0} onChange={(event) => setPerLot(event.target.checked)} aria-label="Show option prices per lot" />
+                <input type="checkbox" className="h-3.5 w-3.5 accent-primary" checked={perLot} disabled={marketLot <= 0} onChange={(event) => setPerLot(event.target.checked)} aria-label="Show option prices per lot" />
                 Per Lot
               </label>
             </div>
@@ -2021,6 +2043,18 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
                 <input type="checkbox" className="h-3.5 w-3.5 accent-primary" checked={showBuildup} onChange={(event) => setShowBuildup(event.target.checked)} aria-label="Show OI buildup" />
                 Buildup
               </label>
+            </div>
+            <div className="leading-tight">
+              <p className="text-[10px] text-muted-foreground">Strikes</p>
+              <select
+                className="h-6 rounded border border-border bg-background px-1 text-xs"
+                value={strikeWindow === null ? "all" : String(strikeWindow)}
+                onChange={(event) => setStrikeWindow(event.target.value === "all" ? null : Number(event.target.value))}
+                aria-label="Strikes around ATM"
+              >
+                {[10, 15, 20, 30].map((count) => <option key={count} value={count}>±{count}</option>)}
+                <option value="all">All</option>
+              </select>
             </div>
             <ToggleGroup type="single" value={sideFilter} onValueChange={(value) => value && setSideFilter(value as SideFilter)} className="rounded-md bg-muted p-0.5" aria-label="Filter calls and puts">
               {(["BOTH", "CE", "PE"] as const).map((value) => (
@@ -2263,7 +2297,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
           <div className="flex items-center gap-3 text-muted-foreground">
             <span>MP: <span className="text-warning">{chainSummary.maxPain === null ? "—" : chainSummary.maxPain.toLocaleString("en-IN")}</span></span>
             <span>IV: {chainSummary.atmIv === null ? "—" : `${fmtNum(chainSummary.atmIv)}%`}</span>
-            {perLot && lotSize > 0 && <span className="text-primary">Prices × {lotSize} (per lot)</span>}
+            {perLot && marketLot > 0 && <span className="text-primary">Prices × {marketLot} (per lot)</span>}
           </div>
         </div>
       )}
@@ -2284,7 +2318,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
               </div>
             ) : hasData ? (
               <DhanOptionChainTable
-                rows={rowViews}
+                rows={visibleRows}
                 spot={chainSpot}
                 atmStrike={chainSummary.atmStrike}
                 maxPain={chainSummary.maxPain}
