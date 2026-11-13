@@ -13,8 +13,7 @@ import {
   Download, Loader2, CheckCircle2, AlertCircle, Search, CandlestickChart,
   FileDown, Clock, BarChart3, TrendingUp, Database, XCircle, CheckSquare, Square,
 } from "lucide-react";
-import { useAccountContext } from "@/hooks/useAccountContext";
-import { requestTerminalMarketData, resolveTerminalMarketDataProvider, type TerminalMarketDataCandle, type TerminalMarketDataInstrument } from "@/lib/terminalApi";
+import { requestTerminalMarketData, type TerminalMarketDataCandle, type TerminalMarketDataInstrument } from "@/lib/terminalApi";
 import {
   saveCandleHistory, setMetadata,
   type CandleHistory, type CandleData,
@@ -106,8 +105,7 @@ interface DownloadResult {
 }
 
 export function ChartDataDownloader() {
-  const { activeAccountId, accounts } = useAccountContext();
-  const provider = resolveTerminalMarketDataProvider(accounts.find((account) => account.id === activeAccountId)?.broker_provider);
+  const provider = "dhan";
   const [search, setSearch] = useState("");
   const [selectedSymbols, setSelectedSymbols] = useState<Set<string>>(new Set(ALL_SYMBOLS.map(s => s.symbol)));
   const [timeframe, setTimeframe] = useState("3M");
@@ -193,12 +191,11 @@ export function ChartDataDownloader() {
       setCurrentSymbol(sym.symbol);
 
       try {
-        if (!activeAccountId || !provider) throw new Error("An active Terminal OS market-data account is required.");
-        const instruments = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(activeAccountId, provider, { operation: "searchInstruments", query: sym.symbol });
+        const instruments = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(null, provider, { operation: "searchInstruments", query: sym.symbol });
         const instrument = instruments.find((item) => item.provider === provider && (item.symbol.toUpperCase() === sym.symbol || item.tradingSymbol.toUpperCase() === sym.symbol));
         if (!instrument) throw new Error(`Terminal OS instrument not found for ${sym.symbol}`);
-        const apiInterval = interval === "D" ? "day" : provider === "kite" ? (interval === "15" ? "15minute" : "60minute") : `${interval}m`;
-        const candles = await requestTerminalMarketData<TerminalMarketDataCandle[]>(activeAccountId, provider, {
+        const apiInterval = interval === "D" ? "day" : `${interval}m`;
+        const candles = await requestTerminalMarketData<TerminalMarketDataCandle[]>(null, provider, {
           operation: "getHistoricalCandles",
           instrument,
           interval: apiInterval,

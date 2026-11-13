@@ -1,6 +1,6 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useLiveIndices } from "@/hooks/useMarketData";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -30,21 +30,53 @@ const riskColors = {
 };
 
 export default function StrategyBuilder() {
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const { data: indicesResult } = useLiveIndices();
   const selectedSymbol = searchParams.get("symbol") || "NIFTY";
   const liveSelectedPrice = indicesResult?.data?.find((i: any) => i.symbol === selectedSymbol)?.ltp;
   const spotPrice = liveSelectedPrice || getSpotPrice(selectedSymbol);
-  const lotSize = getLotSize(selectedSymbol);
+  const optionContracts = useMemo(() => (location.state as { optionContracts?: Array<{
+    tradingSymbol: string;
+    securityId: string;
+    underlying: string;
+    strike: number;
+    type: "CE" | "PE";
+    expiry: string;
+    lotSize: number;
+    ltp: number;
+    exchangeSegment: string;
+  }> } | null)?.optionContracts ?? [], [location.state]);
+  const firstContractLotSize = optionContracts.find((contract) => contract.lotSize > 0)?.lotSize;
+  const lotSize = firstContractLotSize ?? getLotSize(selectedSymbol);
   const stepSize = getStepSize(selectedSymbol);
 
   const presets = useMemo(() => getPresetStrategies(spotPrice, stepSize), [spotPrice, stepSize]);
   const [legs, setLegs] = useState<StrategyLeg[]>(presets[0].legs);
   const [selectedPreset, setSelectedPreset] = useState(presets[0].name);
+  const appliedLocationKey = useRef("");
   const selectedStrategy = presets.find(p => p.name === selectedPreset);
 
   // Quick trade from option chain
   useEffect(() => {
+    if (optionContracts.length > 0 && appliedLocationKey.current !== location.key) {
+      appliedLocationKey.current = location.key;
+      setLegs(optionContracts.map((contract) => ({
+        type: contract.type,
+        action: "BUY",
+        strike: contract.strike,
+        lots: 1,
+        premium: contract.ltp,
+        tradingSymbol: contract.tradingSymbol,
+        securityId: contract.securityId,
+        expiry: contract.expiry,
+        exchangeSegment: contract.exchangeSegment,
+        contractLotSize: contract.lotSize,
+      })));
+      setSelectedPreset("");
+      return;
+    }
+
     const strike = searchParams.get("strike");
     const type = searchParams.get("type") as "CE" | "PE" | null;
     const action = searchParams.get("action") as "BUY" | "SELL" | null;
@@ -56,7 +88,7 @@ export default function StrategyBuilder() {
       setLegs([{ type, action, strike: s, lots: 1, premium: Math.round(premium * 100) / 100 }]);
       setSelectedPreset("");
     }
-  }, [searchParams, spotPrice, stepSize]);
+  }, [searchParams, spotPrice, stepSize, optionContracts, location.key]);
 
   const handlePreset = (name: string) => {
     const p = presets.find(s => s.name === name);
@@ -77,6 +109,12 @@ export default function StrategyBuilder() {
   const updateLeg = (i: number, field: keyof StrategyLeg, value: any) => {
     const updated = [...legs];
     (updated[i] as any)[field] = value;
+    if (field === "strike" || field === "type") {
+      delete updated[i].tradingSymbol;
+      delete updated[i].securityId;
+      delete updated[i].expiry;
+      delete updated[i].exchangeSegment;
+    }
     setLegs(updated);
     setSelectedPreset("");
   };
@@ -198,6 +236,11 @@ export default function StrategyBuilder() {
                     <Trash2 className="h-3 w-3" />
                   </Button>
                 </div>
+                {leg.tradingSymbol && (
+                  <p className="truncate text-[10px] text-muted-foreground" title={`${leg.tradingSymbol} · ${leg.securityId}`}>
+                    {leg.tradingSymbol} · {leg.expiry} · {leg.contractLotSize || lotSize}/lot
+                  </p>
+                )}
                 <div className="grid grid-cols-2 gap-1.5">
                   <Select value={leg.action} onValueChange={v => updateLeg(i, "action", v)}>
                     <SelectTrigger className="h-6 text-xs"><SelectValue /></SelectTrigger>

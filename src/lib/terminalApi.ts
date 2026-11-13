@@ -3,10 +3,16 @@ import type { AccountStatus } from "@/lib/accountLifecycle";
 import type { RiskRequest } from "@/lib/riskEngine";
 import type { Instrument } from "@/lib/localDatabase";
 import type { OptionData } from "@/lib/mockData";
+import type { RawOptionLeg } from "@/lib/optionChainAnalytics";
 import { deserializeCanonicalOrder, type CanonicalOrderRow, type CanonicalOrder } from "@/lib/orderModel";
 import { REALTIME_MOCK_TEST_ACCOUNT_ID } from "@/lib/realtimeMockTestScope";
 
-const TERMINAL_OS_BASE = (import.meta.env.VITE_TERMINAL_OS_URL || "").replace(/\/$/, "");
+export function resolveTerminalOsBase(configuredUrl: string | undefined, isProduction: boolean): string {
+  const defaultUrl = isProduction ? "https://terminal-os.fundedwealth.com" : "";
+  return (configuredUrl || defaultUrl).replace(/\/$/, "");
+}
+
+const TERMINAL_OS_BASE = resolveTerminalOsBase(import.meta.env.VITE_TERMINAL_OS_URL, import.meta.env.PROD);
 
 export interface TerminalAccount {
   id: string;
@@ -428,6 +434,9 @@ export interface TerminalMarketDataOptionChain {
     strikePrice: number;
     ce: OptionData["ce"];
     pe: OptionData["pe"];
+    /** Nullable provider legs; absent fields mean Dhan did not report them. */
+    call?: RawOptionLeg | null;
+    put?: RawOptionLeg | null;
   }>;
   totalCEOI: number;
   totalPEOI: number;
@@ -435,6 +444,42 @@ export interface TerminalMarketDataOptionChain {
   oiChangeAvailable?: boolean;
   afterHours?: boolean;
   cachedAt?: string | number | null;
+}
+
+export interface TerminalMarketDepthLevel {
+  price: number;
+  quantity: number;
+  orders: number | null;
+}
+
+/** Full quote with Dhan five-level depth. Levels are exactly what Dhan reported. */
+export interface TerminalMarketDepth {
+  provider: TerminalMarketDataProvider;
+  symbol: string;
+  tradingSymbol: string;
+  exchange: string;
+  exchangeSegment: string;
+  providerInstrumentId: string;
+  ltp: number | null;
+  lastQuantity: number | null;
+  averagePrice: number | null;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  previousClose: number | null;
+  change: number | null;
+  changePercent: number | null;
+  volume: number | null;
+  openInterest: number | null;
+  totalBuyQuantity: number | null;
+  totalSellQuantity: number | null;
+  upperCircuit: number | null;
+  lowerCircuit: number | null;
+  bids: TerminalMarketDepthLevel[];
+  asks: TerminalMarketDepthLevel[];
+  depthAvailable: boolean;
+  lastTradeTime: string | null;
+  fetchedAt: string;
 }
 
 export function resolveTerminalMarketDataProvider(_accountBrokerProvider: string | null | undefined): TerminalMarketDataProvider {
@@ -499,6 +544,7 @@ export type TerminalMarketDataOperation =
   | { operation: "getQuote"; instrument: TerminalMarketDataInstrument }
   | { operation: "getQuotes"; instruments: TerminalMarketDataInstrument[] }
   | { operation: "getOptionChain"; underlying: string; expiry?: string }
+  | { operation: "getMarketDepth"; instrument: TerminalMarketDataInstrument }
   | {
       operation: "getHistoricalCandles";
       instrument: TerminalMarketDataInstrument;
@@ -607,15 +653,25 @@ async function getCustomerAccessToken(): Promise<string> {
 }
 
 async function readMarketDataResponse<T>(response: Response): Promise<T> {
-  let payload: { data?: T; error?: { code?: string } };
+  let payload: { data?: T | null; error?: { code?: string } } | null;
   try {
     payload = await response.json() as { data?: T; error?: { code?: string } };
   } catch {
     if (!response.ok) throw normalizeMarketDataError(response.status);
     throw new TerminalMarketDataError("PROVIDER_ERROR", response.status);
   }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    if (!response.ok) throw normalizeMarketDataError(response.status);
+    throw new TerminalMarketDataError("PROVIDER_ERROR", response.status);
+  }
   if (!response.ok) {
     throw normalizeMarketDataError(response.status, payload.error?.code);
+  }
+  if (payload.error) {
+    throw normalizeMarketDataError(response.status, payload.error.code);
+  }
+  if (!("data" in payload) || payload.data == null) {
+    throw new TerminalMarketDataError("PROVIDER_ERROR", response.status);
   }
   return payload.data as T;
 }

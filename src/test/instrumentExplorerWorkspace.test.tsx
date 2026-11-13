@@ -235,7 +235,10 @@ describe("InstrumentExplorer stock workspace", () => {
     expect(screen.getAllByText("ABB").length).toBeGreaterThan(1);
     expect(screen.getAllByText("NSE").length).toBeGreaterThan(1);
     expect(screen.getByTestId("stock-chart")).toHaveTextContent("ABB chart mock");
-    expect(screen.getByTestId("stock-chart")).toHaveAttribute("data-unavailable-message", "Historical market data is currently unavailable for this chart.");
+    await waitFor(() => {
+      expect(queryClient.getQueryState(["terminal-selected-quote", null, "dhan", "ABB"])?.status).toBe("success");
+    });
+    expect(screen.getByTestId("stock-chart")).not.toHaveAttribute("data-unavailable-message");
     expect(screen.queryByText(/Dhan|broker|link .*account/i)).not.toBeInTheDocument();
     expect(screen.getByText("LIVE")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Option Chain" })).not.toBeInTheDocument();

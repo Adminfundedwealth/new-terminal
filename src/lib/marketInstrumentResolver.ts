@@ -74,12 +74,14 @@ export function findDhanOptionInstrument(
 ): Instrument | undefined {
   const underlying = normalizeSymbol(option.underlying);
   const canonicalUnderlying = normalizeSymbol(canonicalIndexSymbol(option.underlying));
+  // Dhan's master stores "YYYY-MM-DD HH:mm:ss"; the option-chain API uses "YYYY-MM-DD".
+  const expiryDay = option.expiry.slice(0, 10);
   return instruments.find((instrument) => {
     if (
       instrument.provider !== "dhan" ||
       classifyInstrument(instrument) !== "options" ||
-      instrument.expiryDate !== option.expiry ||
-      instrument.strikePrice !== option.strike ||
+      (instrument.expiryDate ?? "").slice(0, 10) !== expiryDay ||
+      Number(instrument.strikePrice) !== option.strike ||
       instrument.optionType !== option.optionType
     ) return false;
 

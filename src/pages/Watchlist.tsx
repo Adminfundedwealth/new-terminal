@@ -10,19 +10,17 @@ import { isMeaningfulMarketValue } from "@/lib/marketDataState";
 import { useNavigate } from "react-router-dom";
 import { Search, Star, TrendingUp, TrendingDown, ExternalLink, Radio, Loader2, Plus, X, BarChart3 } from "lucide-react";
 import { MiniChart } from "@/components/MiniChart";
-import { useAccountContext } from "@/hooks/useAccountContext";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { canonicalIndexSymbol, classifyInstrument, isCashEquityListing } from "@/lib/instrumentClassification";
 import { fetchCentralMarketQuotes } from "@/lib/centralMarketQuotes";
 import { findWatchlistInstrument } from "@/lib/watchlistInstrument";
 import { DEFAULT_WATCHLIST_SYMBOLS } from "@/lib/defaultWatchlist";
-import {
-  requestTerminalMarketData,
-  resolveTerminalMarketDataProvider,
-  toTerminalMarketDataInstrument,
-  type TerminalMarketDataQuote,
-} from "@/lib/terminalApi";
 import { useQuery } from "@tanstack/react-query";
+import {
+  optionContractWatchlistKey,
+  readOptionContractWatchlist,
+  saveOptionContractWatchlist,
+} from "@/lib/optionContractWatchlist";
 
 const STORAGE_KEY = "optionsdesk_watchlist";
 const DEFAULT_WATCHLIST = [...new Set([
@@ -67,10 +65,9 @@ export default function Watchlist() {
   const [search, setSearch] = useState("");
   const [addSymbol, setAddSymbol] = useState("");
   const [addSymbolError, setAddSymbolError] = useState<string | null>(null);
+  const [optionContracts, setOptionContracts] = useState(() => readOptionContractWatchlist());
   const { instruments, isLoaded: instrumentsLoaded, loadError: instrumentLoadError } = useInstrumentLookup();
-  const { activeAccountId, accounts, hasNoAccount } = useAccountContext();
   const { data: marketStatusData } = useMarketStatus();
-  const provider = resolveTerminalMarketDataProvider(accounts.find((account) => account.id === activeAccountId)?.broker_provider);
 
   const supportedInstruments = useMemo(
     () => instruments.filter((instrument) =>
@@ -83,49 +80,12 @@ export default function Watchlist() {
     [watchedSymbols, supportedInstruments],
   );
   const quoteQuery = useQuery({
-    queryKey: ["terminal-watchlist-quotes", activeAccountId ?? "central-dhan", provider, watchedSymbols, instrumentsLoaded],
-    enabled: Boolean(instrumentsLoaded && watchedSymbols.length > 0 && (activeAccountId ? provider : hasNoAccount)),
-    queryFn: async () => {
-      if (!activeAccountId && hasNoAccount) {
-        return fetchCentralMarketQuotes(watchedSymbols.map((symbol) => ({
-          key: symbol,
-          instrument: findWatchlistInstrument(supportedInstruments, symbol),
-        })));
-      }
-      if (!activeAccountId || !provider) throw new Error("An active account and market-data provider are required for account-scoped watchlist quotes.");
-      const instrumentsBySymbol = new Map(watchedSymbols.flatMap((symbol) => {
-        const instrument = findWatchlistInstrument(supportedInstruments, symbol);
-        return instrument ? [[symbol, instrument] as const] : [];
-      }));
-      const terminalInstruments = [...new Map(
-        [...instrumentsBySymbol.values()].map((instrument) => {
-          const terminalInstrument = toTerminalMarketDataInstrument({
-            ...instrument,
-            exchange: instrument.exchange ?? (instrument.exchangeSegment.startsWith("BSE") ? "BSE" : "NSE"),
-          }, provider);
-          return [`${terminalInstrument.exchange}:${terminalInstrument.tradingSymbol}`, terminalInstrument] as const;
-        }),
-      ).values()];
-      if (terminalInstruments.length === 0) return { quotes: {}, errors: [] };
-
-      const batchQuotes = await requestTerminalMarketData<TerminalMarketDataQuote[]>(
-        activeAccountId,
-        provider,
-        { operation: "getQuotes", instruments: terminalInstruments },
-      );
-      const quoteByInstrument = new Map(
-        batchQuotes.map((quote) => [`${quote.exchange}:${quote.tradingSymbol}`, quote]),
-      );
-      const quotes: Record<string, TerminalMarketDataQuote> = {};
-      const errors: string[] = [];
-      for (const [symbol, instrument] of instrumentsBySymbol) {
-        const exchange = instrument.exchange ?? (instrument.exchangeSegment.startsWith("BSE") ? "BSE" : "NSE");
-        const quote = quoteByInstrument.get(`${exchange}:${instrument.tradingSymbol}`);
-        if (quote) quotes[symbol] = quote;
-        else errors.push(`No account quote was returned for ${symbol}.`);
-      }
-      return { quotes, errors: [...new Set(errors)] };
-    },
+    queryKey: ["terminal-watchlist-quotes", "central-dhan", watchedSymbols, instrumentsLoaded],
+    enabled: Boolean(instrumentsLoaded && watchedSymbols.length > 0),
+    queryFn: () => fetchCentralMarketQuotes(watchedSymbols.map((symbol) => ({
+      key: symbol,
+      instrument: findWatchlistInstrument(supportedInstruments, symbol),
+    }))),
     staleTime: 5_000,
     refetchInterval: 15_000,
     retry: false,
@@ -138,23 +98,19 @@ export default function Watchlist() {
     return Number.isFinite(age) && age >= 0 && age <= 60_000;
   });
   const statusLabel = hasFreshQuote && marketStatusData?.isOpen === true ? "LIVE" : hasQuotes ? "HISTORICAL" : "UNAVAILABLE";
-  const baseStatusText = hasNoAccount
-    ? statusLabel === "LIVE"
-      ? "Central Dhan quotes · market data is independent of trading account status."
-      : statusLabel === "HISTORICAL"
-        ? "Latest available central Dhan quotes · market data is independent of trading account status."
-        : instrumentLoadError
-          ? `Using cached instruments. Central Dhan catalog refresh failed: ${instrumentLoadError}`
-          : "No current central Dhan watchlist quotes are available."
-    : statusLabel === "LIVE"
-      ? "Account-scoped Terminal OS quotes"
-      : statusLabel === "HISTORICAL"
-        ? "Latest available account quote"
-        : instrumentLoadError ?? quoteQuery.error?.message ?? "No account quotes are available";
+  const baseStatusText = statusLabel === "LIVE"
+    ? "Central Dhan quotes · independent of trading-account status."
+    : statusLabel === "HISTORICAL"
+      ? "Latest available central Dhan quotes · independent of trading-account status."
+      : quoteQuery.error instanceof Error
+        ? `Central Dhan market-data request failed: ${quoteQuery.error.message}`
+      : instrumentLoadError
+        ? `Using cached instruments. Central Dhan catalog refresh failed: ${instrumentLoadError}`
+        : "No current central Dhan watchlist quotes are available.";
   const statusText = quoteQuery.data?.errors.length
     ? `${baseStatusText}. ${quoteQuery.data.errors[0]}`
     : baseStatusText;
-  const isLoading = !instrumentsLoaded || quoteQuery.isLoading;
+  const isLoading = !instrumentsLoaded;
 
   const watchlistRows = useMemo(() => {
     return watchedSymbols
@@ -244,6 +200,18 @@ export default function Watchlist() {
     saveWatchlist(updated);
   };
 
+  const removeOptionContract = (securityId: string, type: "CE" | "PE") => {
+    const updated = optionContracts.filter((contract) =>
+      optionContractWatchlistKey(contract) !== `${securityId}:${type}`
+    );
+    try {
+      saveOptionContractWatchlist(updated);
+      setOptionContracts(updated);
+    } catch (error) {
+      setAddSymbolError(`Could not update saved option contracts: ${error instanceof Error ? error.message : "browser storage is unavailable."}`);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -287,6 +255,51 @@ export default function Watchlist() {
         <p className="text-xs text-amber-500" role="status">
           No supported cash-equity or index instrument found for {unresolvedSymbols.length} watchlist symbol{unresolvedSymbols.length === 1 ? "" : "s"}: {unresolvedSymbols.join(", ")}
         </p>
+      )}
+
+      {optionContracts.length > 0 && (
+        <Card>
+          <CardContent className="p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <h2 className="text-sm font-semibold">Saved option contracts</h2>
+              <span className="text-xs text-muted-foreground">{optionContracts.length} contracts · saved quote is a snapshot</span>
+            </div>
+            <div className="space-y-1">
+              {optionContracts.map((contract) => (
+                <div key={optionContractWatchlistKey(contract)} className="flex flex-wrap items-center justify-between gap-2 rounded border px-2 py-1.5 text-xs">
+                  <div className="min-w-0">
+                    <span className="font-medium">{contract.tradingSymbol}</span>
+                    <span className="ml-2 text-muted-foreground">
+                      {contract.underlying} · {contract.expiryLabel} · {contract.lotSize > 0 ? `${contract.lotSize} qty/lot` : "lot size unavailable"}
+                    </span>
+                    <span className="ml-2 text-muted-foreground">
+                      {contract.ltp > 0 ? `Saved LTP ₹${contract.ltp.toFixed(2)} (snapshot)` : "LTP unavailable"}
+                    </span>
+                  </div>
+                  <div className="flex gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => navigate(`/option-chain?${new URLSearchParams({ symbol: contract.underlying, expiry: contract.expiry })}`)}
+                    >
+                      Open chain
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => removeOptionContract(contract.securityId, contract.type)}
+                      aria-label={`Remove ${contract.tradingSymbol} from option watchlist`}
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       <Card>

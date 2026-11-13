@@ -121,7 +121,7 @@ export const IT_TECHNOLOGY: ApprovedStock[] = [
  * Automobile & Auto Components - 20 stocks
  */
 export const AUTO_AUTO_COMPONENTS: ApprovedStock[] = [
-  { symbol: "TATAMOTORS", name: "Tata Motors Ltd", sector: "Automobile & Auto Components", dhanSymbol: "TATAMOTORS", tradingViewSymbol: "NSE:TATAMOTORS", isFnO: true, lotSize: 1500 },
+  { symbol: "TATAMOTORS", name: "Tata Motors Passenger Vehicles", sector: "Automobile & Auto Components", dhanSymbol: "TMPV", tradingViewSymbol: "NSE:TMPV", isFnO: true, lotSize: 1500 },
   { symbol: "M&M", name: "Mahindra & Mahindra", sector: "Automobile & Auto Components", dhanSymbol: "M&M", tradingViewSymbol: "NSE:M&M", isFnO: true, lotSize: 300 },
   { symbol: "MARUTI", name: "Maruti Suzuki India", sector: "Automobile & Auto Components", dhanSymbol: "MARUTI", tradingViewSymbol: "NSE:MARUTI", isFnO: true, lotSize: 50 },
   { symbol: "HEROMOTOCO", name: "Hero MotoCorp Ltd", sector: "Automobile & Auto Components", dhanSymbol: "HEROMOTOCO", tradingViewSymbol: "NSE:HEROMOTOCO", isFnO: true, lotSize: 150 },

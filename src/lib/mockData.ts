@@ -212,6 +212,11 @@ export interface StrategyLeg {
   strike: number;
   lots: number;
   premium: number;
+  tradingSymbol?: string;
+  securityId?: string;
+  expiry?: string;
+  exchangeSegment?: string;
+  contractLotSize?: number;
 }
 
 export interface Strategy {
@@ -671,4 +676,3 @@ export function simulateGreeksDecay(positions: Position[], daysForward: number =
   }
   return points;
 }
-

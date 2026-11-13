@@ -12,10 +12,12 @@ import {
   fetchTerminalMarketDataStatus,
   requestTerminalMarketData,
   requestTerminalRealtimeTicket,
+  resolveTerminalOsBase,
   resolveTerminalMarketDataProvider,
   subscribeToTerminalMarketDataStream,
   toLocalMarketDataInstrument,
   TerminalMarketDataError,
+  type TerminalRealtimeQuoteEvent,
 } from "@/lib/terminalApi";
 import { REALTIME_MOCK_TEST_ACCOUNT_ID } from "@/lib/realtimeMockTestScope";
 
@@ -35,6 +37,12 @@ afterEach(() => {
 });
 
 describe("Main Terminal market-data contract", () => {
+  it("uses the Founder Terminal OS host by default only in production", () => {
+    expect(resolveTerminalOsBase(undefined, true)).toBe("https://terminal-os.fundedwealth.com");
+    expect(resolveTerminalOsBase(undefined, false)).toBe("");
+    expect(resolveTerminalOsBase("https://terminal-api.example.test/", true)).toBe("https://terminal-api.example.test");
+  });
+
   it("uses Founder-global Dhan regardless of customer broker mapping", () => {
     expect(resolveTerminalMarketDataProvider(null)).toBe("dhan");
     expect(resolveTerminalMarketDataProvider("")).toBe("dhan");
@@ -186,7 +194,6 @@ describe("Main Terminal market-data contract", () => {
 
   it("opens the account/provider realtime stream with JWT auth and parses normalized quote events", async () => {
     const quoteEvent = {
-      account_id: accountId,
       provider: "dhan",
       environment: "production",
       symbol: "NIFTY",
@@ -198,7 +205,7 @@ describe("Main Terminal market-data contract", () => {
       },
     }), { status: 200, headers: { "Content-Type": "text/event-stream" } }));
 
-    const quoteReceived = new Promise<typeof quoteEvent>((resolve) => {
+    const quoteReceived = new Promise<TerminalRealtimeQuoteEvent>((resolve) => {
       const unsubscribe = subscribeToTerminalMarketDataStream(null, "dhan", ["NIFTY"], (event) => {
         unsubscribe();
         resolve(event);
@@ -312,5 +319,19 @@ describe("Main Terminal market-data contract", () => {
     expect(failure).toBeInstanceOf(TerminalMarketDataError);
     expect(failure).toMatchObject({ code, status });
     expect((failure as Error).message).not.toContain("raw secret text");
+  });
+
+  it.each([
+    [{ error: { code: "UPSTREAM_ERROR" } }, "PROVIDER_UNAVAILABLE"],
+    [{ result: [] }, "PROVIDER_ERROR"],
+    [null, "PROVIDER_ERROR"],
+    [{ data: null }, "PROVIDER_ERROR"],
+  ] as const)("rejects an invalid successful market-data envelope", async (payload, code) => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(payload), { status: 200 }));
+
+    const failure = await requestTerminalMarketData(accountId, "dhan", { operation: "authenticate" })
+      .catch((reason: unknown) => reason);
+
+    expect(failure).toMatchObject({ code, status: 200 });
   });
 });

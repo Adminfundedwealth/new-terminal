@@ -63,15 +63,17 @@ describe("Watchlist instrument chart navigation", () => {
     await waitFor(() => expect(screen.getByTestId("current-location")).toHaveTextContent("/stocks?symbol=RELIANCE"));
   });
 
-  it("excludes legacy debt-series instruments from watchlist rows", () => {
+  it("excludes legacy debt-series instruments from watchlist rows", async () => {
     localStorage.setItem("optionsdesk_watchlist", JSON.stringify(["NIFTY", "RELIANCE", "AAFS27C"]));
     renderWatchlist();
 
-    expect(screen.getByRole("button", { name: "View chart for NIFTY" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "View chart for RELIANCE" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "View chart for AAFS27C" })).not.toBeInTheDocument();
-    expect(screen.getByText(/2 supported symbols/)).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("No supported cash-equity or index instrument found for 1 watchlist symbol: AAFS27C");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "View chart for NIFTY" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "View chart for RELIANCE" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "View chart for AAFS27C" })).not.toBeInTheDocument();
+      expect(screen.getByText(/2 supported symbols/)).toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent("No supported cash-equity or index instrument found for 1 watchlist symbol: AAFS27C");
+    });
   });
 
   it("rejects adding a debt-series instrument", () => {

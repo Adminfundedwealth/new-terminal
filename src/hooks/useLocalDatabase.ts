@@ -27,16 +27,21 @@ import {
   type DatabaseStats,
   type Instrument,
 } from "@/lib/localDatabase";
-import { classifyInstrument, isCashEquityListing, type InstrumentCategory } from "@/lib/instrumentClassification";
+import { canonicalIndexSymbol, classifyInstrument, isCashEquityListing, type InstrumentCategory } from "@/lib/instrumentClassification";
 import { fetchDhanInstrumentMaster } from "@/lib/marketApi";
 import { normalizeProviderInstrument } from "@/lib/instrumentMaster";
+import { findApprovedIndexInstrument, resolveApprovedStockUniverse } from "@/lib/marketInstrumentResolver";
 import {
   requestTerminalMarketData,
   type TerminalMarketDataInstrument,
   toLocalMarketDataInstrument,
 } from "@/lib/terminalApi";
 import { isApprovedStock, getDhanSymbol, APPROVED_200_STOCKS, getUnderlyingFromTradingSymbol } from "@/lib/approvedInstruments";
-import { isApprovedIndex } from "@/lib/approvedIndices";
+import { APPROVED_INDICES, isApprovedIndex } from "@/lib/approvedIndices";
+
+function isApprovedIndexSymbol(symbol: string): boolean {
+  return isApprovedIndex(canonicalIndexSymbol(symbol).toUpperCase());
+}
 
 // ΓöÇΓöÇ Hook: Database readiness check ΓöÇΓöÇ
 
@@ -193,11 +198,23 @@ export function useInstrumentLookup() {
   const gatewayQuery = useQuery({
     queryKey: ["terminal-instrument-catalog", "founder-dhan"],
     queryFn: async () => {
-      const remote = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(
-        null,
-        "dhan",
-        { operation: "listInstruments" },
-      );
+      let catalogError: string | null = null;
+      let instrumentMasterError: string | null = null;
+      let remote: TerminalMarketDataInstrument[] = [];
+      try {
+        const catalog = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(
+          null,
+          "dhan",
+          { operation: "listInstruments" },
+        );
+        if (!Array.isArray(catalog)) throw new Error("Terminal OS returned an invalid Dhan instrument catalog.");
+        remote = catalog;
+      } catch (error) {
+        catalogError = error instanceof Error
+          ? `Founder Dhan instrument catalog failed: ${error.message}`
+          : "Founder Dhan instrument catalog failed.";
+        console.error("Founder Dhan instrument catalog failed:", error);
+      }
       const allRemote = remote
         .filter((instrument) => instrument.providerInstrumentId && instrument.symbol && instrument.tradingSymbol)
         .map(toLocalMarketDataInstrument);
@@ -207,21 +224,28 @@ export function useInstrumentLookup() {
         const cat = classifyInstrument(instrument);
         if (!cat) return false;
         if (cat === "indices") {
-          return isApprovedIndex(instrument.symbol) || isApprovedIndex(instrument.tradingSymbol);
+          return isApprovedIndexSymbol(instrument.symbol) || isApprovedIndexSymbol(instrument.tradingSymbol);
         }
         if (cat === "futures" || cat === "options") return true; // further filtered below/in page
         if (cat === "stocks") {
-          return APPROVED_200_STOCKS.some(stock =>
-            stock.symbol === instrument.symbol.toUpperCase() ||
-            stock.dhanSymbol === instrument.symbol.toUpperCase() ||
-            stock.symbol === instrument.tradingSymbol.toUpperCase()
-          );
+          return isApprovedStock(instrument.symbol) || isApprovedStock(instrument.tradingSymbol);
         }
         return false;
       });
-      if (!instruments.some((instrument) =>
-        instrument.exchangeSegment === "NSE_EQ" && instrument.instrumentType === "EQUITY")) {
-        const master = await fetchDhanInstrumentMaster();
+      const hasMissingApprovedStock = resolveApprovedStockUniverse(instruments)
+        .some(({ instrument }) => !instrument);
+      const hasMissingApprovedIndex = APPROVED_INDICES
+        .some((index) => !findApprovedIndexInstrument(instruments, index));
+      if (hasMissingApprovedStock || hasMissingApprovedIndex) {
+        let master: unknown[] = [];
+        try {
+          master = await fetchDhanInstrumentMaster();
+        } catch (error) {
+          instrumentMasterError = error instanceof Error
+            ? `Official Dhan instrument master fallback failed: ${error.message}`
+            : "Official Dhan instrument master fallback failed.";
+          console.error("Official Dhan instrument master fallback failed:", error);
+        }
         const existingIds = new Set(instruments.map((instrument) =>
           `${instrument.exchangeSegment}:${instrument.providerInstrumentId}`));
         const officialInstruments = master.flatMap((row, index) => {
@@ -236,7 +260,7 @@ export function useInstrumentLookup() {
           
           // FILTER: Only approved indices
           if (category === "indices") {
-            if (!isApprovedIndex(normalized.symbol) && !isApprovedIndex(normalized.tradingSymbol)) return [];
+            if (!isApprovedIndexSymbol(normalized.symbol) && !isApprovedIndexSymbol(normalized.tradingSymbol)) return [];
           }
 
           // FILTER: Only approved 200 stocks for cash equity
@@ -278,12 +302,14 @@ export function useInstrumentLookup() {
           existingIds.add(key);
           return [normalized];
         });
-        if (officialInstruments.length === 0) {
-          throw new Error("Dhan's official instrument master contains no valid approved instruments.");
-        }
         instruments.push(...officialInstruments);
       }
-      if (instruments.length === 0) throw new Error("Terminal OS returned an empty Dhan instrument catalog.");
+      const loadErrors = [catalogError, instrumentMasterError].filter((error): error is string => Boolean(error));
+      if (instruments.length === 0) {
+        throw new Error(loadErrors.length
+          ? loadErrors.join(" ")
+          : "Terminal OS returned an empty Dhan instrument catalog.");
+      }
       const BATCH_SIZE = 2000;
       try {
         for (let i = 0; i < instruments.length; i += BATCH_SIZE) {
@@ -292,18 +318,18 @@ export function useInstrumentLookup() {
       } catch (error) {
         console.error("Founder Dhan instruments could not be cached locally:", error);
       }
-      return instruments;
+      return { instruments, loadError: loadErrors.length ? loadErrors.join(" ") : null };
     },
     retry: false,
     staleTime: 6 * 60 * 60 * 1000,
   });
 
   const cachedDhanInstruments = localInstruments.filter((instrument) => instrument.provider === "dhan");
-  const allInstruments = gatewayQuery.data ?? cachedDhanInstruments;
+  const allInstruments = gatewayQuery.data?.instruments ?? cachedDhanInstruments;
   const isLoaded = localLoaded && gatewayQuery.isFetched;
-  const loadError = gatewayQuery.error instanceof Error
-    ? gatewayQuery.error.message
-    : null;
+  const loadError = gatewayQuery.data?.loadError ?? (
+    gatewayQuery.error instanceof Error ? gatewayQuery.error.message : null
+  );
 
   const search = useCallback((query: string, category?: InstrumentCategory, limit = 20) => {
     if (!query || query.length < 1) return [];
