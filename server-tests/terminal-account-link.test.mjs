@@ -7,6 +7,8 @@ import {
   canonicalizeLegacyInstantFundedRules,
   canonicalizeLegacyFlashFundedRules,
   canonicalFundedWealthProductCode,
+  canonicalFundedWealthPlanSlug,
+  canonicalFundedWealthPhaseCode,
   createTerminalAccountLinkHandlers,
   createTerminalAccountLinkWorkflow,
   isCompatibleFundedWealthRuleVersion,
@@ -52,8 +54,15 @@ function request(body, headers = {}) {
 
 function makeStore({ identity = null, account = null, conflict = false, accountAction } = {}) {
   const calls = { invites: 0, creates: 0, reconciles: 0, audits: 0, inspectOptions: [] };
+  const ruleVersion = {
+    id: "77777777-7777-4777-8777-777777777777",
+    status: "active",
+    rules: { evaluation_rules: {}, funded_rules: {} },
+  };
   let currentIdentity = identity;
-  let currentAccount = account;
+  let currentAccount = account
+    ? { ...account, rule_version_id: account.rule_version_id ?? ruleVersion.id }
+    : null;
   return {
     calls,
     store: {
@@ -65,6 +74,7 @@ function makeStore({ identity = null, account = null, conflict = false, accountA
           account: currentAccount,
           identityAction: currentIdentity ? "reuse_existing_identity" : "invite_existing_customer",
           accountAction: accountAction ?? (currentAccount ? "already_linked" : "create_terminal_mapping"),
+          ruleVersion,
           ruleSet: {},
         };
       },
@@ -78,6 +88,7 @@ function makeStore({ identity = null, account = null, conflict = false, accountA
         currentAccount = {
           id: "66666666-6666-4666-8666-666666666666",
           owner_user_id: owner.id,
+          rule_version_id: ruleVersion.id,
         };
         return currentAccount;
       },
@@ -101,6 +112,20 @@ test("maps account-size-prefixed FundedWealth step plans to canonical terminal p
   assert.equal(canonicalFundedWealthProductCode("250k-flash"), "FLASH");
   assert.equal(canonicalFundedWealthProductCode("50k-flash"), "FLASH");
   assert.equal(canonicalFundedWealthProductCode("500k-instant"), "INSTANT");
+  assert.equal(canonicalFundedWealthPlanSlug("500k-instant"), "instant");
+  assert.equal(canonicalFundedWealthPlanSlug("500k-1step"), "1step");
+  assert.equal(canonicalFundedWealthPlanSlug("500k-2step"), "2step");
+  assert.equal(canonicalFundedWealthPlanSlug("250k-flash"), "flash");
+  assert.equal(canonicalFundedWealthPlanSlug("unknown"), null);
+  for (const [plan, challengeType, expectedPhase] of [
+    ["500k-flash", "funded", "FUNDED"],
+    ["500k-instant", "funded", "FUNDED"],
+    ["500k-1step", "evaluation_phase1", "CHALLENGE"],
+    ["500k-2step", "evaluation_phase1", "CHALLENGE"],
+  ]) {
+    assert.ok(canonicalFundedWealthPlanSlug(plan));
+    assert.equal(canonicalFundedWealthPhaseCode(challengeType, "active"), expectedPhase);
+  }
 });
 
 test("ensures funded and passed accounts while refusing breached accounts", async () => {
@@ -112,6 +137,7 @@ test("ensures funded and passed accounts while refusing breached accounts", asyn
       challenge: { ...source.challenge, status },
     });
     assert.equal(result.created, true);
+    assert.equal(result.ruleVersionId, "77777777-7777-4777-8777-777777777777");
   }
 
   const { store } = makeStore();
@@ -129,6 +155,12 @@ test("matches canonical nested 1-Step rules and rejects versions with different 
   const activeVersion = {
     status: "active",
     rules: {
+      plan_name: "1-STEP",
+      funded_rules: {
+        leverage_ratio: 30,
+        profit_split_percent_min: 80,
+        profit_split_percent_max: 90,
+      },
       evaluation_rules: {
         max_drawdown_percent: 6,
         daily_drawdown_percent: 3,
@@ -165,6 +197,11 @@ test("matches funded Flash and Instant rules without relaxing any challenge limi
     },
   });
   const flashRules = {
+    plan_name: "FLASH",
+    duration_hours: 24,
+    max_loss_per_trade_percent: 2,
+    leverage_ratio: 100,
+    profit_split_percent: 80,
     funded_rules: {
       max_drawdown_percent: 4,
       daily_drawdown_percent: 2,
@@ -174,6 +211,10 @@ test("matches funded Flash and Instant rules without relaxing any challenge limi
     },
   };
   const instantRules = {
+    plan_name: "INSTANT",
+    leverage_ratio: 50,
+    profit_split_percent_min: 70,
+    profit_split_percent_max: 80,
     funded_rules: {
       max_drawdown_percent: 5,
       daily_drawdown_percent: 3,
@@ -183,6 +224,12 @@ test("matches funded Flash and Instant rules without relaxing any challenge limi
     },
   };
   const twoStepRules = {
+    plan_name: "2-STEP",
+    funded_rules: {
+      leverage_ratio: 30,
+      profit_split_percent_min: 80,
+      profit_split_percent_max: 90,
+    },
     evaluation_rules: {
       max_drawdown_percent: 8,
       daily_drawdown_percent: 3,
@@ -256,6 +303,7 @@ test("repairs only the seeded legacy Instant funded rules shape", () => {
     max_risk_per_trade_percent: 1,
     minimum_trading_days: 7,
   });
+  assert.equal(repairedRules.leverage_ratio, 50);
 
   assert.equal(isCompatibleFundedWealthRuleVersion({ rules: repairedRules }, instantSource, "FUNDED"), true);
   assert.equal(canonicalizeLegacyInstantFundedRules({
@@ -438,7 +486,7 @@ test("trusted Instant linking publishes the audited canonical rule before creati
   ));
   const result = JSON.parse(response.body);
 
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 200, response.body);
   assert.equal(result.result.created, true);
   assert.deepEqual(ruleActions, ["create_rule_version", "publish_rule_version"]);
   assert.equal(canonicalRule.status, "active");
@@ -623,6 +671,7 @@ test("invites the existing customer and creates the terminal mapping after confi
   });
 
   assert.equal(result.created, true);
+  assert.equal(result.ruleVersion.status, "active");
   assert.equal(calls.invites, 1);
   assert.equal(calls.creates, 1);
   assert.equal(calls.audits, 2);
@@ -721,6 +770,12 @@ test("database reconciliation updates the existing same-owner account instead of
     id: "99999999-9999-4999-8999-999999999999",
     status: "active",
     rules: {
+      plan_name: "1-STEP",
+      funded_rules: {
+        leverage_ratio: 30,
+        profit_split_percent_min: 80,
+        profit_split_percent_max: 90,
+      },
       evaluation_rules: {
         max_drawdown_percent: 6,
         daily_drawdown_percent: 3,
@@ -735,7 +790,7 @@ test("database reconciliation updates the existing same-owner account instead of
     owner_user_id: identity.id,
     external_account_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     account_code: source.account.accountCode,
-    account_type: source.challenge.plan,
+    account_type: "1step",
     status: "active",
     is_active: true,
     starting_balance: 100000,

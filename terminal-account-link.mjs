@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
-import { getFundedWealthPlanRules } from "./src/lib/fundedwealthPlanRules.js";
+import { FUNDEDWEALTH_PLAN_RULES, getFundedWealthPlanRules } from "./src/lib/fundedwealthPlanRules.js";
 
 const MAX_BODY_BYTES = 16384;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -88,7 +88,7 @@ function validateSource(source) {
 }
 
 export function canonicalFundedWealthProductCode(plan) {
-  const normalizedPlan = plan.trim().toUpperCase();
+  const normalizedPlan = String(plan ?? "").trim().toUpperCase();
   const stepMatch = normalizedPlan.match(/(?:^|[^A-Z0-9])([12])[-_\s]*STEP(?:$|[^A-Z0-9])/);
   if (stepMatch) return `${stepMatch[1]}-STEP`;
   const fundedPlanMatch = normalizedPlan.match(/(?:^|[^A-Z0-9])(FLASH|INSTANT)(?:$|[^A-Z0-9])/);
@@ -96,12 +96,49 @@ export function canonicalFundedWealthProductCode(plan) {
   return normalizedPlan.replace(/\s+/g, "");
 }
 
+export function canonicalFundedWealthPlanSlug(plan) {
+  const productCode = canonicalFundedWealthProductCode(plan);
+  return {
+    FLASH: "flash",
+    INSTANT: "instant",
+    "1-STEP": "1step",
+    "2-STEP": "2step",
+  }[productCode] ?? null;
+}
+
+export function canonicalFundedWealthPhaseCode(challengeType, challengeStatus) {
+  return challengeType === "funded" || String(challengeStatus ?? "").trim().toLowerCase() === "funded"
+    ? "FUNDED"
+    : "CHALLENGE";
+}
+
 export function isCompatibleFundedWealthRuleVersion(ruleVersion, source, phaseCode) {
   const ruleSetKey = phaseCode === "FUNDED" ? "funded_rules" : "evaluation_rules";
   const planRules = ruleVersion?.rules?.[ruleSetKey];
-  if (!planRules) return false;
+  const productCode = canonicalFundedWealthProductCode(source.challenge.plan);
+  const productRules = FUNDEDWEALTH_PLAN_RULES[productCode]?.rules;
+  if (!planRules || !productRules) return false;
   const minTradingDays = planRules.minimum_trading_days ?? planRules.min_trading_days;
-  return Number(planRules.max_drawdown_percent) === source.challenge.maxDrawdownPct &&
+  const wholeRules = ruleVersion.rules;
+  const expectedLeverage = productRules.funded_rules?.leverage_ratio ?? productRules.leverage_ratio;
+  const actualLeverage = wholeRules.leverage_ratio ?? planRules.leverage_ratio ?? wholeRules.funded_rules?.leverage_ratio;
+  const expectedSplit = productRules.profit_split_percent;
+  const expectedSplitMin = productRules.funded_rules?.profit_split_percent_min ?? productRules.profit_split_percent_min;
+  const expectedSplitMax = productRules.funded_rules?.profit_split_percent_max ?? productRules.profit_split_percent_max;
+  const actualSplit = wholeRules.profit_split_percent ?? planRules.profit_split_percent;
+  const actualSplitMin = wholeRules.profit_split_percent_min ?? wholeRules.funded_rules?.profit_split_percent_min;
+  const actualSplitMax = wholeRules.profit_split_percent_max ?? wholeRules.funded_rules?.profit_split_percent_max;
+  const splitMatches = expectedSplit != null
+    ? Number(actualSplit) === Number(expectedSplit)
+    : Number(actualSplitMin) === Number(expectedSplitMin) &&
+      Number(actualSplitMax) === Number(expectedSplitMax);
+  return (wholeRules.plan_name == null || wholeRules.plan_name === productRules.plan_name) &&
+    (expectedLeverage == null || Number(actualLeverage) === Number(expectedLeverage)) &&
+    splitMatches &&
+    (productRules.duration_hours == null || Number(wholeRules.duration_hours) === Number(productRules.duration_hours)) &&
+    (productRules.max_loss_per_trade_percent == null ||
+      Number(wholeRules.max_loss_per_trade_percent) === Number(productRules.max_loss_per_trade_percent)) &&
+    Number(planRules.max_drawdown_percent) === source.challenge.maxDrawdownPct &&
     Number(planRules.daily_drawdown_percent) === source.challenge.dailyLossLimitPct &&
     Number(planRules.profit_target_percent) === source.challenge.profitTargetPct &&
     Number(minTradingDays) === source.challenge.minTradingDays &&
@@ -111,12 +148,14 @@ export function isCompatibleFundedWealthRuleVersion(ruleVersion, source, phaseCo
 
 function canonicalizeLegacyFundedRules(ruleVersion, productCode) {
   const rules = ruleVersion?.rules;
-  const expectedRules = getFundedWealthPlanRules(productCode)?.funded_rules;
+  const expectedProductRules = getFundedWealthPlanRules(productCode);
+  const expectedRules = expectedProductRules?.funded_rules;
   const isLegacyFlash = productCode === "FLASH" &&
     rules?.plan_name === "FLASH" &&
     Number(rules.duration_hours) === 24 &&
     Number(rules.max_loss_per_trade_percent) === 2 &&
     Number(rules.max_drawdown_percent) === 4 &&
+    (rules.leverage_ratio == null || Number(rules.leverage_ratio) === 100) &&
     Number(rules.profit_split_percent) === 80 &&
     Number(rules.consistency_requirement_percent) === 15 &&
     Number(rules.payout_threshold_percent) === 3 &&
@@ -130,13 +169,23 @@ function canonicalizeLegacyFundedRules(ruleVersion, productCode) {
     Number(rules.max_drawdown_percent) === 5 &&
     Number(rules.daily_drawdown_percent) === 3 &&
     Number(rules.trading_days) === 7 &&
+    (rules.leverage_ratio == null || Number(rules.leverage_ratio) === 50) &&
+    (rules.profit_split_percent_min == null || Number(rules.profit_split_percent_min) === 70) &&
+    (rules.profit_split_percent_max == null || Number(rules.profit_split_percent_max) === 80) &&
     rules.profit_target_percent === null &&
     rules.funded_rules == null;
   if (ruleVersion?.status !== "active" || !expectedRules || (!isLegacyFlash && !isLegacyInstant)) {
     return null;
   }
 
-  return { ...rules, funded_rules: { ...expectedRules } };
+  return {
+    ...rules,
+    ...(expectedProductRules.leverage_ratio == null ? {} : { leverage_ratio: expectedProductRules.leverage_ratio }),
+    ...(expectedProductRules.profit_split_percent == null ? {} : { profit_split_percent: expectedProductRules.profit_split_percent }),
+    ...(expectedProductRules.profit_split_percent_min == null ? {} : { profit_split_percent_min: expectedProductRules.profit_split_percent_min }),
+    ...(expectedProductRules.profit_split_percent_max == null ? {} : { profit_split_percent_max: expectedProductRules.profit_split_percent_max }),
+    funded_rules: { ...expectedRules },
+  };
 }
 
 export function canonicalizeLegacyFlashFundedRules(ruleVersion) {
@@ -321,7 +370,7 @@ function makeSupabaseStore({ fetchImpl, env }) {
     const catalog = await ensureCatalog(source, { repairLegacyFundedRules });
     let product = null;
     let phase = null;
-    let ruleVersion = null;
+    let ruleVersion = catalog.ruleVersion;
     if (existing) {
       [product] = await rows("products", new URLSearchParams({
         select: "id,code,status",
@@ -341,7 +390,7 @@ function makeSupabaseStore({ fetchImpl, env }) {
         }));
       }
       if (!identity || existing.product_id !== catalog.product.id || existing.phase_id !== catalog.phase.id ||
-          existing.account_type !== source.challenge.plan ||
+          canonicalFundedWealthProductCode(existing.account_type) !== catalog.product.code ||
           product?.status !== "active" || phase?.status !== "active" ||
           product?.id !== catalog.product.id || phase?.id !== catalog.phase.id) {
         throw Object.assign(new Error("An existing terminal account has incomplete or conflicting verified account data."), { status: 409 });
@@ -390,10 +439,7 @@ function makeSupabaseStore({ fetchImpl, env }) {
 
   async function ensureCatalog(source, { repairLegacyFundedRules = false } = {}) {
     const productCode = canonicalFundedWealthProductCode(source.challenge.plan);
-    const challengeStatus = String(source.challenge.status ?? "").trim().toLowerCase();
-    const phaseCode = source.challenge.type === "funded" || challengeStatus === "funded"
-      ? "FUNDED"
-      : "CHALLENGE";
+    const phaseCode = canonicalFundedWealthPhaseCode(source.challenge.type, source.challenge.status);
 
     const products = await rows("products", new URLSearchParams({
       select: "id,code,name,status",
@@ -468,6 +514,10 @@ function makeSupabaseStore({ fetchImpl, env }) {
     },
     async createAccount(source, identity) {
       const catalog = await ensureCatalog(source);
+      const planSlug = canonicalFundedWealthPlanSlug(source.challenge.plan);
+      if (!planSlug) {
+        throw Object.assign(new Error("The verified FundedWealth plan is not a supported terminal product."), { status: 409 });
+      }
       const amount = (value, percent) => value * percent / 100;
       const payload = {
         owner_user_id: identity.id,
@@ -475,7 +525,7 @@ function makeSupabaseStore({ fetchImpl, env }) {
         account_code: source.account.accountCode,
         prop_firm: "FundedWealth",
         challenge_type: source.challenge.type,
-        account_type: source.challenge.plan,
+        account_type: planSlug,
         starting_balance: source.challenge.initialBalance,
         current_balance: source.challenge.currentBalance,
         equity: source.challenge.currentBalance,
@@ -512,7 +562,7 @@ function makeSupabaseStore({ fetchImpl, env }) {
       }));
       if (!account || account.account_code !== source.account.accountCode ||
           account.owner_user_id !== identity.id || account.external_account_id !== source.account.id ||
-          account.account_type !== source.challenge.plan || account.status !== "active" ||
+          account.account_type !== planSlug || account.status !== "active" ||
           account.is_active !== true || account.product_id !== catalog.product.id ||
           account.phase_id !== catalog.phase.id ||
           (account.rule_version_id ?? null) !== (catalog.ruleVersion?.id ?? null) ||
@@ -614,12 +664,23 @@ export function createTerminalAccountLinkWorkflow(store) {
     const validated = validateSource(source);
     const plan = await store.inspect(validated, { repairLegacyFundedRules: true });
     if (plan.accountAction === "already_linked") {
+      const ruleVersion = plan.ruleVersion;
+      if (!ruleVersion?.id || ruleVersion.status !== "active" || !ruleVersion.rules ||
+          plan.account.rule_version_id !== ruleVersion.id) {
+        throw Object.assign(new Error("The existing terminal account does not have a verified active rule version."), { status: 409 });
+      }
       try {
         await store.writeAudit(validated, plan.identity, plan.account, actor, "already_linked");
       } catch {
         throw Object.assign(new Error("The mapping already exists, but its terminal audit event could not be recorded."), { status: 500 });
       }
-      return { created: false, accountId: plan.account.id, identityId: plan.identity.id };
+      return {
+        created: false,
+        accountId: plan.account.id,
+        identityId: plan.identity.id,
+        ruleVersionId: ruleVersion.id,
+        ruleVersion: { id: ruleVersion.id, status: ruleVersion.status, rules: ruleVersion.rules },
+      };
     }
 
     const identity = plan.identity ?? await store.inviteIdentity(validated);
@@ -640,13 +701,33 @@ export function createTerminalAccountLinkWorkflow(store) {
     const account = reconciled
       ? await store.reconcileExternalAccountId(validated, identity, plan.account)
       : await store.createAccount(validated, identity);
+    const ruleVersion = plan.ruleVersion;
+    if (!ruleVersion?.id || ruleVersion.status !== "active" || !ruleVersion.rules ||
+        account.rule_version_id !== ruleVersion.id) {
+      throw Object.assign(new Error("The terminal account was created without the verified active rule version."), { status: 409 });
+    }
 
     try {
       await store.writeAudit(validated, identity, account, actor, reconciled ? "external_account_id_reconciled" : "linked");
     } catch {
-      return { created: !reconciled, reconciled, accountId: account.id, identityId: identity.id, auditPending: true };
+      return {
+        created: !reconciled,
+        reconciled,
+        accountId: account.id,
+        identityId: identity.id,
+        ruleVersionId: ruleVersion.id,
+        ruleVersion: { id: ruleVersion.id, status: ruleVersion.status, rules: ruleVersion.rules },
+        auditPending: true,
+      };
     }
-    return { created: !reconciled, reconciled, accountId: account.id, identityId: identity.id };
+    return {
+      created: !reconciled,
+      reconciled,
+      accountId: account.id,
+      identityId: identity.id,
+      ruleVersionId: ruleVersion.id,
+      ruleVersion: { id: ruleVersion.id, status: ruleVersion.status, rules: ruleVersion.rules },
+    };
   }
 
   async function ensure(source) {

@@ -7,6 +7,7 @@ export const FUNDEDWEALTH_PLAN_RULES = {
             duration_hours: 24,
             max_loss_per_trade_percent: 2,
             max_drawdown_percent: 4,
+            leverage_ratio: 100,
             profit_split_percent: 80,
             consistency_requirement_percent: 15,
             payout_threshold_percent: 3,
