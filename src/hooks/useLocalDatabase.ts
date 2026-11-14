@@ -30,12 +30,6 @@ import {
 import { canonicalIndexSymbol, classifyInstrument, isCashEquityListing, type InstrumentCategory } from "@/lib/instrumentClassification";
 import { fetchDhanInstrumentMaster } from "@/lib/marketApi";
 import { normalizeProviderInstrument } from "@/lib/instrumentMaster";
-import { findApprovedIndexInstrument, resolveApprovedStockUniverse } from "@/lib/marketInstrumentResolver";
-import {
-  requestTerminalMarketData,
-  type TerminalMarketDataInstrument,
-  toLocalMarketDataInstrument,
-} from "@/lib/terminalApi";
 import { isApprovedStock, getDhanSymbol, APPROVED_200_STOCKS, getUnderlyingFromTradingSymbol } from "@/lib/approvedInstruments";
 import { APPROVED_INDICES, isApprovedIndex } from "@/lib/approvedIndices";
 
@@ -198,57 +192,20 @@ export function useInstrumentLookup() {
   const gatewayQuery = useQuery({
     queryKey: ["terminal-instrument-catalog", "founder-dhan"],
     queryFn: async () => {
-      let catalogError: string | null = null;
       let instrumentMasterError: string | null = null;
-      let remote: TerminalMarketDataInstrument[] = [];
+      // Skip listInstruments (Terminal OS parses 116k CSV rows — times out on CDN).
+      // Always load from the Railway dhan-proxy which is fast and returns JSON.
+      let master: unknown[] = [];
       try {
-        const catalog = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(
-          null,
-          "dhan",
-          { operation: "listInstruments" },
-        );
-        if (!Array.isArray(catalog)) throw new Error("Terminal OS returned an invalid Dhan instrument catalog.");
-        remote = catalog;
+        master = await fetchDhanInstrumentMaster();
       } catch (error) {
-        catalogError = error instanceof Error
-          ? `Founder Dhan instrument catalog failed: ${error.message}`
-          : "Founder Dhan instrument catalog failed.";
-        console.error("Founder Dhan instrument catalog failed:", error);
+        instrumentMasterError = error instanceof Error
+          ? `Official Dhan instrument master failed: ${error.message}`
+          : "Official Dhan instrument master failed.";
+        console.error("Official Dhan instrument master failed:", error);
       }
-      const allRemote = remote
-        .filter((instrument) => instrument.providerInstrumentId && instrument.symbol && instrument.tradingSymbol)
-        .map(toLocalMarketDataInstrument);
-
-      // Filter to approved 200 stocks + all derivatives + indices
-      const instruments = allRemote.filter((instrument) => {
-        const cat = classifyInstrument(instrument);
-        if (!cat) return false;
-        if (cat === "indices") {
-          return isApprovedIndexSymbol(instrument.symbol) || isApprovedIndexSymbol(instrument.tradingSymbol);
-        }
-        if (cat === "futures" || cat === "options") return true; // further filtered below/in page
-        if (cat === "stocks") {
-          return isApprovedStock(instrument.symbol) || isApprovedStock(instrument.tradingSymbol);
-        }
-        return false;
-      });
-      const hasMissingApprovedStock = resolveApprovedStockUniverse(instruments)
-        .some(({ instrument }) => !instrument);
-      const hasMissingApprovedIndex = APPROVED_INDICES
-        .some((index) => !findApprovedIndexInstrument(instruments, index));
-      if (hasMissingApprovedStock || hasMissingApprovedIndex) {
-        let master: unknown[] = [];
-        try {
-          master = await fetchDhanInstrumentMaster();
-        } catch (error) {
-          instrumentMasterError = error instanceof Error
-            ? `Official Dhan instrument master fallback failed: ${error.message}`
-            : "Official Dhan instrument master fallback failed.";
-          console.error("Official Dhan instrument master fallback failed:", error);
-        }
-        const existingIds = new Set(instruments.map((instrument) =>
-          `${instrument.exchangeSegment}:${instrument.providerInstrumentId}`));
-        const officialInstruments = master.flatMap((row, index) => {
+      const existingIds = new Set<string>();
+      const instruments: Instrument[] = master.flatMap((row, index) => {
           if (!row || typeof row !== "object") return [];
           const source = row as Record<string, unknown>;
           const instrumentName = String(source.SEM_INSTRUMENT_NAME ?? source.instrumentType ?? "").toUpperCase();
@@ -302,13 +259,8 @@ export function useInstrumentLookup() {
           existingIds.add(key);
           return [normalized];
         });
-        instruments.push(...officialInstruments);
-      }
-      const loadErrors = [catalogError, instrumentMasterError].filter((error): error is string => Boolean(error));
       if (instruments.length === 0) {
-        throw new Error(loadErrors.length
-          ? loadErrors.join(" ")
-          : "Terminal OS returned an empty Dhan instrument catalog.");
+        throw new Error(instrumentMasterError ?? "Dhan instrument master returned no instruments.");
       }
       const BATCH_SIZE = 2000;
       try {
@@ -318,7 +270,7 @@ export function useInstrumentLookup() {
       } catch (error) {
         console.error("Founder Dhan instruments could not be cached locally:", error);
       }
-      return { instruments, loadError: loadErrors.length ? loadErrors.join(" ") : null };
+      return { instruments, loadError: instrumentMasterError };
     },
     retry: false,
     staleTime: 6 * 60 * 60 * 1000,
