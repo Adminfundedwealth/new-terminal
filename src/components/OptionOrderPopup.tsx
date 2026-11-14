@@ -202,9 +202,12 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
       toast.error("Select an active trading account first.");
       return;
     }
-    if (!contract.securityId || !contract.tradingSymbol || !contract.exchangeSegment || resolvedLotSize <= 0) {
-      toast.error("The option contract identity or lot size is unavailable. The order was not submitted.");
+    if (!contract.securityId || !contract.tradingSymbol || !contract.exchangeSegment) {
+      toast.error("The option contract identity is unavailable. The order cannot be submitted.");
       return;
+    }
+    if (resolvedLotSize <= 0) {
+      toast.warning("Lot size is unavailable — quantities will be calculated once the instrument master loads. You can still preview the order.");
     }
     setOrderMessage("");
     setOrderState("confirming");
@@ -217,8 +220,12 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
       toast.error("Select an active trading account first.");
       return;
     }
-    if (!contract.securityId || !contract.tradingSymbol || !contract.exchangeSegment || resolvedLotSize <= 0) {
-      toast.error("The option contract identity or lot size is unavailable. The order was not submitted.");
+    if (!contract.securityId || !contract.tradingSymbol || !contract.exchangeSegment) {
+      toast.error("The option contract identity is unavailable. The order cannot be submitted.");
+      return;
+    }
+    if (resolvedLotSize <= 0) {
+      toast.error("Lot size is unavailable — the instrument master has not loaded yet. Please wait a moment and try again.");
       return;
     }
 
