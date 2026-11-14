@@ -193,7 +193,7 @@ export function useMarketStatus() {
 
 // ── Hook: Live Option Chain ──
 // Returns live data during market hours, or cached "last close" data after hours
-export function useLiveOptionChain(symbol: string, expiry?: string, enabled = true, underlying?: OptionUnderlying) {
+export function useLiveOptionChain(symbol: string, expiry?: string, enabled = true, underlying?: OptionUnderlying, lotSizeOverride?: number) {
   const provider = resolveTerminalMarketDataProvider(null);
   const centralUnderlying = resolveCentralOptionUnderlying(symbol, underlying);
 
@@ -231,7 +231,11 @@ export function useLiveOptionChain(symbol: string, expiry?: string, enabled = tr
         : 50;
 
       if (!hasChainData && !isAfterHours) return null;
-      const instrumentLotSize = optionInstrument?.lotSize ?? 0;
+      // Use the caller-supplied lot size (from local instrument master) if available,
+      // otherwise fall back to searchInstruments result
+      const instrumentLotSize = (lotSizeOverride && lotSizeOverride > 0)
+        ? lotSizeOverride
+        : (optionInstrument?.lotSize ?? 0);
       return {
         chain: result.chain,
         spotPrice: result.spotPrice,

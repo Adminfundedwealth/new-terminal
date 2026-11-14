@@ -825,7 +825,22 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     && Date.now() >= underlyingQuoteTime
     && Date.now() - underlyingQuoteTime <= 60_000;
 
-  const { data, isLoading, refetch, error } = useLiveOptionChain(symbol, selectedExpiry, true, centralUnderlyingInstrument);
+  // Resolve lot size directly from local master BEFORE the chain loads,
+  // so the Buy/Sell ticket and Per Lot toggle work immediately.
+  const masterLotSize = useMemo(() => {
+    if (!isMasterLoaded || masterInstruments.length === 0) return 0;
+    const expiryDay = (selectedExpiry || "").slice(0, 10);
+    const found = masterInstruments.find((inst) =>
+      inst.provider === "dhan" &&
+      (inst.instrumentType === "OPTIDX" || inst.instrumentType === "OPTSTK") &&
+      (inst.symbol === symbol || inst.tradingSymbol.startsWith(symbol)) &&
+      (expiryDay === "" || (inst.expiryDate ?? "").slice(0, 10) === expiryDay) &&
+      (inst.lotSize ?? 0) > 0
+    );
+    return found?.lotSize ?? 0;
+  }, [isMasterLoaded, masterInstruments, symbol, selectedExpiry]);
+
+  const { data, isLoading, refetch, error } = useLiveOptionChain(symbol, selectedExpiry, true, centralUnderlyingInstrument, masterLotSize);
 
   const isChainLoading = isLoading;
 
