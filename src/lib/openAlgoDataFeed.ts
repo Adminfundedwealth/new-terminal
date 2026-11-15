@@ -126,6 +126,33 @@ export function normalizeDhanCandle(
   };
 }
 
+export function normalizeDhanCandles(
+  candles: TerminalMarketDataCandle[],
+  interval: string,
+  symbol: string,
+): Bar[] {
+  const bars: Bar[] = [];
+  let invalidCount = 0;
+  for (const candle of candles) {
+    try {
+      bars.push(normalizeDhanCandle(candle, interval));
+    } catch (error) {
+      if (error instanceof Error && (
+        error.message === "The market-data service returned an invalid OHLCV candle." ||
+        error.message.startsWith("The market-data service returned an invalid candle timestamp:")
+      )) {
+        invalidCount += 1;
+        continue;
+      }
+      throw error;
+    }
+  }
+  if (invalidCount > 0) {
+    console.warn(`Skipped ${invalidCount} invalid Dhan historical candle(s) for ${symbol}.`);
+  }
+  return bars;
+}
+
 function localMidnight(time: number): number {
   const parts = utcSecondsToZonedParts(time, INDIA_TIME_ZONE);
   return zonedWallClockToUtcSeconds(
@@ -308,8 +335,7 @@ export class FundedWealthOpenAlgoDataFeed {
     if (request.signal?.aborted) throw abortError();
     const fromBound = interval === "1d" ? localMidnight(from) : from;
     const toBound = interval === "1d" ? localMidnight(to - 1) + 24 * 60 * 60 : to;
-    return candles
-      .map((candle) => normalizeDhanCandle(candle, interval))
+    return normalizeDhanCandles(candles, interval, instrument.tradingSymbol)
       .filter((bar) => bar.time >= fromBound && bar.time < toBound)
       .sort((left, right) => left.time - right.time);
   }

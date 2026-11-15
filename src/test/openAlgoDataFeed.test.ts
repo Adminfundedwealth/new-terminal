@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   isIndianMarketInstrument,
   normalizeDhanCandle,
+  normalizeDhanCandles,
   parseDhanTimestamp,
 } from "@/lib/openAlgoDataFeed";
 import type { TerminalMarketDataInstrument } from "@/lib/terminalApi";
@@ -77,5 +78,31 @@ describe("OpenAlgo FundedWealth datafeed", () => {
       volume: 1000,
       oi: 200,
     });
+  });
+
+  it("keeps valid history and warns when Dhan returns an invalid candle", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const bars = normalizeDhanCandles([
+      {
+        timestamp: "2026-02-25T18:30:00.000Z",
+        open: 100,
+        high: 110,
+        low: 95,
+        close: 105,
+        volume: 1000,
+      },
+      {
+        timestamp: "2026-02-26T18:30:00.000Z",
+        open: 100,
+        high: 101,
+        low: 95,
+        close: 105,
+        volume: 1000,
+      },
+    ], "1d", "NIFTY-Dec2026-FUT");
+
+    expect(bars).toHaveLength(1);
+    expect(warn).toHaveBeenCalledWith("Skipped 1 invalid Dhan historical candle(s) for NIFTY-Dec2026-FUT.");
+    warn.mockRestore();
   });
 });
