@@ -49,6 +49,7 @@ describe("instrument classification", () => {
   it("keeps cash shares while excluding debt securities from the stock directory", () => {
     expect(isCashEquityListing(instrument({ series: "EQ" }))).toBe(true);
     expect(isCashEquityListing(instrument({ exchange: "BSE", exchangeSegment: "BSE_EQ", series: "MT", providerInstrumentType: "ES" }))).toBe(true);
+    expect(isCashEquityListing(instrument({ symbol: "SOVEREIGN DIAMONDS LTD.", tradingSymbol: "SOVERDIA", exchange: "BSE", exchangeSegment: "BSE_EQ", series: "X", providerInstrumentType: "ES" }))).toBe(true);
     expect(isCashEquityListing(instrument({ exchange: "NSE", series: "IV" }))).toBe(true);
     expect(isCashEquityListing(instrument({ exchange: "NSE", series: "RR" }))).toBe(true);
     expect(isCashEquityListing(instrument({ exchange: "BSE", exchangeSegment: "BSE_EQ", series: "B" }))).toBe(true);
