@@ -6,6 +6,7 @@ import type { OptionData } from "@/lib/mockData";
 import type { RawOptionLeg } from "@/lib/optionChainAnalytics";
 import { deserializeCanonicalOrder, type CanonicalOrderRow, type CanonicalOrder } from "@/lib/orderModel";
 import { REALTIME_MOCK_TEST_ACCOUNT_ID } from "@/lib/realtimeMockTestScope";
+import { DEFAULT_REQUEST_TIMEOUT_MS, withRequestTimeout } from "@/lib/requestTimeout";
 
 export function resolveTerminalOsBase(configuredUrl: string | undefined, isProduction: boolean): string {
   const defaultUrl = isProduction ? "https://terminal-os.fundedwealth.com" : "";
@@ -360,22 +361,25 @@ async function getAuthenticatedCustomerId(): Promise<string> {
   return user.id;
 }
 
-async function fetchTerminalJson<T>(path: string): Promise<T> {
-  const accessToken = await getCustomerAccessToken();
-  const response = await fetch(`${TERMINAL_OS_BASE}${path}`, {
-    credentials: "omit",
-    cache: "no-store",
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
+async function fetchTerminalJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  return withRequestTimeout(DEFAULT_REQUEST_TIMEOUT_MS, async (requestSignal) => {
+    const accessToken = await getCustomerAccessToken();
+    const response = await fetch(`${TERMINAL_OS_BASE}${path}`, {
+      credentials: "omit",
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      signal: requestSignal,
+    });
 
-  if (!response.ok) {
-    throw new Error(`Terminal OS request failed (${response.status})`);
-  }
+    if (!response.ok) {
+      throw new Error(`Terminal OS request failed (${response.status})`);
+    }
 
-  return response.json() as Promise<T>;
+    return response.json() as Promise<T>;
+  }, signal);
 }
 
 export type TerminalMarketDataProvider = "dhan" | "kite";
@@ -566,32 +570,36 @@ export async function requestTerminalRealtimeTicket(
   accountId: string | null,
   provider: TerminalMarketDataProvider,
   environment: "production" | "paper" | "sandbox" = "production",
+  signal?: AbortSignal,
 ): Promise<{ ticket: string; expires_at: string }> {
   const scopedAccountId = provider === "dhan"
     ? accountId === REALTIME_MOCK_TEST_ACCOUNT_ID && environment === "paper" ? accountId : null
     : accountId;
   if (!scopedAccountId && provider !== "dhan") throw new Error("A trading account is required for account-scoped realtime data.");
-  const accessToken = await getCustomerAccessToken();
-  const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/realtime-ticket`, {
-    method: "POST",
-    credentials: "omit",
-    cache: "no-store",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({
-      ...(scopedAccountId ? { account_id: scopedAccountId } : {}),
-      provider,
-      environment,
-      ...(accountId === REALTIME_MOCK_TEST_ACCOUNT_ID && provider === "dhan" && environment === "paper" ? { test_mode: true } : {}),
-    }),
-  });
-  if (!response.ok) throw new Error("Realtime authentication is unavailable.");
-  const payload = await response.json() as { data?: { ticket?: string; expires_at?: string } };
-  if (!payload.data?.ticket || !payload.data.expires_at) throw new Error("Realtime authentication response is invalid.");
-  return { ticket: payload.data.ticket, expires_at: payload.data.expires_at };
+  return withRequestTimeout(DEFAULT_REQUEST_TIMEOUT_MS, async (requestSignal) => {
+    const accessToken = await getCustomerAccessToken();
+    const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/realtime-ticket`, {
+      method: "POST",
+      credentials: "omit",
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        ...(scopedAccountId ? { account_id: scopedAccountId } : {}),
+        provider,
+        environment,
+        ...(accountId === REALTIME_MOCK_TEST_ACCOUNT_ID && provider === "dhan" && environment === "paper" ? { test_mode: true } : {}),
+      }),
+      signal: requestSignal,
+    });
+    if (!response.ok) throw new Error("Realtime authentication is unavailable.");
+    const payload = await response.json() as { data?: { ticket?: string; expires_at?: string } };
+    if (!payload.data?.ticket || !payload.data.expires_at) throw new Error("Realtime authentication response is invalid.");
+    return { ticket: payload.data.ticket, expires_at: payload.data.expires_at };
+  }, signal);
 }
 
 export type TerminalMarketDataErrorCode =
@@ -681,7 +689,9 @@ export async function requestTerminalMarketData<T>(
   provider: TerminalMarketDataProvider,
   operation: TerminalMarketDataOperation,
   environment: "production" | "paper" | "sandbox" = "production",
+  signal?: AbortSignal,
 ): Promise<T> {
+  let requestOperation = operation;
   if (provider === "dhan" && operation.operation === "getQuotes") {
     const instruments = operation.instruments.filter((instrument) =>
       instrument.provider === "dhan" &&
@@ -689,52 +699,48 @@ export async function requestTerminalMarketData<T>(
       instrument.exchangeSegment.length > 0 &&
       instrument.tradingSymbol.length > 0
     );
-    const quotes: TerminalMarketDataQuote[] = [];
-    for (let offset = 0; offset < instruments.length; offset += 5) {
-      const batch = instruments.slice(offset, offset + 5);
-      const results = await Promise.allSettled(batch.map((instrument) =>
-        requestTerminalMarketData<TerminalMarketDataQuote>(
-          accountId,
-          provider,
-          { operation: "getQuote", instrument },
-          environment,
-        )
-      ));
-      quotes.push(...results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []));
-    }
-    return quotes as T;
+    if (instruments.length === 0) return [] as T;
+    if (instruments.length > 1000) throw new Error("Dhan quote requests support at most 1,000 instruments.");
+    requestOperation = { ...operation, instruments };
   }
 
   const scopedAccountId = provider === "dhan" ? null : accountId;
   if (!scopedAccountId && provider !== "dhan") throw new Error("A trading account is required for account-scoped market data.");
-  const accessToken = await getCustomerAccessToken();
-  const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/market-data`, {
-    method: "POST",
-    credentials: "omit",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({ ...(scopedAccountId ? { account_id: scopedAccountId } : {}), provider, environment, ...operation }),
-  });
-  return readMarketDataResponse<T>(response);
+  return withRequestTimeout(DEFAULT_REQUEST_TIMEOUT_MS, async (requestSignal) => {
+    const accessToken = await getCustomerAccessToken();
+    const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/market-data`, {
+      method: "POST",
+      credentials: "omit",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ ...(scopedAccountId ? { account_id: scopedAccountId } : {}), provider, environment, ...requestOperation }),
+      signal: requestSignal,
+    });
+    return readMarketDataResponse<T>(response);
+  }, signal);
 }
 
 export async function fetchTerminalMarketDataStatus(
   accountId: string | null,
   provider: TerminalMarketDataProvider,
   environment: "production" | "paper" | "sandbox" = "production",
+  signal?: AbortSignal,
 ): Promise<TerminalMarketDataStatus> {
   const scopedAccountId = provider === "dhan" ? null : accountId;
   if (!scopedAccountId && provider !== "dhan") throw new Error("A trading account is required for account-scoped market-data status.");
-  const accessToken = await getCustomerAccessToken();
-  const query = new URLSearchParams({ ...(scopedAccountId ? { account_id: scopedAccountId } : {}), provider, environment });
-  const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/market-data?${query}`, {
-    credentials: "omit",
-    headers: { Accept: "application/json", Authorization: `Bearer ${accessToken}` },
-  });
-  return readMarketDataResponse<TerminalMarketDataStatus>(response);
+  return withRequestTimeout(DEFAULT_REQUEST_TIMEOUT_MS, async (requestSignal) => {
+    const accessToken = await getCustomerAccessToken();
+    const query = new URLSearchParams({ ...(scopedAccountId ? { account_id: scopedAccountId } : {}), provider, environment });
+    const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/market-data?${query}`, {
+      credentials: "omit",
+      headers: { Accept: "application/json", Authorization: `Bearer ${accessToken}` },
+      signal: requestSignal,
+    });
+    return readMarketDataResponse<TerminalMarketDataStatus>(response);
+  }, signal);
 }
 
 export interface TerminalRealtimeQuoteEvent {

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { APPROVED_200_STOCKS } from "@/lib/approvedInstruments";
 import {
-  findApprovedIndexInstrument,
   findDhanOptionInstrument,
-  resolveApprovedStockUniverse,
+  resolveCashEquityUniverse,
+  resolveIndianIndexUniverse,
+  resolveOptionChainUnderlyings,
 } from "@/lib/marketInstrumentResolver";
 import type { Instrument } from "@/lib/localDatabase";
 
@@ -25,16 +25,18 @@ function instrument(overrides: Partial<Instrument> = {}): Instrument {
 }
 
 describe("canonical market instrument resolution", () => {
-  it("preserves all 200 approved stock rows when some instruments are unmapped", () => {
-    const stocks = resolveApprovedStockUniverse([instrument()]);
+  it("includes eligible cash equities beyond the former approved list", () => {
+    const newListing = instrument({
+      securityId: "900001",
+      providerInstrumentId: "900001",
+      symbol: "NEW LISTING LIMITED",
+      tradingSymbol: "NEWLISTING",
+    });
 
-    expect(stocks).toHaveLength(200);
-    expect(stocks.map(({ stock }) => stock.symbol)).toEqual(APPROVED_200_STOCKS.map(({ symbol }) => symbol));
-    expect(stocks.find(({ stock }) => stock.symbol === "HDFCBANK")?.instrument?.securityId).toBe("1333");
-    expect(stocks.find(({ stock }) => stock.symbol === "RELIANCE")?.instrument).toBeUndefined();
+    expect(resolveCashEquityUniverse([newListing])).toEqual([newListing]);
   });
 
-  it("prefers the NSE listing when the Dhan master returns the BSE listing first", () => {
+  it("preserves distinct NSE and BSE listings but deduplicates repeated provider identities", () => {
     const bseListing = instrument({
       securityId: "500180",
       providerInstrumentId: "500180",
@@ -45,22 +47,10 @@ describe("canonical market instrument resolution", () => {
     });
     const nseListing = instrument();
 
-    expect(resolveApprovedStockUniverse([bseListing, nseListing])
-      .find(({ stock }) => stock.symbol === "HDFCBANK")?.instrument?.providerInstrumentId).toBe("1333");
+    expect(resolveCashEquityUniverse([bseListing, nseListing, nseListing])).toEqual([bseListing, nseListing]);
   });
 
-  it("resolves renamed Dhan trading symbols for approved stocks", () => {
-    const stocks = resolveApprovedStockUniverse([
-      instrument({ securityId: "3456", symbol: "TATA MOTORS PASS VEH LTD", tradingSymbol: "TMPV" }),
-    ]);
-
-    expect(stocks.find(({ stock }) => stock.symbol === "TATAMOTORS")?.instrument).toMatchObject({
-      securityId: "3456",
-      tradingSymbol: "TMPV",
-    });
-  });
-
-  it("resolves index aliases only in the approved exchange segment", () => {
+  it("includes all provider-backed NSE and BSE indices", () => {
     const nseIndex = instrument({
       securityId: "13",
       symbol: "NIFTY 50",
@@ -80,10 +70,32 @@ describe("canonical market instrument resolution", () => {
       lotSize: 1,
     });
 
-    expect(findApprovedIndexInstrument([nseIndex], { symbol: "NIFTY", segment: "IDX_I" })).toBe(nseIndex);
-    expect(findApprovedIndexInstrument([nseIndex], { symbol: "NSE:NIFTY50", segment: "IDX_I" })).toBe(nseIndex);
-    expect(findApprovedIndexInstrument([nseIndex], { symbol: "NIFTY", segment: "BSE_IDX" })).toBeUndefined();
-    expect(findApprovedIndexInstrument([bseIndex], { symbol: "SENSEX", segment: "BSE_IDX" })).toBe(bseIndex);
+    expect(resolveIndianIndexUniverse([nseIndex, bseIndex])).toEqual([nseIndex, bseIndex]);
+  });
+
+  it("derives option-chain search underlyings from active catalog contracts", () => {
+    const stockOption = instrument({
+      symbol: "NEWLISTING",
+      tradingSymbol: "NEWLISTING-Nov2099-250-CE",
+      exchangeSegment: "NSE_FNO",
+      instrumentType: "OPTSTK",
+      expiryDate: "2099-11-26",
+      strikePrice: 250,
+      optionType: "CE",
+    });
+    const indexOption = instrument({
+      symbol: "NIFTY",
+      tradingSymbol: "NIFTY-Nov2099-25000-PE",
+      exchangeSegment: "NSE_FNO",
+      instrumentType: "OPTIDX",
+      expiryDate: "2099-11-26",
+      strikePrice: 25000,
+      optionType: "PE",
+    });
+    const expiredOption = { ...stockOption, securityId: "99903", providerInstrumentId: "99903", expiryDate: "2000-01-27" };
+
+    expect(resolveOptionChainUnderlyings([stockOption, indexOption, expiredOption], "OPTSTK")).toEqual(["NEWLISTING"]);
+    expect(resolveOptionChainUnderlyings([stockOption, indexOption, expiredOption], "OPTIDX")).toEqual(["NIFTY"]);
   });
 
   it("uses the verified option contract identity from the Dhan instrument master", () => {
@@ -114,5 +126,50 @@ describe("canonical market instrument resolution", () => {
       optionType: "CE",
       underlyingSecurityId: "25",
     })).toBeUndefined();
+  });
+
+  it("resolves non-curated stock options from their exact trading symbol prefix", () => {
+    const option = instrument({
+      securityId: "99902",
+      providerInstrumentId: "99902",
+      symbol: "NEW LISTING LIMITED",
+      tradingSymbol: "NEWLISTING-Jul2026-250-CE",
+      exchangeSegment: "NSE_FNO",
+      instrumentType: "OPTSTK",
+      expiryDate: "2026-07-30",
+      strikePrice: 250,
+      optionType: "CE",
+    });
+
+    expect(findDhanOptionInstrument([option], {
+      underlying: "NEWLISTING",
+      expiry: "2026-07-30",
+      strike: 250,
+      optionType: "CE",
+    })).toBe(option);
+  });
+
+  it("uses the chain exchange when both exchanges list the same option contract", () => {
+    const nseOption = instrument({
+      securityId: "99911",
+      providerInstrumentId: "99911",
+      symbol: "HDFCBANK",
+      tradingSymbol: "HDFCBANK-Nov2026-700-CE",
+      exchange: "NSE",
+      exchangeSegment: "NSE_FNO",
+      instrumentType: "OPTSTK",
+      expiryDate: "2026-11-26",
+      strikePrice: 700,
+      optionType: "CE",
+    });
+    const bseOption = { ...nseOption, securityId: "99912", providerInstrumentId: "99912", exchange: "BSE", exchangeSegment: "BSE_FNO" };
+
+    expect(findDhanOptionInstrument([bseOption, nseOption], {
+      underlying: "HDFCBANK",
+      expiry: "2026-11-26",
+      strike: 700,
+      optionType: "CE",
+      exchange: "NSE",
+    })).toBe(nseOption);
   });
 });

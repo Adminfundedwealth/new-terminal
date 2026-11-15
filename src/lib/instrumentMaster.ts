@@ -28,7 +28,7 @@ function dateValue(value: unknown): string | undefined {
   if (!result) return undefined;
   return Number.isNaN(new Date(result).getTime()) ? undefined : result;
 }
-function providerId(raw: Record<string, unknown>): string { return text(first(raw, ["securityId", "security_id", "instrument_token", "instrumentToken", "token", "SEM_SMST_SECURITY_ID", "exchange_token"])); }
+function providerId(raw: Record<string, unknown>): string { return text(first(raw, ["providerInstrumentId", "provider_instrument_id", "securityId", "security_id", "instrument_token", "instrumentToken", "token", "SEM_SMST_SECURITY_ID", "exchange_token"])); }
 function segmentValue(raw: Record<string, unknown>): string {
   const explicit = upper(first(raw, ["exchangeSegment", "exchange_segment", "exch_seg", "SEM_EXM", "segment"]));
   const exchange = upper(first(raw, ["exchange", "SEM_EXCH_ID", "SEM_EXM_EXCH_ID"]));
@@ -36,7 +36,7 @@ function segmentValue(raw: Record<string, unknown>): string {
   const instrumentType = upper(first(raw, ["instrumentType", "instrument_type", "instrumenttype", "SEM_INSTRUMENT_NAME", "SEM_EXCH_INSTRUMENT_TYPE"]));
   if (explicit) return explicit === "NFO" ? "NSE_FNO" : explicit === "BFO" ? "BSE_FNO" : explicit;
   if (segmentCode) {
-    const mapped = ({ "NSE:E": "NSE_EQ", "NSE:D": "NSE_FNO", "NSE:I": "IDX_I", "NSE:C": "NSE_CDS", "BSE:E": "BSE_EQ", "BSE:D": "BSE_FNO", "BSE:I": "BSE_IDX", "BSE:C": "BSE_CDS", "MCX:M": "MCX_COMM" } as Record<string, string>)[`${exchange}:${segmentCode}`];
+    const mapped = ({ "NSE:E": "NSE_EQ", "NSE:D": "NSE_FNO", "NSE:I": "IDX_I", "NSE:C": "NSE_CDS", "BSE:E": "BSE_EQ", "BSE:D": "BSE_FNO", "BSE:I": "IDX_I", "BSE:C": "BSE_CDS", "MCX:M": "MCX_COMM" } as Record<string, string>)[`${exchange}:${segmentCode}`];
     if (mapped) return mapped;
   }
   if (instrumentType === "INDEX") return exchange === "BSE" ? "BSE_IDX" : "IDX_I";
@@ -44,8 +44,8 @@ function segmentValue(raw: Record<string, unknown>): string {
   if (exchange === "BSE") return "BSE_EQ";
   return exchange;
 }
-function exchangeFor(segment: string): string {
-  if (segment === "IDX_I") return "NSE";
+function exchangeFor(segment: string, rawExchange?: string): string {
+  if (segment === "IDX_I") return rawExchange === "BSE" ? "BSE" : "NSE";
   if (segment === "BSE_IDX") return "BSE";
   if (segment.startsWith("NSE") || segment === "NFO" || segment === "CDS") return "NSE";
   if (segment.startsWith("BSE") || segment === "BFO") return "BSE";
@@ -67,10 +67,12 @@ export function normalizeProviderInstrument(rawValue: unknown, provider: Instrum
   const raw = rawValue as Record<string, unknown>;
   const securityId = providerId(raw);
   const tradingSymbol = text(first(raw, ["tradingSymbol", "trading_symbol", "tradingsymbol", "SEM_TRADING_SYMBOL", "symbol"]));
-  const symbol = text(first(raw, ["symbol", "name", "customSymbol", "custom_symbol", "SEM_CUSTOM_SYMBOL", "SEM_SECURITY_NAME"])) || tradingSymbol;
   const segment = segmentValue(raw);
   const instrumentType = instrumentTypeValue(raw, segment);
-  const exchange = exchangeFor(segment);
+  const isDerivative = ["FUTSTK", "FUTIDX", "OPTSTK", "OPTIDX", "FUTCOM", "FUTCUR", "OPTFUT", "OPTCUR"].includes(instrumentType);
+  const derivativeUnderlying = isDerivative ? tradingSymbol.split(/[-\s]/, 1)[0] : "";
+  const symbol = derivativeUnderlying || text(first(raw, ["symbol", "SEM_SECURITY_NAME", "name", "customSymbol", "custom_symbol", "SEM_CUSTOM_SYMBOL"])) || tradingSymbol;
+  const exchange = exchangeFor(segment, upper(first(raw, ["exchange", "SEM_EXM_EXCH_ID", "SEM_EXCH_ID"])));
   const expiryDate = dateValue(first(raw, ["expiryDate", "expiry_date", "expiry", "SEM_EXPIRY_DATE"]));
   const strikePrice = numberValue(first(raw, ["strikePrice", "strike_price", "strike", "SEM_STRIKE_PRICE"]));
   const optionType = upper(first(raw, ["optionType", "option_type", "SEM_OPTION_TYPE"])) || undefined;
@@ -84,7 +86,7 @@ export function normalizeProviderInstrument(rawValue: unknown, provider: Instrum
   if (["FUTSTK", "FUTIDX", "FUTCOM", "FUTCUR"].includes(instrumentType) && !expiryDate) return { issue: { index, code: "INVALID_VALUE", message: "Futures require a valid expiry." } };
   if (["OPTSTK", "OPTIDX", "OPTFUT", "OPTCUR"].includes(instrumentType) && (!expiryDate || strikePrice === undefined || strikePrice <= 0 || !["CE", "PE"].includes(optionType || ""))) return { issue: { index, code: "INVALID_VALUE", message: "Options require expiry, positive strike, and CE or PE option type." } };
   if (lotSize <= 0 || tickSize <= 0) return { issue: { index, code: "INVALID_VALUE", message: "Lot size and tick size must be positive." } };
-  return { instrument: { securityId, symbol, tradingSymbol, displayName: text(first(raw, ["displayName", "display_name", "name", "SEM_CUSTOM_SYMBOL"])) || symbol, exchange, exchangeSegment: segment, instrumentType, lotSize, tickSize, series, expiryDate, strikePrice, optionType: ["CE", "PE"].includes(optionType || "") ? optionType : undefined, underlyingSecurityId, provider, providerInstrumentId: securityId } };
+  return { instrument: { securityId, symbol, tradingSymbol, displayName: text(first(raw, ["displayName", "display_name", "SEM_CUSTOM_SYMBOL", "name"])) || symbol, exchange, exchangeSegment: segment, instrumentType, lotSize, tickSize, series, expiryDate, strikePrice, optionType: ["CE", "PE"].includes(optionType || "") ? optionType : undefined, underlyingSecurityId, provider, providerInstrumentId: securityId } };
 }
 
 export function normalizeInstrumentMaster(rawRows: unknown[], provider: InstrumentProvider): InstrumentNormalizationReport {

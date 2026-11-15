@@ -82,10 +82,10 @@ export default function Watchlist() {
   const quoteQuery = useQuery({
     queryKey: ["terminal-watchlist-quotes", "central-dhan", watchedSymbols, instrumentsLoaded],
     enabled: Boolean(instrumentsLoaded && watchedSymbols.length > 0),
-    queryFn: () => fetchCentralMarketQuotes(watchedSymbols.map((symbol) => ({
+    queryFn: ({ signal }) => fetchCentralMarketQuotes(watchedSymbols.map((symbol) => ({
       key: symbol,
       instrument: findWatchlistInstrument(supportedInstruments, symbol),
-    }))),
+    })), signal),
     staleTime: 5_000,
     refetchInterval: 15_000,
     retry: false,

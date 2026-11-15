@@ -65,12 +65,12 @@ describe("Task 35 instrument master", () => {
   });
 
   it("normalizes futures and options with expiry, strike, and option type", () => {
-    const future = normalizeProviderInstrument(row({ SEM_SMST_SECURITY_ID: "2001", SEM_EXM: "NSE_FNO", SEM_TRADING_SYMBOL: "RELIANCE26JANFUT", SEM_INSTRUMENT_NAME: "FUTSTK", SEM_EXPIRY_DATE: "2026-01-29", SEM_LOT_SIZE: "250" }), "dhan").instrument;
-    const call = normalizeProviderInstrument(row({ SEM_SMST_SECURITY_ID: "3001", SEM_EXM: "NSE_FNO", SEM_TRADING_SYMBOL: "RELIANCE26JAN2500CE", SEM_INSTRUMENT_NAME: "OPTSTK", SEM_EXPIRY_DATE: "2026-01-29", SEM_STRIKE_PRICE: "2500", SEM_OPTION_TYPE: "CE", SEM_LOT_SIZE: "250", SEM_UNDERLYING_SECURITY_ID: "1001" }), "dhan").instrument;
-    const put = normalizeProviderInstrument(row({ SEM_SMST_SECURITY_ID: "3002", SEM_EXM: "NSE_FNO", SEM_TRADING_SYMBOL: "RELIANCE26JAN2500PE", SEM_INSTRUMENT_NAME: "OPTSTK", SEM_EXPIRY_DATE: "2026-01-29", SEM_STRIKE_PRICE: "2500", SEM_OPTION_TYPE: "PE", SEM_LOT_SIZE: "250", SEM_UNDERLYING_SECURITY_ID: "1001" }), "dhan").instrument;
-    expect(future).toMatchObject({ instrumentType: "FUTSTK", expiryDate: "2026-01-29", lotSize: 250, tickSize: 0.05 });
-    expect(call).toMatchObject({ instrumentType: "OPTSTK", expiryDate: "2026-01-29", strikePrice: 2500, optionType: "CE", underlyingSecurityId: "1001" });
-    expect(put).toMatchObject({ instrumentType: "OPTSTK", expiryDate: "2026-01-29", strikePrice: 2500, optionType: "PE" });
+    const future = normalizeProviderInstrument(row({ SEM_SMST_SECURITY_ID: "2001", SEM_EXM: "NSE_FNO", SEM_TRADING_SYMBOL: "RELIANCE-Nov2026-FUT", SEM_CUSTOM_SYMBOL: "RELIANCE NOV FUT", SEM_INSTRUMENT_NAME: "FUTSTK", SEM_EXPIRY_DATE: "2026-11-26", SEM_LOT_SIZE: "250" }), "dhan").instrument;
+    const call = normalizeProviderInstrument(row({ SEM_SMST_SECURITY_ID: "3001", SEM_EXM: "NSE_FNO", SEM_TRADING_SYMBOL: "RELIANCE-Nov2026-2500-CE", SEM_CUSTOM_SYMBOL: "RELIANCE 26 NOV 2500 CALL", SEM_INSTRUMENT_NAME: "OPTSTK", SEM_EXPIRY_DATE: "2026-11-26", SEM_STRIKE_PRICE: "2500", SEM_OPTION_TYPE: "CE", SEM_LOT_SIZE: "250", SEM_UNDERLYING_SECURITY_ID: "1001" }), "dhan").instrument;
+    const put = normalizeProviderInstrument(row({ SEM_SMST_SECURITY_ID: "3002", SEM_EXM: "NSE_FNO", SEM_TRADING_SYMBOL: "RELIANCE-Nov2026-2500-PE", SEM_CUSTOM_SYMBOL: "RELIANCE 26 NOV 2500 PUT", SEM_INSTRUMENT_NAME: "OPTSTK", SEM_EXPIRY_DATE: "2026-11-26", SEM_STRIKE_PRICE: "2500", SEM_OPTION_TYPE: "PE", SEM_LOT_SIZE: "250", SEM_UNDERLYING_SECURITY_ID: "1001" }), "dhan").instrument;
+    expect(future).toMatchObject({ symbol: "RELIANCE", displayName: "RELIANCE NOV FUT", instrumentType: "FUTSTK", expiryDate: "2026-11-26", lotSize: 250, tickSize: 0.05 });
+    expect(call).toMatchObject({ symbol: "RELIANCE", displayName: "RELIANCE 26 NOV 2500 CALL", instrumentType: "OPTSTK", expiryDate: "2026-11-26", strikePrice: 2500, optionType: "CE", underlyingSecurityId: "1001" });
+    expect(put).toMatchObject({ symbol: "RELIANCE", displayName: "RELIANCE 26 NOV 2500 PUT", instrumentType: "OPTSTK", expiryDate: "2026-11-26", strikePrice: 2500, optionType: "PE" });
   });
 
   it("preserves supported BSE, MCX, and currency segments", () => {
@@ -103,7 +103,7 @@ describe("Task 35 instrument master", () => {
     const first = normalizeProviderInstrument(row({ SEM_SMST_SECURITY_ID: "4001", SEM_TRADING_SYMBOL: "ABC", SEM_EXM: "NSE_EQ" }), "dhan").instrument!;
     const second = normalizeProviderInstrument(row({ SEM_SMST_SECURITY_ID: "4002", SEM_TRADING_SYMBOL: "ABC", SEM_EXM: "BSE_EQ" }), "dhan").instrument!;
     const optionA = normalizeProviderInstrument(row({ SEM_SMST_SECURITY_ID: "4003", SEM_TRADING_SYMBOL: "NIFTY26JAN20000CE", SEM_EXM: "NSE_FNO", SEM_INSTRUMENT_NAME: "OPTIDX", SEM_EXPIRY_DATE: "2026-01-29", SEM_STRIKE_PRICE: "20000", SEM_OPTION_TYPE: "CE", SEM_LOT_SIZE: "65" }), "dhan").instrument!;
-    const optionB = normalizeProviderInstrument({ ...optionA, securityId: "4004", tradingSymbol: "NIFTY26FEB20000CE", expiryDate: "2026-02-26" }, "dhan").instrument!;
+    const optionB = normalizeProviderInstrument({ ...optionA, securityId: "4004", providerInstrumentId: "4004", tradingSymbol: "NIFTY26FEB20000CE", expiryDate: "2026-02-26" }, "dhan").instrument!;
     const master = new InstrumentMaster();
     expect(master.add(first)).toBeUndefined();
     expect(master.add(second)).toBeUndefined();

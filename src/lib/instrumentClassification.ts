@@ -24,6 +24,24 @@ function normalized(value: string | undefined): string {
   return (value || "").trim().toUpperCase();
 }
 
+function indiaDateKey(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((value) => value.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+export function hasActiveInstrumentExpiry(expiryDate: string | undefined, now = new Date()): boolean {
+  if (!expiryDate || !Number.isFinite(Date.parse(expiryDate))) return false;
+  const explicitDate = /^(\d{4}-\d{2}-\d{2})/.exec(expiryDate)?.[1];
+  const expiryDay = explicitDate ?? indiaDateKey(new Date(expiryDate));
+  return expiryDay >= indiaDateKey(now);
+}
+
 export function classifyInstrument(instrument: Instrument): InstrumentCategory | null {
   const segment = normalized(instrument.exchangeSegment);
   const type = normalized(instrument.instrumentType);

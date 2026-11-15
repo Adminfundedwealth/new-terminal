@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Search, Star, TrendingUp, TrendingDown, Loader2, BarChart3, ExternalLink, X, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -6,12 +6,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { StockChart } from "@/components/StockChart";
+import { loadStockChart } from "@/components/stockChartLoader";
 import { normalizeCanonicalPosition, uniqueCanonicalPositions } from "@/components/CustomerPositionTable";
 import { isWatchlisted } from "@/lib/watchlist";
 import { useLiveOptionChain } from "@/hooks/useMarketData";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { classifyInstrument, isProductionInstrument } from "@/lib/instrumentClassification";
+import { findDhanOptionInstrument } from "@/lib/marketInstrumentResolver";
 import { getPreferredMarketAdapter } from "@/lib/brokerRouter";
 import {
   createClientOrderId,
@@ -29,6 +30,7 @@ import type { Instrument } from "@/lib/localDatabase";
 export type ExplorerAsset = "stocks" | "indices" | "futures";
 const ORDER_TICK_SIZE = 0.05;
 const EXPLORER_PAGE_SIZE = 50;
+const StockChart = lazy(() => loadStockChart().then((module) => ({ default: module.StockChart })));
 
 export interface ExplorerRow {
   symbol: string;
@@ -58,6 +60,7 @@ interface ExplorerProps {
   asset: ExplorerAsset;
   footerLabel?: string;
   isLoading?: boolean;
+  isCatalogLoading?: boolean;
   loadError?: string | null;
   watchedSymbols: string[];
   onToggleWatchlist: (symbol: string) => void;
@@ -93,6 +96,7 @@ export function InstrumentExplorer({
   asset,
   footerLabel,
   isLoading,
+  isCatalogLoading,
   watchedSymbols,
   onToggleWatchlist,
   onTradeOpen,
@@ -176,7 +180,7 @@ export function InstrumentExplorer({
       visibleRows.map((row) => row.instrument?.providerInstrumentId ?? row.instrument?.securityId ?? row.chartSymbol ?? row.symbol),
     ],
     enabled: Boolean(visibleRows.length > 0 && canLoadMarketData && !isLoading && visibleRows.some((row) => row.instrument)),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const quotes: Record<string, TerminalMarketDataQuote> = {};
       const errors: string[] = [];
       if (!marketDataAccountId && marketDataProvider !== "dhan") throw new Error("Select a FundedWealth trading account to load account-specific quotes.");
@@ -193,7 +197,7 @@ export function InstrumentExplorer({
           key: row.chartSymbol ?? row.symbol,
           instrument: row.instrument as Instrument,
         }));
-        const { quotes: batchQuotes, errors: batchErrors } = await fetchCentralMarketQuotes(targets);
+        const { quotes: batchQuotes, errors: batchErrors } = await fetchCentralMarketQuotes(targets, signal);
         Object.assign(quotes, batchQuotes);
         errors.push(...batchErrors);
       } else {
@@ -286,11 +290,11 @@ export function InstrumentExplorer({
         marketDataProvider,
         { operation: "searchInstruments", query: chartSymbol },
       );
-      const instrument = existingInstrument ?? searchResults.find((candidate) =>
+      const instrument = existingInstrument ?? (searchResults ?? []).find((candidate) =>
         candidate.tradingSymbol.toUpperCase() === chartSymbol.toUpperCase() ||
         candidate.symbol.toUpperCase() === chartSymbol.toUpperCase()
-      ) ?? (searchResults.length === 1 ? searchResults[0] : undefined);
-      if (!instrument) throw new Error(`Terminal OS could not resolve ${chartSymbol}.`);
+      ) ?? ((searchResults ?? []).length === 1 ? (searchResults ?? [])[0] : undefined);
+      if (!instrument) return null;
       return requestTerminalMarketData<TerminalMarketDataQuote>(
         marketDataAccountId,
         marketDataProvider,
@@ -420,14 +424,13 @@ export function InstrumentExplorer({
   );
 
   const resolveContract = (underlying: string, expiry: string | undefined, strike: number, optionType: "CE" | "PE") =>
-    workspaceInstruments.find((instrument) =>
-      isProductionInstrument(instrument) &&
-      classifyInstrument(instrument) === "options" &&
-      instrument.symbol === underlying &&
-      instrument.strikePrice === strike &&
-      instrument.optionType === optionType &&
-      (!expiry || (instrument.expiryDate ?? "").slice(0, 10) === expiry.slice(0, 10))
-    );
+    expiry ? findDhanOptionInstrument(workspaceInstruments, {
+      underlying,
+      expiry,
+      strike,
+      optionType,
+      exchange: chartInstrument?.exchange,
+    }) : undefined;
 
   const selectWorkspaceContext = (context: "stocks" | "options" | "futures") => {
     setWorkspaceContext(context);
@@ -444,9 +447,16 @@ export function InstrumentExplorer({
   };
 
   const openChart = (symbol: string) => {
+    preloadStockChart();
     setChartSymbol(symbol);
     setWorkspaceContext(asset === "futures" ? "futures" : "stocks");
     setActiveTab("Charts");
+  };
+
+  const preloadStockChart = () => {
+    void loadStockChart().catch((error: unknown) => {
+      console.error("Failed to preload chart workspace", error);
+    });
   };
 
   const openTrade = (symbol: string) => {
@@ -673,11 +683,13 @@ export function InstrumentExplorer({
               {isLoading ? (
                 <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading live market data...
+                  Loading instrument catalog...
                 </div>
               ) : filteredRows.length === 0 ? (
                 <div className="py-12 text-center text-sm text-muted-foreground">
-                  {loadError ?? `No real ${asset} instruments available.`}
+                  {isCatalogLoading
+                    ? "The instrument catalog is loading in the background."
+                    : loadError ?? `No real ${asset} instruments available.`}
                 </div>
               ) : (
                 <Table>
@@ -708,7 +720,7 @@ export function InstrumentExplorer({
                       const dayPos = dayRange > 0 ? (((row.ltp ?? row.open ?? 0) - (row.low ?? row.ltp ?? 0)) / dayRange) * 100 : 50;
 
                       return (
-                        <TableRow key={`${row.symbol}-${row.contract ?? ""}-${row.expiry ?? ""}`} className={`text-[11px] font-mono transition-all border-l-2 ${positive ? "hover:bg-bullish/[0.03] border-transparent hover:border-bullish/50" : "hover:bg-bearish/[0.03] border-transparent hover:border-bearish/50"}`}>
+                        <TableRow key={`${row.instrument?.exchangeSegment ?? ""}-${row.instrument?.providerInstrumentId ?? row.instrument?.securityId ?? row.symbol}-${row.contract ?? ""}-${row.expiry ?? ""}`} className={`text-[11px] font-mono transition-all border-l-2 ${positive ? "hover:bg-bullish/[0.03] border-transparent hover:border-bullish/50" : "hover:bg-bearish/[0.03] border-transparent hover:border-bearish/50"}`}>
                           {asset !== "stocks" && (
                             <TableCell>
                               <button type="button" onClick={() => onToggleWatchlist(row.symbol)} aria-label={isWatched ? `Remove ${row.symbol} from watchlist` : `Add ${row.symbol} to watchlist`} className="flex h-4 w-4 items-center justify-center">
@@ -729,7 +741,7 @@ export function InstrumentExplorer({
                               <div className="flex items-center gap-2">
                                 {positive ? <TrendingUp className="h-3 w-3 text-bullish opacity-80" /> : <TrendingDown className="h-3 w-3 text-bearish opacity-80" />}
                                 {asset === "stocks" ? (
-                                  <button type="button" className="hover:text-primary" onClick={() => openChart(row.chartSymbol ?? row.symbol)} aria-label={`Open ${row.symbol} stock chart`}>
+                                  <button type="button" className="hover:text-primary" onPointerEnter={preloadStockChart} onFocus={preloadStockChart} onClick={() => openChart(row.chartSymbol ?? row.symbol)} aria-label={`Open ${row.symbol} stock chart`}>
                                     {row.symbol}
                                   </button>
                                 ) : (
@@ -771,6 +783,8 @@ export function InstrumentExplorer({
                             <div className="flex flex-col items-center gap-1">
                               <button
                                 type="button"
+                                onPointerEnter={preloadStockChart}
+                                onFocus={preloadStockChart}
                                 onClick={() => openChart(row.chartSymbol ?? row.symbol)}
                                 title="View Chart"
                                 className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground"
@@ -837,6 +851,7 @@ export function InstrumentExplorer({
             </button>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <span className={`rounded-md border px-2 py-1 font-medium ${selectedQuoteIsFresh ? "border-bullish/30 bg-bullish/5 text-bullish" : "border-amber-500/30 bg-amber-500/5 text-amber-600"}`}>{chartQuoteStatus}</span>
+              {chartInstrument?.exchange && <span>{chartInstrument.exchange}</span>}
               <span>{chartSymbol}</span>
             </div>
           </div>
@@ -864,7 +879,7 @@ export function InstrumentExplorer({
 
                       return (
                         <button
-                          key={row.symbol}
+                          key={`${row.instrument?.exchangeSegment ?? ""}:${row.instrument?.providerInstrumentId ?? row.instrument?.securityId ?? row.symbol}`}
                           type="button"
                           onClick={() => setChartSymbol(row.chartSymbol ?? row.symbol)}
                           className={`flex w-full items-center justify-between rounded-lg border px-2 py-2 text-left transition ${active ? "border-primary/40 bg-primary/5" : "border-transparent hover:border-border hover:bg-muted/20"}`}
@@ -874,7 +889,7 @@ export function InstrumentExplorer({
                               <span className="truncate text-sm font-semibold text-foreground">{row.symbol}</span>
                               {positive ? <TrendingUp className="h-3 w-3 text-bullish" /> : <TrendingDown className="h-3 w-3 text-bearish" />}
                             </div>
-                            <div className="mt-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">{asset === "indices" ? "NSE · IDX_I" : "NSE"}</div>
+                            <div className="mt-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">{row.instrument ? `${row.instrument.exchange} · ${row.instrument.exchangeSegment}` : asset === "indices" ? "NSE · IDX_I" : "NSE"}</div>
                           </div>
 
                           <div className="ml-3 text-right">
@@ -925,7 +940,7 @@ export function InstrumentExplorer({
                   <div>
                     <div className="flex items-center gap-3">
                       <span className="text-2xl font-bold tracking-tight">{selectedQuote?.label ?? chartSymbol}</span>
-                      <span className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{asset === "indices" ? "NSE · IDX_I" : workspaceContext === "stocks" ? "NSE" : "NFO"}</span>
+                      <span className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{chartInstrument ? `${chartInstrument.exchange} · ${chartInstrument.exchangeSegment}` : asset === "indices" ? "NSE · IDX_I" : workspaceContext === "stocks" ? "NSE" : "NFO"}</span>
                     </div>
                     <div className="mt-1 flex items-center gap-3 text-sm">
                       <span className="font-mono font-semibold text-foreground">
@@ -1027,13 +1042,15 @@ export function InstrumentExplorer({
 
                 <div className="min-h-0 flex-1 p-3">
                   <div className="h-full min-h-0 rounded-xl border border-border bg-background/60 p-2">
-                    <StockChart
-                      symbol={chartSymbol}
-                      inline
-                      fill
-                      selectedInstrument={chartDataInstrument}
-                      unavailableMessage={workspaceContext === "stocks" ? chartUnavailableMessage : undefined}
-                    />
+                    <Suspense fallback={<div data-testid="stock-chart-loading" className="flex h-full items-center justify-center text-sm text-muted-foreground">Loading chart workspace…</div>}>
+                      <StockChart
+                        symbol={chartSymbol}
+                        inline
+                        fill
+                        selectedInstrument={chartDataInstrument}
+                        unavailableMessage={workspaceContext === "stocks" ? chartUnavailableMessage : undefined}
+                      />
+                    </Suspense>
                   </div>
                 </div>
 

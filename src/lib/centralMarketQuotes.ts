@@ -24,7 +24,7 @@ function isRateLimitError(error: unknown): boolean {
  * Targets without a resolved instrument are silently skipped (not counted as errors)
  * so a partially-loaded instrument catalog does not poison the whole watchlist.
  */
-export async function fetchCentralMarketQuotes(targets: CentralMarketQuoteTarget[]): Promise<{
+export async function fetchCentralMarketQuotes(targets: CentralMarketQuoteTarget[], signal?: AbortSignal): Promise<{
   quotes: Record<string, TerminalMarketDataQuote>;
   errors: string[];
 }> {
@@ -40,8 +40,8 @@ export async function fetchCentralMarketQuotes(targets: CentralMarketQuoteTarget
 
   const quotes: Record<string, TerminalMarketDataQuote> = {};
 
-  // Terminal OS merges these into a single Dhan /marketfeed/quote call (up to 1000).
-  const BATCH = 250;
+  // Terminal OS groups a single request by exchange segment (up to 1000 instruments).
+  const BATCH = 1000;
   for (let offset = 0; offset < resolved.length; offset += BATCH) {
     const batch = resolved.slice(offset, offset + BATCH);
     const terminalInstruments = batch.map(({ instrument }) =>
@@ -59,6 +59,8 @@ export async function fetchCentralMarketQuotes(targets: CentralMarketQuoteTarget
           null,
           "dhan",
           { operation: "getQuotes", instruments: terminalInstruments },
+          "production",
+          signal,
         );
         failure = undefined;
         break;

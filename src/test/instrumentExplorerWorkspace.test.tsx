@@ -117,13 +117,11 @@ vi.mock("@/lib/terminalApi", async (importOriginal) => {
   };
 });
 
-vi.mock("@/components/StockChart", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/components/StockChart")>();
-  return {
-    ...actual,
+vi.mock("@/components/stockChartLoader", () => ({
+  loadStockChart: () => Promise.resolve({
     StockChart: ({ symbol, selectedInstrument, unavailableMessage }: { symbol: string; selectedInstrument?: { providerInstrumentId: string }; unavailableMessage?: string }) => <div data-testid="stock-chart" data-selected-instrument-id={selectedInstrument?.providerInstrumentId} data-unavailable-message={unavailableMessage}>{symbol} chart mock</div>,
-  };
-});
+  }),
+}));
 
 describe("InstrumentExplorer stock workspace", () => {
   afterEach(() => {
@@ -230,12 +228,18 @@ describe("InstrumentExplorer stock workspace", () => {
     expect(screen.queryByText("500490")).not.toBeInTheDocument();
     const quoteQueryKey = ["terminal-explorer-quotes", "stocks", null, "dhan", ["500490"]];
     await waitFor(() => {
-      expect(requestTerminalMarketDataMock).toHaveBeenCalledWith(null, "dhan", expect.objectContaining({
-        operation: "getQuotes",
-        instruments: expect.arrayContaining([
-          expect.objectContaining({ providerInstrumentId: "500490" }),
-        ]),
-      }));
+      expect(requestTerminalMarketDataMock).toHaveBeenCalledWith(
+        null,
+        "dhan",
+        expect.objectContaining({
+          operation: "getQuotes",
+          instruments: expect.arrayContaining([
+            expect.objectContaining({ providerInstrumentId: "500490" }),
+          ]),
+        }),
+        "production",
+        expect.any(AbortSignal),
+      );
       expect(queryClient.getQueryState(quoteQueryKey)?.status).toBe("success");
     });
     expect(queryClient.getQueryData(quoteQueryKey)).toMatchObject({
@@ -247,9 +251,11 @@ describe("InstrumentExplorer stock workspace", () => {
 
     expect(screen.getByRole("button", { name: /back to stocks/i })).toBeInTheDocument();
     expect(screen.getAllByText("ABB").length).toBeGreaterThan(1);
-    expect(screen.getAllByText("NSE").length).toBeGreaterThan(1);
-    expect(screen.getByTestId("stock-chart")).toHaveTextContent("ABB chart mock");
-    expect(screen.getByTestId("stock-chart")).toHaveAttribute("data-selected-instrument-id", "500490");
+    expect(screen.getByText("NSE")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId("stock-chart")).toHaveTextContent("ABB chart mock");
+      expect(screen.getByTestId("stock-chart")).toHaveAttribute("data-selected-instrument-id", "500490");
+    }, { timeout: 10_000 });
     await waitFor(() => {
       expect(queryClient.getQueryState(["terminal-selected-quote", null, "dhan", "ABB"])?.status).toBe("success");
     });
@@ -292,7 +298,7 @@ describe("InstrumentExplorer stock workspace", () => {
     expect(screen.getByText("NIFTY 50")).toBeInTheDocument();
     expect(screen.getAllByText("NSE · IDX_I")).toHaveLength(3);
     expect(screen.getAllByText("₹23,140.50")).toHaveLength(2);
-    expect(screen.getByTestId("stock-chart")).toHaveTextContent("NIFTY chart mock");
+    await waitFor(() => expect(screen.getByTestId("stock-chart")).toHaveTextContent("NIFTY chart mock"));
     expect(screen.queryByRole("button", { name: "Option Chain" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Futures" })).not.toBeInTheDocument();
     expect(screen.getByTestId("bottom-trading-workspace")).toBeInTheDocument();
@@ -310,9 +316,9 @@ describe("InstrumentExplorer stock workspace", () => {
 
     expect(screen.getByText("NIFTY MIDCAP 50")).toBeInTheDocument();
     expect(screen.getAllByText("₹17,474.10")).toHaveLength(2);
-    expect(screen.getByTestId("stock-chart")).toHaveTextContent("NIFTY_MIDCAP_50 chart mock");
+    await waitFor(() => expect(screen.getByTestId("stock-chart")).toHaveTextContent("NIFTY_MIDCAP_50 chart mock"));
     fireEvent.click(screen.getByRole("button", { name: /MIDCPNIFTY NSE · IDX_I/i }));
-    expect(screen.getByTestId("stock-chart")).toHaveTextContent("NIFTY_MIDCAP_50 chart mock");
+    await waitFor(() => expect(screen.getByTestId("stock-chart")).toHaveTextContent("NIFTY_MIDCAP_50 chart mock"));
   });
 
   it("loads a global Dhan quote for a no-account deep-linked stock symbol", async () => {
@@ -472,8 +478,10 @@ describe("InstrumentExplorer stock workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "View chart for NIFTY" }));
 
     expect(screen.getByRole("button", { name: /back to futures/i })).toBeInTheDocument();
-    expect(screen.getByTestId("stock-chart")).toHaveTextContent("NIFTY26DEC26FUT chart mock");
-    expect(screen.getByTestId("stock-chart")).not.toHaveAttribute("data-selected-instrument-id");
+    await waitFor(() => {
+      expect(screen.getByTestId("stock-chart")).toHaveTextContent("NIFTY26DEC26FUT chart mock");
+      expect(screen.getByTestId("stock-chart")).not.toHaveAttribute("data-selected-instrument-id");
+    });
     expect(screen.queryByTestId("bottom-trading-workspace")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "BUY" }));
     let ticket = screen.getByRole("dialog", { name: "SIMULATED BUY order ticket" });
@@ -586,7 +594,7 @@ describe("InstrumentExplorer stock workspace", () => {
 
     expect(screen.getByRole("button", { name: /back to stocks/i })).toBeInTheDocument();
     expect(screen.getByText(/^stocks$/i)).toBeInTheDocument();
-    expect(screen.getByTestId("stock-chart")).toHaveTextContent("ABB chart mock");
+    await waitFor(() => expect(screen.getByTestId("stock-chart")).toHaveTextContent("ABB chart mock"));
 
     fireEvent.click(screen.getByRole("button", { name: /^BUY$/ }));
     const ticket = screen.getByRole("dialog", { name: "SIMULATED BUY order ticket" });
@@ -694,6 +702,7 @@ describe("InstrumentExplorer stock workspace", () => {
     const workspaces = screen.getAllByTestId("bottom-trading-workspace");
     expect(workspaces).toHaveLength(1);
     const workspace = workspaces[0];
+    await waitFor(() => expect(screen.getByTestId("stock-chart")).toBeInTheDocument());
     const chart = screen.getByTestId("stock-chart");
     expect(chart.compareDocumentPosition(workspace) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(workspace).getByRole("button", { name: "Balance" })).toBeInTheDocument();

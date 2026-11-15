@@ -27,15 +27,10 @@ import {
   type DatabaseStats,
   type Instrument,
 } from "@/lib/localDatabase";
-import { canonicalIndexSymbol, classifyInstrument, isCashEquityListing, type InstrumentCategory } from "@/lib/instrumentClassification";
+import { classifyInstrument, hasActiveInstrumentExpiry, isCashEquityListing, type InstrumentCategory } from "@/lib/instrumentClassification";
 import { fetchDhanInstrumentMaster } from "@/lib/marketApi";
 import { normalizeProviderInstrument } from "@/lib/instrumentMaster";
-import { isApprovedStock, getDhanSymbol, APPROVED_200_STOCKS, getUnderlyingFromTradingSymbol } from "@/lib/approvedInstruments";
-import { APPROVED_INDICES, isApprovedIndex } from "@/lib/approvedIndices";
-
-function isApprovedIndexSymbol(symbol: string): boolean {
-  return isApprovedIndex(canonicalIndexSymbol(symbol).toUpperCase());
-}
+import { requestTerminalMarketData } from "@/lib/terminalApi";
 
 // ΓöÇΓöÇ Hook: Database readiness check ΓöÇΓöÇ
 
@@ -172,115 +167,138 @@ export function useLocalFnOStocks() {
 // ΓöÇΓöÇ Hook: Instrument search/lookup ΓöÇΓöÇ
 
 export function useInstrumentLookup() {
-  const [localInstruments, setLocalInstruments] = useState<Instrument[]>([]);
-  const [localLoaded, setLocalLoaded] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    getAllInstruments().then((local) => {
-      if (!cancelled) {
-        setLocalInstruments(local);
-        setLocalLoaded(true);
+  const localQuery = useQuery({
+    queryKey: ["local-instruments"],
+    queryFn: async () => {
+      try {
+        return await getAllInstruments();
+      } catch (error) {
+        console.error("Local instrument cache could not be read:", error);
+        throw error;
       }
-    }).catch((error) => {
-      console.error("Local instrument cache could not be read:", error);
-      if (!cancelled) setLocalLoaded(true);
-    });
-    return () => { cancelled = true; };
-  }, []);
+    },
+    staleTime: Infinity,
+    gcTime: 6 * 60 * 60 * 1000,
+    retry: false,
+  });
+  const localInstruments = useMemo(() => localQuery.data ?? [], [localQuery.data]);
+  const localLoaded = localQuery.isFetched;
 
   const gatewayQuery = useQuery({
     queryKey: ["terminal-instrument-catalog", "founder-dhan"],
-    queryFn: async () => {
-      let instrumentMasterError: string | null = null;
-      // Skip listInstruments (Terminal OS parses 116k CSV rows — times out on CDN).
-      // Always load from the Railway dhan-proxy which is fast and returns JSON.
-      let master: unknown[] = [];
-      try {
-        master = await fetchDhanInstrumentMaster();
-      } catch (error) {
-        instrumentMasterError = error instanceof Error
-          ? `Official Dhan instrument master failed: ${error.message}`
-          : "Official Dhan instrument master failed.";
-        console.error("Official Dhan instrument master failed:", error);
-      }
-      const existingIds = new Set<string>();
-      const instruments: Instrument[] = master.flatMap((row, index) => {
-          if (!row || typeof row !== "object") return [];
+    queryFn: async ({ signal }) => {
+      const addInstrument = (list: Instrument[], instrument?: Instrument | null) => {
+        if (!instrument) return;
+        const key = `${instrument.exchangeSegment}:${instrument.providerInstrumentId || instrument.securityId}`;
+        if (list.some((existing) => `${existing.exchangeSegment}:${existing.providerInstrumentId || existing.securityId}` === key)) return;
+        list.push(instrument);
+      };
+
+      const normalizeMasterRows = async (rows: unknown[], sourceName: string): Promise<Instrument[]> => {
+        const instruments: Instrument[] = [];
+        for (let index = 0; index < rows.length; index += 1) {
+          if (index > 0 && index % 2_000 === 0) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+            if (signal.aborted) throw signal.reason ?? new DOMException("Request aborted.", "AbortError");
+          }
+          const row = rows[index];
+          if (!row || typeof row !== "object") continue;
           const source = row as Record<string, unknown>;
           const instrumentName = String(source.SEM_INSTRUMENT_NAME ?? source.instrumentType ?? "").toUpperCase();
-          if (!["EQUITY", "INDEX", "FUTSTK", "FUTIDX", "OPTSTK", "OPTIDX"].includes(instrumentName)) return [];
+          if (!["EQUITY", "INDEX", "FUTSTK", "FUTIDX", "OPTSTK", "OPTIDX"].includes(instrumentName)) continue;
           const normalized = normalizeProviderInstrument(source, "dhan", index).instrument;
-          if (!normalized) return [];
+          if (!normalized) continue;
           const category = classifyInstrument(normalized);
-          if (!category || !["stocks", "indices", "futures", "options"].includes(category)) return [];
-          
-          // FILTER: Only approved indices
-          if (category === "indices") {
-            if (!isApprovedIndexSymbol(normalized.symbol) && !isApprovedIndexSymbol(normalized.tradingSymbol)) return [];
-          }
-
-          // FILTER: Only approved 200 stocks for cash equity
-          if (category === "stocks") {
-            if (!isCashEquityListing(normalized)) return [];
-            // Check if this stock's symbol OR dhanSymbol matches approved list
-            const nseSymbol = normalized.symbol.toUpperCase();
-            const dhanSymbol = normalized.tradingSymbol.toUpperCase();
-            const isApproved = APPROVED_200_STOCKS.some(stock => 
-              stock.symbol === nseSymbol || 
-              stock.dhanSymbol === dhanSymbol ||
-              stock.symbol === dhanSymbol // Handle reverse mapping
-            );
-            if (!isApproved) return []; // SKIP non-approved stocks
-          }
-          
-          // FILTER: Only futures/options for approved underlying stocks
-          if (category === "futures" || category === "options") {
-            const underlying = normalized.symbol.toUpperCase();
-            // Allow index derivatives (NIFTY, BANKNIFTY, etc.)
-            const isIndex = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX", "SENSEX"].includes(underlying);
-            if (!isIndex) {
-              // For stock futures/options, check the trading symbol prefix since
-              // normalized.symbol may be the company name, not the NSE ticker.
-              const resolvedUnderlying = getUnderlyingFromTradingSymbol(normalized.tradingSymbol);
-              if (!resolvedUnderlying && !isApprovedStock(underlying)) {
-                return []; // SKIP futures/options for non-approved stocks
-              }
-            }
-            // Check expiry for derivatives
-            if (category === "futures") {
-              const expiry = Date.parse(normalized.expiryDate ?? "");
-              if (!Number.isFinite(expiry) || expiry < Date.now()) return [];
-            }
-          }
-          
-          const key = `${normalized.exchangeSegment}:${normalized.providerInstrumentId}`;
-          if (existingIds.has(key)) return [];
-          existingIds.add(key);
-          return [normalized];
-        });
-      if (instruments.length === 0) {
-        throw new Error(instrumentMasterError ?? "Dhan instrument master returned no instruments.");
-      }
-      const BATCH_SIZE = 2000;
-      try {
-        for (let i = 0; i < instruments.length; i += BATCH_SIZE) {
-          await saveInstruments(instruments.slice(i, i + BATCH_SIZE));
+          if (!category || !["stocks", "indices", "futures", "options"].includes(category)) continue;
+          if (category === "stocks" && !isCashEquityListing(normalized)) continue;
+          if ((category === "futures" || category === "options") && !hasActiveInstrumentExpiry(normalized.expiryDate)) continue;
+          addInstrument(instruments, normalized);
         }
+        if (instruments.length === 0 && sourceName === "Official Dhan instrument master") {
+          return [];
+        }
+        return instruments;
+      };
+
+      let terminalList: Instrument[] = [];
+      let terminalCatalogError: string | null = null;
+      try {
+        const payload = await requestTerminalMarketData<unknown[]>(
+          null,
+          "dhan",
+          { operation: "listInstruments" },
+          "production",
+          signal,
+        );
+        if (!Array.isArray(payload)) {
+          throw new Error("invalid Dhan instrument catalog.");
+        }
+        terminalList = await normalizeMasterRows(payload, "Founder Dhan catalog");
       } catch (error) {
-        console.error("Founder Dhan instruments could not be cached locally:", error);
+        if (signal.aborted) throw error;
+        terminalCatalogError = error instanceof Error
+          ? `Founder Dhan instrument catalog failed: ${error.message}`
+          : "Founder Dhan instrument catalog failed.";
+        console.error("Founder Dhan instrument catalog failed:", error);
       }
-      return { instruments, loadError: instrumentMasterError };
+
+      let officialFallbackError: string | null = null;
+      let officialMasterInstruments: Instrument[] = [];
+      try {
+        officialMasterInstruments = await normalizeMasterRows(await fetchDhanInstrumentMaster(signal), "Official Dhan instrument master");
+      } catch (error) {
+        if (signal.aborted) throw error;
+        officialFallbackError = error instanceof Error
+          ? `Official Dhan instrument master fallback failed: ${error.message}`
+          : "Official Dhan instrument master fallback failed.";
+        console.error("Official Dhan instrument master fallback failed:", error);
+      }
+
+      const merged = [...terminalList];
+      for (const instrument of officialMasterInstruments) {
+        addInstrument(merged, instrument);
+      }
+
+      const localFallbackInstruments = (localQuery.data ?? []).filter((instrument) => instrument.provider === "dhan");
+      const finalInstruments = merged.length > 0 ? merged : localFallbackInstruments;
+      const loadError = terminalCatalogError
+        ? terminalCatalogError
+        : officialFallbackError && terminalList.length > 0
+          ? officialFallbackError
+          : null;
+
+      const BATCH_SIZE = 2000;
+      void (async () => {
+        for (let i = 0; i < finalInstruments.length; i += BATCH_SIZE) {
+          await saveInstruments(finalInstruments.slice(i, i + BATCH_SIZE));
+        }
+      })().catch((error) => {
+        console.error("Founder Dhan instruments could not be cached locally:", error);
+      });
+      return { instruments: finalInstruments, loadError };
     },
     retry: false,
     staleTime: 6 * 60 * 60 * 1000,
+    gcTime: 6 * 60 * 60 * 1000,
   });
 
-  const cachedDhanInstruments = localInstruments.filter((instrument) => instrument.provider === "dhan");
-  const allInstruments = gatewayQuery.data?.instruments ?? cachedDhanInstruments;
-  const isLoaded = localLoaded && gatewayQuery.isFetched;
+  const cachedDhanInstruments = useMemo(
+    () => localInstruments.filter((instrument) => instrument.provider === "dhan"),
+    [localInstruments],
+  );
+  const allInstruments = useMemo(() => (
+    gatewayQuery.data && gatewayQuery.data.instruments.length > 0
+      ? gatewayQuery.data.instruments
+      : cachedDhanInstruments.length > 0
+        ? cachedDhanInstruments
+        : gatewayQuery.data?.instruments ?? []
+  ), [cachedDhanInstruments, gatewayQuery.data]);
+  const isLoaded = localLoaded;
+  const isCatalogLoading = gatewayQuery.isFetching && allInstruments.length === 0;
   const loadError = gatewayQuery.data?.loadError ?? (
-    gatewayQuery.error instanceof Error ? gatewayQuery.error.message : null
+    gatewayQuery.error instanceof Error
+      ? gatewayQuery.error.message
+      : localQuery.error instanceof Error ? localQuery.error.message : null
   );
 
   const search = useCallback((query: string, category?: InstrumentCategory, limit = 20) => {
@@ -305,7 +323,7 @@ export function useInstrumentLookup() {
     return allInstruments.filter((instrument) => classifyInstrument(instrument) === category && !seen.has(instrument.symbol) && seen.add(instrument.symbol));
   }, [allInstruments]);
 
-  return { search, findBySymbol, symbols, instruments: allInstruments, isLoaded, count: allInstruments.length, loadError };
+  return { search, findBySymbol, symbols, instruments: allInstruments, isLoaded, isCatalogLoading, count: allInstruments.length, loadError };
 }
 
 // ΓöÇΓöÇ Symbol ΓåÆ SecurityId mapping from local DB ΓöÇΓöÇ

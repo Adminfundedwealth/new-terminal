@@ -1,7 +1,6 @@
 import { useMemo } from "react";
 import { useLiveIndices, useMarketStatus, useExpiryList, useAllIndices } from "@/hooks/useMarketData";
 import { getSpotPrice } from "@/lib/positionStore";
-import { DashboardSkeleton } from "@/components/LoadingSkeletons";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ExpectedMoveWidget } from "@/components/ExpectedMoveWidget";
 import { IVRankCard, IVRankDashboard } from "@/components/IVRankWidget";
@@ -45,7 +44,7 @@ function getTimeToExpiry(expiryDate: string): string {
 }
 
 export default function Index() {
-  const { data: indicesResult, isLoading: indicesLoading } = useLiveIndices();
+  const { data: indicesResult } = useLiveIndices();
   const { data: marketStatusResult } = useMarketStatus();
   const { data: niftyExpiry } = useExpiryList("NIFTY");
   const { data: bnfExpiry } = useExpiryList("BANKNIFTY");
@@ -85,8 +84,6 @@ export default function Index() {
     const match = nearestExpiries.find((c) => c.symbol === sym)?.timeLeft?.match(/(\d+)d/);
     return match ? parseInt(match[1]) : 4;
   };
-
-  if (indicesLoading) return <DashboardSkeleton />;
 
   return (
     <ErrorBoundary fallbackMessage="Dashboard failed to load">

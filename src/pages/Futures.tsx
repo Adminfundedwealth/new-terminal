@@ -4,14 +4,13 @@ import { Badge } from "@/components/ui/badge";
 import { InstrumentExplorer, type ExplorerRow } from "@/components/InstrumentExplorer";
 import { useAccountContext } from "@/hooks/useAccountContext";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
-import { classifyInstrument, isProductionInstrument, isTradableContract } from "@/lib/instrumentClassification";
-import { isApprovedStock, getApprovedFnOStocks, getUnderlyingFromTradingSymbol } from "@/lib/approvedInstruments";
+import { classifyInstrument, hasActiveInstrumentExpiry, isProductionInstrument, isTradableContract } from "@/lib/instrumentClassification";
 import { getSavedWatchlist, saveWatchlist } from "@/lib/watchlist";
 import type { Instrument } from "@/lib/localDatabase";
 
 export default function Futures() {
   const navigate = useNavigate();
-  const { instruments, isLoaded, loadError } = useInstrumentLookup();
+  const { instruments, isLoaded, isCatalogLoading, loadError } = useInstrumentLookup();
   const { activeAccountId, accounts, hasNoAccount, isLoading: isAccountLoading } = useAccountContext();
   const activeAccountProvider = accounts.find((account) => account.id === activeAccountId)?.broker_provider;
   const [watchedSymbols, setWatchedSymbols] = useState<string[]>(() => getSavedWatchlist());
@@ -21,17 +20,10 @@ export default function Futures() {
       if (!isProductionInstrument(instrument)) return false;
       if (classifyInstrument(instrument) !== "futures") return false;
       if (!isTradableContract(instrument, "futures")) return false;
-      if (Date.parse(instrument.expiryDate || "") < Date.now()) return false;
-      // Restrict stock futures to approved 200 list; allow index futures through
-      // For FUTSTK, check the trading symbol prefix since instrument.symbol may be
-      // the company name from Dhan's CSV rather than the NSE ticker.
-      if (instrument.instrumentType === "FUTSTK") {
-        const resolvedUnderlying = getUnderlyingFromTradingSymbol(instrument.tradingSymbol || "");
-        if (!resolvedUnderlying && !isApprovedStock(instrument.symbol)) return false;
-      }
+      if (!hasActiveInstrumentExpiry(instrument.expiryDate)) return false;
       return true;
     })
-    .sort((a, b) => a.symbol.localeCompare(b.symbol) || (a.expiryDate || "").localeCompare(b.expiryDate || "")),
+    .sort((a, b) => a.tradingSymbol.localeCompare(b.tradingSymbol) || (a.expiryDate || "").localeCompare(b.expiryDate || "")),
   [instruments]);
 
   const rows = useMemo<ExplorerRow[]>(() => futures.map((instrument) => ({
@@ -63,7 +55,7 @@ export default function Futures() {
     saveWatchlist(next);
   };
 
-  const quoteStatus = isLoaded && futures.length === 0
+  const quoteStatus = isLoaded && !isCatalogLoading && futures.length === 0
     ? loadError ?? "No valid, unexpired futures contracts are available."
     : null;
 
@@ -80,6 +72,7 @@ export default function Futures() {
         asset="futures"
         rows={rows}
         isLoading={!isLoaded}
+        isCatalogLoading={isCatalogLoading}
         watchedSymbols={watchedSymbols}
         onToggleWatchlist={handleWatchlistToggle}
         activeAccountId={activeAccountId}

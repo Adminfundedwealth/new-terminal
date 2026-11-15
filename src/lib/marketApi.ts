@@ -1,6 +1,7 @@
 import type { OptionData, ExpiryDate, IndexData } from "./mockData";
 import { classifyInstrument, isCashEquityListing, isCashEquitySymbol } from "./instrumentClassification";
 import { normalizeProviderInstrument } from "./instrumentMaster";
+import { DEFAULT_REQUEST_TIMEOUT_MS, withRequestTimeout } from "./requestTimeout";
 
 const PROXY_BASE = import.meta.env.VITE_PROXY_URL
   || (import.meta.env.DEV ? "http://localhost:4002" : "https://new-terminal-production.up.railway.app");
@@ -17,20 +18,28 @@ export interface IndianNewsArticle {
 }
 
 // Broker credentials are server-side only; customer requests must never forward them.
-async function fetchDhanProxy(endpoint: string, params?: Record<string, string>): Promise<any> {
+const INSTRUMENT_MASTER_TIMEOUT_MS = 15_000;
+
+async function fetchDhanProxy(endpoint: string, params?: Record<string, string>, signal?: AbortSignal): Promise<any> {
   const qp = new URLSearchParams({ endpoint, ...params });
   const url = `${PROXY_BASE}/api/dhan-proxy?${qp.toString()}`;
 
-  const res = await fetch(url);
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Dhan proxy error ${res.status}: ${errText}`);
-  }
-  return res.json();
+  return withRequestTimeout(
+    endpoint === "instruments" ? INSTRUMENT_MASTER_TIMEOUT_MS : DEFAULT_REQUEST_TIMEOUT_MS,
+    async (requestSignal) => {
+      const res = await fetch(url, { signal: requestSignal });
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Dhan proxy error ${res.status}: ${errText}`);
+      }
+      return res.json();
+    },
+    signal,
+  );
 }
 
-export async function fetchDhanInstrumentMaster(): Promise<unknown[]> {
-  const payload: unknown = await fetchDhanProxy("instruments");
+export async function fetchDhanInstrumentMaster(signal?: AbortSignal): Promise<unknown[]> {
+  const payload: unknown = await fetchDhanProxy("instruments", undefined, signal);
   if (
     !payload ||
     typeof payload !== "object" ||
@@ -43,25 +52,29 @@ export async function fetchDhanInstrumentMaster(): Promise<unknown[]> {
 }
 
 // NSE proxy for indices & market status
-async function fetchNSEProxy(endpoint: string, symbol?: string): Promise<any> {
+async function fetchNSEProxy(endpoint: string, symbol?: string, signal?: AbortSignal): Promise<any> {
   const params = new URLSearchParams({ endpoint });
   if (symbol) params.set("symbol", symbol);
   const url = `${PROXY_BASE}/api/nse-proxy?${params.toString()}`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`NSE proxy error ${res.status}: ${errText}`);
-  }
-  return res.json();
+  return withRequestTimeout(DEFAULT_REQUEST_TIMEOUT_MS, async (requestSignal) => {
+    const res = await fetch(url, { signal: requestSignal });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`NSE proxy error ${res.status}: ${errText}`);
+    }
+    return res.json();
+  }, signal);
 }
 
-export async function fetchIndianMarketNews(): Promise<{ provider: string; articles: IndianNewsArticle[]; fetchedAt: string }> {
-  const res = await fetch(`${PROXY_BASE}/api/indian-news`);
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Indian news proxy error ${res.status}: ${errText}`);
-  }
-  return res.json();
+export async function fetchIndianMarketNews(signal?: AbortSignal): Promise<{ provider: string; articles: IndianNewsArticle[]; fetchedAt: string }> {
+  return withRequestTimeout(DEFAULT_REQUEST_TIMEOUT_MS, async (requestSignal) => {
+    const res = await fetch(`${PROXY_BASE}/api/indian-news`, { signal: requestSignal });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Indian news proxy error ${res.status}: ${errText}`);
+    }
+    return res.json();
+  }, signal);
 }
 
 // ── Parse Dhan Option Chain Response ──
@@ -310,19 +323,19 @@ function getOptionUnderlyingParams(underlying?: OptionUnderlying): Record<string
 }
 
 // Dhan Option Chain (primary) with NSE fallback
-export async function fetchLiveOptionChain(symbol: string, expiry?: string, underlying?: OptionUnderlying) {
+export async function fetchLiveOptionChain(symbol: string, expiry?: string, underlying?: OptionUnderlying, signal?: AbortSignal) {
   // Try Dhan first
   try {
     const underlyingParams = getOptionUnderlyingParams(underlying);
     const params: Record<string, string> = { symbol: symbol.toUpperCase(), ...underlyingParams };
     if (expiry) params.expiry = expiry;
-    const raw = await fetchDhanProxy("option-chain", params);
+    const raw = await fetchDhanProxy("option-chain", params, signal);
     if (raw?.status === "success" && raw?.data?.oc) {
       const parsed = parseDhanOptionChain(raw);
       // Also fetch expiry list
       let expiries: ExpiryDate[] = [];
       try {
-        const expiryRaw = await fetchDhanProxy("expiry-list", { symbol: symbol.toUpperCase(), ...underlyingParams });
+        const expiryRaw = await fetchDhanProxy("expiry-list", { symbol: symbol.toUpperCase(), ...underlyingParams }, signal);
         if (expiryRaw?.data) {
           expiries = expiryRaw.data.map((dateStr: string) => {
             const d = new Date(dateStr);
@@ -335,6 +348,7 @@ export async function fetchLiveOptionChain(symbol: string, expiry?: string, unde
           });
         }
       } catch {
+        if (signal?.aborted) throw signal.reason ?? new DOMException("Request aborted.", "AbortError");
         // Expiry fetch failed, continue with chain data
       }
       return {
@@ -344,27 +358,29 @@ export async function fetchLiveOptionChain(symbol: string, expiry?: string, unde
       };
     }
   } catch (e) {
+    if (signal?.aborted) throw e;
     console.warn("Dhan option chain fetch failed, trying NSE:", e);
   }
 
   // Fallback to NSE
   try {
-    const raw = await fetchNSEProxy("option-chain", symbol);
+    const raw = await fetchNSEProxy("option-chain", symbol, signal);
     const parsed = parseNSEOptionChain(raw, expiry);
     return { ...parsed, source: "nse" as const, afterHours: false, cachedAt: null };
   } catch (e) {
+    if (signal?.aborted) throw e;
     console.warn("NSE option chain also failed:", e);
     throw e;
   }
 }
 
 // Dhan expiry list
-export async function fetchExpiryList(symbol: string, underlying?: OptionUnderlying): Promise<ExpiryDate[]> {
+export async function fetchExpiryList(symbol: string, underlying?: OptionUnderlying, signal?: AbortSignal): Promise<ExpiryDate[]> {
   try {
     const raw = await fetchDhanProxy("expiry-list", {
       symbol: symbol.toUpperCase(),
       ...getOptionUnderlyingParams(underlying),
-    });
+    }, signal);
     if (raw?.data) {
       return raw.data.map((dateStr: string) => {
         const d = new Date(dateStr);
@@ -377,15 +393,16 @@ export async function fetchExpiryList(symbol: string, underlying?: OptionUnderly
       });
     }
   } catch (e) {
+    if (signal?.aborted) throw e;
     console.warn("Dhan expiry list fetch failed:", e);
   }
   return [];
 }
 
 // NSE Indices (Dhan doesn't provide broad index overview the same way)
-export async function fetchLiveIndices() {
-  const raw = await fetchNSEProxy("indices");
-  return parseNSEIndices(raw);
+export async function fetchLiveIndices(signal?: AbortSignal) {
+  const snapshot = await fetchMarketIndicesSnapshot(signal);
+  return snapshot?.indices ?? [];
 }
 
 export interface CashMarketQuote {
@@ -487,8 +504,8 @@ export async function fetchCashQuotes(exchangeSegment: string, securityIds: stri
   );
 }
 
-export async function fetchMarketStatus() {
-  return fetchNSEProxy("market-status");
+export async function fetchMarketStatus(signal?: AbortSignal) {
+  return fetchNSEProxy("market-status", undefined, signal);
 }
 
 function getIndianMarketTime(now: Date): Record<string, string> {
@@ -539,8 +556,8 @@ export function isNseMarketOpenAt(
     isWithinNseSessionAt(now);
 }
 
-export async function fetchFnOStocks() {
-  return fetchNSEProxy("equity-derivatives");
+export async function fetchFnOStocks(signal?: AbortSignal) {
+  return fetchNSEProxy("equity-derivatives", undefined, signal);
 }
 
 // ── All Indices (for VIX, sector performance) ──
@@ -562,8 +579,19 @@ const SECTOR_INDEX_MAP: Record<string, string> = {
   "NIFTY CONSUMER DURABLES": "Consumer",
 };
 
-export async function fetchAllIndices() {
-  const raw = await fetchNSEProxy("indices");
+export interface MarketIndicesSnapshot {
+  indices: IndexData[];
+  allIndices: {
+    vix: { value: number; change: number; changePercent: number; high: number; low: number } | null;
+    sectors: Array<{ name: string; fullName: string; change: number; ltp: number; open: number; high: number; low: number }>;
+    advances: number;
+    declines: number;
+    unchanged: number;
+  };
+}
+
+export async function fetchMarketIndicesSnapshot(signal?: AbortSignal): Promise<MarketIndicesSnapshot | null> {
+  const raw = await fetchNSEProxy("indices", undefined, signal);
   if (!raw?.data) return null;
 
   // Extract VIX
@@ -595,7 +623,15 @@ export async function fetchAllIndices() {
   const declines = nifty50?.declines || 0;
   const unchanged = nifty50?.unchanged || 0;
 
-  return { vix, sectors, advances, declines, unchanged };
+  return {
+    indices: parseNSEIndices(raw),
+    allIndices: { vix, sectors, advances, declines, unchanged },
+  };
+}
+
+export async function fetchAllIndices(signal?: AbortSignal) {
+  const snapshot = await fetchMarketIndicesSnapshot(signal);
+  return snapshot?.allIndices ?? null;
 }
 
 // ── F&O Stocks List (Top Movers + Most Active) ──
@@ -625,34 +661,55 @@ function isLikelyCashEquitySymbol(symbol: string | undefined): boolean {
   return Boolean(normalizeLookupKey(symbol)) && isCashEquitySymbol(symbol);
 }
 
-async function buildCashEquityLookup(): Promise<Set<string>> {
-  try {
-    const data = await fetchInstrumentMaster();
-    const rows = normalizeInstrumentMasterResponse(data);
-    const set = new Set<string>();
+let cashEquityLookupCache: { keys: Set<string>; expiresAt: number } | null = null;
+let cashEquityLookupRequest: Promise<Set<string>> | null = null;
 
-    for (const row of rows) {
-      const normalized = normalizeProviderInstrument(row, "dhan");
-      const instrument = normalized.instrument;
-      if (!instrument || classifyInstrument(instrument) !== "stocks" || !isCashEquityListing(instrument)) continue;
-      set.add(normalizeLookupKey(instrument.symbol));
-      set.add(normalizeLookupKey(instrument.tradingSymbol));
+async function buildCashEquityLookup(signal?: AbortSignal): Promise<Set<string>> {
+  if (cashEquityLookupCache && cashEquityLookupCache.expiresAt > Date.now()) {
+    return cashEquityLookupCache.keys;
+  }
+  if (cashEquityLookupRequest) return cashEquityLookupRequest;
+
+  const request = (async () => {
+    try {
+      const data = await fetchInstrumentMaster(signal);
+      const rows = normalizeInstrumentMasterResponse(data);
+      const keys = new Set<string>();
+
+      for (const row of rows) {
+        const normalized = normalizeProviderInstrument(row, "dhan");
+        const instrument = normalized.instrument;
+        if (!instrument || classifyInstrument(instrument) !== "stocks" || !isCashEquityListing(instrument)) continue;
+        keys.add(normalizeLookupKey(instrument.symbol));
+        keys.add(normalizeLookupKey(instrument.tradingSymbol));
+      }
+
+      cashEquityLookupCache = { keys, expiresAt: Date.now() + 6 * 60 * 60 * 1000 };
+      return keys;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      console.warn("Cash equity instrument master lookup failed:", error);
+      const emptyKeys = new Set<string>();
+      cashEquityLookupCache = { keys: emptyKeys, expiresAt: Date.now() + 60_000 };
+      return emptyKeys;
     }
+  })();
+  cashEquityLookupRequest = request;
 
-    return set;
-  } catch (error) {
-    console.warn("Cash equity instrument master lookup failed:", error);
-    return new Set();
+  try {
+    return await request;
+  } finally {
+    if (cashEquityLookupRequest === request) cashEquityLookupRequest = null;
   }
 }
 
-export async function fetchLiveFnOStocks(): Promise<FnOStockData[]> {
+export async function fetchLiveFnOStocks(signal?: AbortSignal): Promise<FnOStockData[]> {
   if (isWithinNseSessionAt()) {
     // Try NSE during regular hours for OI data; use the scanner for closed sessions.
     try {
-      const raw = await fetchNSEProxy("equity-derivatives");
+      const raw = await fetchNSEProxy("equity-derivatives", undefined, signal);
       if (raw?.data?.length > 0) {
-        const cashEquityLookup = await buildCashEquityLookup();
+        const cashEquityLookup = await buildCashEquityLookup(signal);
         const rows = raw.data
           .filter((d: any) => d.symbol && d.symbol !== "NIFTY 50" && d.lastPrice)
           .filter((d: any) => {
@@ -681,15 +738,17 @@ export async function fetchLiveFnOStocks(): Promise<FnOStockData[]> {
         if (rows.length > 0) return rows;
       }
     } catch (e) {
+      if (signal?.aborted) throw e;
       console.warn("NSE F&O stocks fetch failed, trying TradingView:", e);
     }
   }
 
   // Fallback to TradingView Scanner (no OI but great LTP/volume data)
   try {
-    const tvData = await fetchTradingViewStocks();
+    const tvData = await fetchTradingViewStocks(signal);
     if (tvData.length > 0) return tvData.filter((stock) => isLikelyCashEquitySymbol(stock.symbol));
   } catch (e) {
+    if (signal?.aborted) throw e;
     console.warn("TradingView stocks fetch also failed:", e);
   }
 
@@ -698,11 +757,13 @@ export async function fetchLiveFnOStocks(): Promise<FnOStockData[]> {
 
 // ── TradingView Scanner API ──
 
-export async function fetchTradingViewStocks(): Promise<FnOStockData[]> {
+export async function fetchTradingViewStocks(signal?: AbortSignal): Promise<FnOStockData[]> {
   const url = `${PROXY_BASE}/api/tv-scan?type=stocks`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`TV scan error: ${res.status}`);
-  const data = await res.json();
+  const data = await withRequestTimeout(DEFAULT_REQUEST_TIMEOUT_MS, async (requestSignal) => {
+    const res = await fetch(url, { signal: requestSignal });
+    if (!res.ok) throw new Error(`TV scan error: ${res.status}`);
+    return res.json();
+  }, signal);
   
   return (data.stocks || []).map((s: any) => ({
     symbol: s.symbol || "",
@@ -721,11 +782,13 @@ export async function fetchTradingViewStocks(): Promise<FnOStockData[]> {
   }));
 }
 
-export async function fetchTradingViewIndices(): Promise<any[]> {
+export async function fetchTradingViewIndices(signal?: AbortSignal): Promise<any[]> {
   const url = `${PROXY_BASE}/api/tv-scan?type=indices`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`TV indices error: ${res.status}`);
-  const data = await res.json();
+  const data = await withRequestTimeout(DEFAULT_REQUEST_TIMEOUT_MS, async (requestSignal) => {
+    const res = await fetch(url, { signal: requestSignal });
+    if (!res.ok) throw new Error(`TV indices error: ${res.status}`);
+    return res.json();
+  }, signal);
   return data.stocks || [];
 }
 
@@ -739,8 +802,8 @@ export interface FIIDIIData {
   netValue: number;
 }
 
-export async function fetchFIIDII(): Promise<FIIDIIData[]> {
-  const raw = await fetchNSEProxy("fii-dii");
+export async function fetchFIIDII(signal?: AbortSignal): Promise<FIIDIIData[]> {
+  const raw = await fetchNSEProxy("fii-dii", undefined, signal);
   if (!raw?.data) return [];
   
   return raw.data.map((d: any) => ({
@@ -754,24 +817,28 @@ export async function fetchFIIDII(): Promise<FIIDIIData[]> {
 
 // ── Test Connection ──
 
-export async function testDhanConnection(): Promise<{ status: string; message: string }> {
-  const res = await fetch(`${PROXY_BASE}/api/test-connection`);
-  return res.json();
+export async function testDhanConnection(signal?: AbortSignal): Promise<{ status: string; message: string }> {
+  return withRequestTimeout(DEFAULT_REQUEST_TIMEOUT_MS, async (requestSignal) => {
+    const res = await fetch(`${PROXY_BASE}/api/test-connection`, { signal: requestSignal });
+    return res.json();
+  }, signal);
 }
 
-export async function fetchProxyHealth(): Promise<any> {
-  const res = await fetch(`${PROXY_BASE}/health`);
-  if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
-  return res.json();
+export async function fetchProxyHealth(signal?: AbortSignal): Promise<any> {
+  return withRequestTimeout(DEFAULT_REQUEST_TIMEOUT_MS, async (requestSignal) => {
+    const res = await fetch(`${PROXY_BASE}/health`, { signal: requestSignal });
+    if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
+    return res.json();
+  }, signal);
 }
 
 // ── Instrument Master Download ──
 
-export async function fetchInstrumentMaster(): Promise<{
+export async function fetchInstrumentMaster(signal?: AbortSignal): Promise<{
   instruments: any[];
   count: number;
 }> {
-  const result = await fetchDhanProxy("instruments");
+  const result = await fetchDhanProxy("instruments", undefined, signal);
   return result;
 }
 
@@ -854,6 +921,7 @@ export async function fetchHistoricalCandles(
   interval: string = "5",
   fromDate?: string,
   toDate?: string,
+  signal?: AbortSignal,
 ): Promise<HistoricalCandleResponse> {
   const params: Record<string, string> = {
     securityId,
@@ -864,7 +932,7 @@ export async function fetchHistoricalCandles(
   if (fromDate) params.fromDate = fromDate;
   if (toDate) params.toDate = toDate;
 
-  return fetchDhanProxy("historical", params);
+  return fetchDhanProxy("historical", params, signal);
 }
 
 // ── Yahoo Finance Chart Data (free, no auth) ──
@@ -874,16 +942,19 @@ export async function fetchYahooChart(
   interval: string = "D",
   fromDate?: string,
   toDate?: string,
+  signal?: AbortSignal,
 ): Promise<HistoricalCandleResponse> {
   const params = new URLSearchParams({ symbol, interval });
   if (fromDate) params.set("fromDate", fromDate);
   if (toDate) params.set("toDate", toDate);
 
   const url = `${PROXY_BASE}/api/yahoo-chart?${params.toString()}`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Yahoo chart error ${res.status}: ${errText}`);
-  }
-  return res.json();
+  return withRequestTimeout(DEFAULT_REQUEST_TIMEOUT_MS, async (requestSignal) => {
+    const res = await fetch(url, { signal: requestSignal });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Yahoo chart error ${res.status}: ${errText}`);
+    }
+    return res.json();
+  }, signal);
 }

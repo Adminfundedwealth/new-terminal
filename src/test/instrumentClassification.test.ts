@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalIndexSymbol, classifyInstrument, isCashEquityListing, isProductionInstrument, isTradableContract, validateInstrumentForOrder } from "@/lib/instrumentClassification";
+import { canonicalIndexSymbol, classifyInstrument, hasActiveInstrumentExpiry, isCashEquityListing, isProductionInstrument, isTradableContract, validateInstrumentForOrder } from "@/lib/instrumentClassification";
 import type { Instrument } from "@/lib/localDatabase";
 
 const instrument = (overrides: Partial<Instrument>): Instrument => ({
@@ -31,6 +31,14 @@ describe("instrument classification", () => {
     expect(isTradableContract(future, "stocks")).toBe(false);
     expect(validateInstrumentForOrder(future, "futures")).toBeNull();
     expect(validateInstrumentForOrder({ ...future, expiryDate: "2020-01-01" }, "futures")).toBe("Instrument contract has expired");
+  });
+
+  it("keeps contracts available through their expiry day in India time", () => {
+    const now = new Date("2026-01-01T10:00:00+05:30");
+
+    expect(hasActiveInstrumentExpiry("2026-01-01 14:30:00", now)).toBe(true);
+    expect(hasActiveInstrumentExpiry("2025-12-31 14:30:00", now)).toBe(false);
+    expect(hasActiveInstrumentExpiry("invalid", now)).toBe(false);
   });
 
   it("filters synthetic test instruments from production lists", () => {

@@ -133,7 +133,7 @@ describe("Main Terminal market-data contract", () => {
     });
   });
 
-  it("uses supported single-quote requests for Dhan batches and keeps successful quotes on partial failure", async () => {
+  it("sends a valid Dhan quote batch in one request", async () => {
     const instruments = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX", "BAD"].map((symbol, index) => ({
       provider: "dhan" as const,
       providerInstrumentId: index === 5 ? "" : String(index + 13),
@@ -143,12 +143,9 @@ describe("Main Terminal market-data contract", () => {
       exchangeSegment: "IDX_I",
       instrumentType: "INDEX",
     }));
-    fetchMock
-      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { symbol: "NIFTY" } }), { status: 200 }))
-      .mockRejectedValueOnce(new Error("temporary provider failure"))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { symbol: "FINNIFTY" } }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { symbol: "MIDCPNIFTY" } }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { symbol: "INDIAVIX" } }), { status: 200 }));
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: instruments.slice(0, 5).map((instrument) => ({ symbol: instrument.symbol })),
+    }), { status: 200 }));
 
     const quotes = await requestTerminalMarketData<Array<{ symbol: string }>>(
       null,
@@ -156,14 +153,14 @@ describe("Main Terminal market-data contract", () => {
       { operation: "getQuotes", instruments },
     );
 
-    expect(quotes.map((quote) => quote.symbol)).toEqual(["NIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX"]);
-    expect(fetchMock).toHaveBeenCalledTimes(5);
-    for (const [, init] of fetchMock.mock.calls) {
-      expect(JSON.parse(String((init as RequestInit).body))).toMatchObject({
-        provider: "dhan",
-        operation: "getQuote",
-      });
-    }
+    expect(quotes.map((quote) => quote.symbol)).toEqual(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX"]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      provider: "dhan",
+      operation: "getQuotes",
+      instruments: instruments.slice(0, 5),
+    });
   });
 
   it("never puts the customer token or broker credentials in the request body", async () => {

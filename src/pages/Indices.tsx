@@ -4,8 +4,7 @@ import { useAccountContext } from "@/hooks/useAccountContext";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { InstrumentExplorer } from "@/components/InstrumentExplorer";
 import { getSavedWatchlist, saveWatchlist } from "@/lib/watchlist";
-import { APPROVED_INDICES } from "@/lib/approvedIndices";
-import { findApprovedIndexInstrument } from "@/lib/marketInstrumentResolver";
+import { resolveIndianIndexUniverse } from "@/lib/marketInstrumentResolver";
 
 export default function Indices() {
   const navigate = useNavigate();
@@ -13,20 +12,20 @@ export default function Indices() {
   const { activeAccountId, accounts, hasNoAccount, isLoading: isAccountLoading } = useAccountContext();
   const activeAccountProvider = accounts.find((account) => account.id === activeAccountId)?.broker_provider;
   const [watchedSymbols, setWatchedSymbols] = useState<string[]>(() => getSavedWatchlist());
-  const { instruments, isLoaded, loadError } = useInstrumentLookup();
+  const { instruments, isLoaded, isCatalogLoading, loadError } = useInstrumentLookup();
   const initialChartSymbol = searchParams.get("symbol") ?? undefined;
 
   const [exchange, setExchange] = useState<"ALL" | "NSE" | "BSE">("ALL");
 
   const rows = useMemo(() => {
-    return APPROVED_INDICES
-      .filter((entry) => exchange === "ALL" || entry.exchange === exchange)
-      .map((entry) => {
-        const matchedInstrument = findApprovedIndexInstrument(instruments, entry);
+    return resolveIndianIndexUniverse(instruments)
+      .filter((instrument) => exchange === "ALL" || instrument.exchange === exchange)
+      .map((instrument) => {
+        const symbol = instrument.tradingSymbol || instrument.symbol;
         return {
-          symbol: entry.symbol,
-          chartSymbol: matchedInstrument?.tradingSymbol ?? entry.symbol,
-          label: entry.displayName,
+          symbol,
+          chartSymbol: `${instrument.exchangeSegment}:${symbol}`,
+          label: instrument.displayName ?? instrument.symbol,
           ltp: null,
           change: null,
           changePercent: null,
@@ -34,8 +33,8 @@ export default function Indices() {
           high: null,
           low: null,
           volume: null,
-          instrument: matchedInstrument ?? null,
-          searchText: `${entry.symbol} ${entry.displayName} ${entry.exchange}`,
+          instrument,
+          searchText: `${symbol} ${instrument.symbol} ${instrument.exchange} ${instrument.exchangeSegment} ${instrument.displayName ?? ""}`,
         };
       });
   }, [instruments, exchange]);
@@ -70,10 +69,11 @@ export default function Indices() {
 
       <InstrumentExplorer
         title="Indices"
-        subtitle="Cash indices with central Dhan quotes and account-scoped trading."
+        subtitle="Available NSE and BSE indices from the configured instrument master."
         asset="indices"
         rows={rows}
         isLoading={!isLoaded}
+        isCatalogLoading={isCatalogLoading}
         watchedSymbols={watchedSymbols}
         onToggleWatchlist={handleWatchlistToggle}
         activeAccountId={activeAccountId}

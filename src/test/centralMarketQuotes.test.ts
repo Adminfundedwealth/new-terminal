@@ -71,9 +71,8 @@ describe("central market quotes", () => {
       }) },
     ]);
 
-    expect(requestTerminalMarketData).toHaveBeenCalledTimes(2);
+    expect(requestTerminalMarketData).toHaveBeenCalledTimes(1);
     expect(vi.mocked(requestTerminalMarketData).mock.calls.map(([accountId, provider]) => [accountId, provider])).toEqual([
-      [null, "dhan"],
       [null, "dhan"],
     ]);
     expect(result.errors).toEqual([]);
@@ -90,17 +89,16 @@ describe("central market quotes", () => {
     ]);
 
     expect(result.quotes).toEqual({});
-    expect(result.errors).toEqual([
-      "Central Dhan instrument data is unavailable for UNKNOWN.",
-      "Central Dhan quote request failed for RELIANCE: global provider unavailable",
-    ]);
+    expect(result.errors).toEqual(["Central Dhan quote batch failed: global provider unavailable"]);
   });
 
   it("retries a global Dhan quote batch once after rate limiting", async () => {
     vi.mocked(requestTerminalMarketData)
-      .mockResolvedValueOnce([quote("2885", 1207.7, "RELIANCE")] as never)
       .mockRejectedValueOnce(new TerminalMarketDataError("RATE_LIMITED", 429))
-      .mockResolvedValueOnce([quote("13", 25000, "NIFTY")] as never);
+      .mockResolvedValueOnce([
+        quote("2885", 1207.7, "RELIANCE"),
+        quote("13", 25000, "NIFTY"),
+      ] as never);
 
     const result = await fetchCentralMarketQuotes([
       { key: "RELIANCE", instrument: instrument() },
@@ -112,7 +110,7 @@ describe("central market quotes", () => {
       }) },
     ]);
 
-    expect(requestTerminalMarketData).toHaveBeenCalledTimes(3);
+    expect(requestTerminalMarketData).toHaveBeenCalledTimes(2);
     expect(result.quotes).toMatchObject({ RELIANCE: { ltp: 1207.7 }, NIFTY: { ltp: 25000 } });
     expect(result.errors).toEqual([]);
   });
@@ -145,7 +143,13 @@ describe("central market quotes", () => {
     vi.mocked(requestTerminalMarketData).mockResolvedValue([quote("3456", 278.85, "TMPV")] as never);
 
     const result = await fetchCentralMarketQuotes([{ key: "TATAMOTORS", instrument: instrumentMatch }]);
-    expect(requestTerminalMarketData).toHaveBeenCalledWith(null, "dhan", expect.objectContaining({ operation: "getQuotes" }));
+    expect(requestTerminalMarketData).toHaveBeenCalledWith(
+      null,
+      "dhan",
+      expect.objectContaining({ operation: "getQuotes" }),
+      "production",
+      undefined,
+    );
     expect(result.quotes).toMatchObject({
       TATAMOTORS: { ltp: 278.85, tradingSymbol: "TMPV", exchange: "NSE" },
     });

@@ -70,9 +70,13 @@ describe("useInstrumentLookup Founder-global Dhan catalog", () => {
     expect(saveInstruments).toHaveBeenCalledWith([
       expect.objectContaining({ securityId: "2885", tradingSymbol: "RELIANCE", provider: "dhan" }),
     ]);
-    expect(requestTerminalMarketDataMock).toHaveBeenCalledWith(null, "dhan", {
-      operation: "listInstruments",
-    });
+    expect(requestTerminalMarketDataMock).toHaveBeenCalledWith(
+      null,
+      "dhan",
+      { operation: "listInstruments" },
+      "production",
+      expect.any(AbortSignal),
+    );
     expect(result.current.loadError).toBeNull();
   });
 
@@ -353,9 +357,13 @@ describe("useInstrumentLookup Founder-global Dhan catalog", () => {
       instrumentType: "EQUITY",
       lotSize: 1,
     }]));
-    expect(requestTerminalMarketDataMock).toHaveBeenCalledWith(null, "dhan", {
-      operation: "listInstruments",
-    });
+    expect(requestTerminalMarketDataMock).toHaveBeenCalledWith(
+      null,
+      "dhan",
+      { operation: "listInstruments" },
+      "production",
+      expect.any(AbortSignal),
+    );
   });
 
   it("keeps fresh central instruments available if local caching fails", async () => {

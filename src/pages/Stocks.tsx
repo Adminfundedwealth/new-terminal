@@ -3,13 +3,13 @@ import { useSearchParams } from "react-router-dom";
 import { useAccountContext } from "@/hooks/useAccountContext";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 import { InstrumentExplorer } from "@/components/InstrumentExplorer";
-import { resolveApprovedStockUniverse } from "@/lib/marketInstrumentResolver";
+import { resolveCashEquityUniverse } from "@/lib/marketInstrumentResolver";
 import { getSavedWatchlist, saveWatchlist } from "@/lib/watchlist";
 
 export default function Stocks() {
   const [searchParams] = useSearchParams();
   const [watchedSymbols, setWatchedSymbols] = useState<string[]>(() => getSavedWatchlist());
-  const { instruments, isLoaded, loadError } = useInstrumentLookup();
+  const { instruments, isLoaded, isCatalogLoading, loadError } = useInstrumentLookup();
   const { activeAccountId, accounts, hasNoAccount, isLoading: isAccountLoading } = useAccountContext();
   const activeAccountProvider = accounts.find((a) => a.id === activeAccountId)?.broker_provider;
   const initialChartSymbol = searchParams.get("symbol") ?? searchParams.get("contract") ?? undefined;
@@ -18,12 +18,12 @@ export default function Stocks() {
   const initialInstrumentToken = searchParams.get("instrumentToken") ?? undefined;
 
   const rows = useMemo(() => {
-    return resolveApprovedStockUniverse(instruments).map(({ stock, instrument }) => {
-      const inst = instrument;
+    return resolveCashEquityUniverse(instruments).map((instrument) => {
+      const symbol = instrument.tradingSymbol || instrument.symbol;
       return {
-        symbol: stock.symbol,
-        chartSymbol: inst?.tradingSymbol ?? stock.symbol,
-        label: stock.name,
+        symbol,
+        chartSymbol: `${instrument.exchangeSegment}:${symbol}`,
+        label: instrument.displayName ?? instrument.symbol,
         ltp: null,
         change: null,
         changePercent: null,
@@ -31,8 +31,8 @@ export default function Stocks() {
         high: null,
         low: null,
         volume: null,
-        instrument: inst,
-        searchText: `${stock.symbol} ${stock.dhanSymbol} ${inst?.tradingSymbol ?? ""} ${stock.name} ${stock.sector}`,
+        instrument,
+        searchText: `${symbol} ${instrument.symbol} ${instrument.exchange} ${instrument.exchangeSegment} ${instrument.series ?? ""} ${instrument.displayName ?? ""}`,
       };
     });
   }, [instruments]);
@@ -49,10 +49,11 @@ export default function Stocks() {
     <main className="mx-auto flex h-full min-h-0 w-full max-w-[1500px] flex-col p-3 sm:p-5">
       <InstrumentExplorer
         title="Stocks"
-        subtitle="200 approved NSE equities."
+        subtitle="Available NSE and BSE cash equities from the configured instrument master."
         asset="stocks"
         rows={rows}
         isLoading={!isLoaded}
+        isCatalogLoading={isCatalogLoading}
         watchedSymbols={watchedSymbols}
         onToggleWatchlist={handleWatchlistToggle}
         activeAccountId={activeAccountId}

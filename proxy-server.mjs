@@ -499,11 +499,11 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
         "NSE:M": "NSE_MF",
         "BSE:E": "BSE_EQ",
         "BSE:D": "BSE_FNO",
-        "BSE:I": "BSE_IDX",
+        "BSE:I": "IDX_I",
         "BSE:C": "BSE_CUR",
         "MCX:M": "MCX_COMM",
       };
-      const ALLOWED_SEGMENTS = new Set(["NSE_EQ", "BSE_EQ", "NSE_FNO", "IDX_I"]);
+      const ALLOWED_SEGMENTS = new Set(["NSE_EQ", "BSE_EQ", "NSE_FNO", "BSE_FNO", "IDX_I", "BSE_IDX"]);
 
       const lines = csvText.split(/\r?\n/).filter(Boolean);
       const header = parseCsvLine(lines[0]).map(h => h.trim());
@@ -525,6 +525,7 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
         const tickSize = Number.isFinite(parsedTickSize) && parsedTickSize > 0 ? parsedTickSize : undefined;
         const customSymbol = cols[header.indexOf("SEM_CUSTOM_SYMBOL")]?.trim();
         const symbolName = cols[header.indexOf("SM_SYMBOL_NAME")]?.trim();
+        const instrumentType = cols[header.indexOf("SEM_EXCH_INSTRUMENT_TYPE")]?.trim() || instrName;
         const expiryDate = cols[header.indexOf("SEM_EXPIRY_DATE")]?.trim();
         const parsedStrikePrice = Number.parseFloat(cols[header.indexOf("SEM_STRIKE_PRICE")]?.trim());
         const strikePrice = Number.isFinite(parsedStrikePrice) && parsedStrikePrice > 0 ? parsedStrikePrice : undefined;
@@ -535,15 +536,18 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
         const exchangeSegment = SEGMENT_MAP[`${exchId}:${segCode}`];
         if (!exchangeSegment || !ALLOWED_SEGMENTS.has(exchangeSegment)) continue;
 
-        // Prefer the master symbol column; custom symbol is only a fallback for older master files.
-        const baseSymbol = symbolName || customSymbol?.split(" ")[0] || tradingSymbol?.split("-")[0] || tradingSymbol;
+        const isDerivative = ["FUTSTK", "FUTIDX", "OPTSTK", "OPTIDX"].includes(instrumentType);
+        const baseSymbol = isDerivative
+          ? tradingSymbol?.split(/[-\s]/, 1)[0]
+          : symbolName || customSymbol?.split(" ")[0] || tradingSymbol;
 
         instruments.push({
           securityId: secId,
           symbol: baseSymbol,
           tradingSymbol,
+          exchange: exchId,
           exchangeSegment,
-          instrumentType: instrName,
+          instrumentType,
           lotSize,
           tickSize,
           series: series || undefined,

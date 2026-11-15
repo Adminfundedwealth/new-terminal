@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchLiveIndices, fetchMarketStatus, fetchAllIndices, fetchLiveFnOStocks, fetchProxyHealth, isNseMarketOpenAt, isWithinNseSessionAt } from "@/lib/marketApi";
-import type { FnOStockData, OptionUnderlying } from "@/lib/marketApi";
+import { fetchMarketIndicesSnapshot, fetchMarketStatus, fetchLiveFnOStocks, fetchProxyHealth, isNseMarketOpenAt, isWithinNseSessionAt } from "@/lib/marketApi";
+import type { FnOStockData, MarketIndicesSnapshot, OptionUnderlying } from "@/lib/marketApi";
 import { getMaxPain } from "@/lib/oiUtils";
 import type { OptionData, IndexData, ExpiryDate } from "@/lib/mockData";
 import { useAccountContext } from "@/hooks/useAccountContext";
@@ -54,7 +54,8 @@ async function getCachedPricesOnce(): Promise<PriceSnapshot[]> {
     cachedPrices = p;
     cachedPricesLoaded = true;
     return p;
-  }).catch(() => {
+  }).catch((error) => {
+    console.warn("Local market price cache could not be read:", error);
     cachedPrices = [];
     cachedPricesLoaded = true;
     return [];
@@ -90,40 +91,59 @@ function buildCachedIndices(prices: PriceSnapshot[]): IndexData[] {
     .filter(Boolean) as IndexData[];
 }
 
+type MarketIndexQueryData = MarketIndicesSnapshot & { isLive: boolean };
+
+function useMarketIndexSnapshot() {
+  const wsConnected = useWebSocketStatus();
+
+  return useQuery({
+    queryKey: ["nse-market-index-snapshot"],
+    queryFn: async ({ signal }): Promise<MarketIndexQueryData> => {
+      if (shouldTryProxy()) {
+        try {
+          const snapshot = await fetchMarketIndicesSnapshot(signal);
+          if (snapshot) {
+            markProxyOnline();
+            return { ...snapshot, isLive: true };
+          }
+        } catch (error) {
+          if (signal.aborted) throw error;
+          markProxyOffline();
+          console.warn("Market indices fetch failed:", error);
+        }
+      }
+
+      const dbIndices = buildCachedIndices(await getCachedPricesOnce());
+      return {
+        indices: dbIndices,
+        allIndices: {
+          vix: null,
+          sectors: [],
+          advances: 0,
+          declines: 0,
+          unchanged: 0,
+        },
+        isLive: false,
+      };
+    },
+    refetchInterval: wsConnected ? 120000 : ((query) => query.state.data?.isLive ? 30000 : 60000),
+    staleTime: 10000,
+    retry: false,
+  });
+}
+
 // ── Hook: Live Indices (WebSocket primary, polling fallback, DB cache tertiary) ──
 // NO MOCK FALLBACK — returns empty array when offline
 export function useLiveIndices() {
-  const { indices: wsIndices, isConnected: wsConnected } = useWebSocketIndices();
-
-  const pollingQuery = useQuery({
-    queryKey: ["nse-indices"],
-    queryFn: async () => {
-      if (shouldTryProxy()) {
-        try {
-          const data = await fetchLiveIndices();
-          if (data && data.length > 0) { markProxyOnline(); return { data, isLive: true }; }
-        } catch (e) { markProxyOffline(); console.warn("Indices fetch failed:", e); }
-      }
-      // Try local DB prices
-      const dbPrices = await getCachedPricesOnce();
-      const dbIndices = buildCachedIndices(dbPrices);
-      if (dbIndices.length > 0) {
-        return { data: dbIndices, isLive: false, source: "database" as const };
-      }
-      // NO MOCK — return empty
-      return { data: [] as IndexData[], isLive: false };
-    },
-    refetchInterval: wsConnected ? 120000 : ((query) => query.state.data?.isLive ? 15000 : 60000),
-    staleTime: 10000,
-    retry: 1,
-  });
+  const { indices: wsIndices } = useWebSocketIndices();
+  const pollingQuery = useMarketIndexSnapshot();
 
   // Merge WebSocket data over polling data
   const mergedData = useMemo(() => {
     if (wsIndices.length > 0) {
-      const polledData = pollingQuery.data?.data || [];
+      const polledData = pollingQuery.data?.indices || [];
       const merged = wsIndices.map((wsIdx) => {
-        const polled = polledData.find((p: any) => p.symbol === wsIdx.symbol);
+        const polled = polledData.find((p) => p.symbol === wsIdx.symbol);
         return {
           name: wsIdx.name,
           symbol: wsIdx.symbol,
@@ -138,7 +158,7 @@ export function useLiveIndices() {
       });
 
       for (const p of polledData) {
-        if (!merged.find((m: any) => m.symbol === p.symbol)) {
+        if (!merged.find((m) => m.symbol === p.symbol)) {
           merged.push(p);
         }
       }
@@ -146,7 +166,10 @@ export function useLiveIndices() {
       return { data: merged, isLive: true };
     }
 
-    return pollingQuery.data || { data: [] as IndexData[], isLive: false };
+    return {
+      data: pollingQuery.data?.indices ?? [],
+      isLive: pollingQuery.data?.isLive ?? false,
+    };
   }, [wsIndices, pollingQuery.data]);
 
   return {
@@ -159,10 +182,10 @@ export function useLiveIndices() {
 export function useMarketStatus() {
   return useQuery({
     queryKey: ["nse-market-status"],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       if (shouldTryProxy()) {
         try {
-          const data = await fetchMarketStatus();
+          const data = await fetchMarketStatus(signal);
           if (data?.marketState) {
             markProxyOnline();
             const nseStatus = data.marketState.find((m: any) => m.market === "Capital Market" || m.market === "CM");
@@ -179,7 +202,11 @@ export function useMarketStatus() {
             const isOpen = isNseMarketOpenAt(nseStatus?.marketStatus, nseStatus?.tradeDate);
             return { isOpen, status: isOpen ? "Open" : "Closed", isLive: true, giftNifty, indicativeNifty };
           }
-        } catch (e) { markProxyOffline(); console.warn("Market status fetch failed:", e); }
+        } catch (e) {
+          if (signal.aborted) throw e;
+          markProxyOffline();
+          console.warn("Market status fetch failed:", e);
+        }
       }
       const now = new Date();
       const isOpen = isWithinNseSessionAt(now);
@@ -200,16 +227,19 @@ export function useLiveOptionChain(symbol: string, expiry?: string, enabled = tr
   return useQuery({
     queryKey: ["live-option-chain", "founder-dhan", symbol, expiry, centralUnderlying?.securityId, centralUnderlying?.exchangeSegment],
     enabled: enabled && Boolean(symbol.trim()),
-    queryFn: async () => {
-      const result = await requestTerminalMarketData<TerminalMarketDataOptionChain>(null, provider, {
+    queryFn: async ({ signal }) => {
+      const chainRequest = requestTerminalMarketData<TerminalMarketDataOptionChain>(null, provider, {
         operation: "getOptionChain",
         underlying: symbol.toUpperCase(),
         ...(expiry ? { expiry } : {}),
-      });
-      const optionInstruments = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(null, provider, {
-        operation: "searchInstruments",
-        query: symbol.toUpperCase(),
-      });
+      }, "production", signal);
+      const instrumentRequest = lotSizeOverride && lotSizeOverride > 0
+        ? Promise.resolve([] as TerminalMarketDataInstrument[])
+        : requestTerminalMarketData<TerminalMarketDataInstrument[]>(null, provider, {
+          operation: "searchInstruments",
+          query: symbol.toUpperCase(),
+        }, "production", signal);
+      const [result, optionInstruments] = await Promise.all([chainRequest, instrumentRequest]);
 
       const expiries: ExpiryDate[] = result.expiries.map((value) => {
         if (typeof value !== "string") return value;
@@ -268,7 +298,7 @@ export function useLiveOptionChain(symbol: string, expiry?: string, enabled = tr
       return 15000;                           // Offline/retrying: 15s
     },
     staleTime: 2000,
-    retry: 1,
+    retry: false,
   });
 }
 
@@ -281,11 +311,11 @@ export function useExpiryList(symbol: string, underlying?: OptionUnderlying) {
   return useQuery({
     queryKey: ["expiry-list", "founder-dhan", symbol, centralUnderlying?.securityId, centralUnderlying?.exchangeSegment],
     enabled: Boolean(symbol.trim()),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const chain = await requestTerminalMarketData<TerminalMarketDataOptionChain>(null, provider, {
         operation: "getOptionChain",
         underlying: symbol.toUpperCase(),
-      });
+      }, "production", signal);
       const expiries: ExpiryDate[] = chain.expiries.map((value) => {
         const date = new Date(value);
         return {
@@ -298,7 +328,7 @@ export function useExpiryList(symbol: string, underlying?: OptionUnderlying) {
     },
     staleTime: 60000,
     refetchInterval: 120000,
-    retry: 1,
+    retry: false,
   });
 }
 
@@ -306,35 +336,11 @@ export function useExpiryList(symbol: string, underlying?: OptionUnderlying) {
 // NO MOCK FALLBACK — returns null values when offline
 export function useAllIndices() {
   const { vix: wsVix } = useWebSocketVix();
-  const wsConnected = useWebSocketStatus();
-
-  const pollingQuery = useQuery({
-    queryKey: ["nse-all-indices"],
-    queryFn: async () => {
-      if (shouldTryProxy()) {
-        try {
-          const data = await fetchAllIndices();
-          if (data) { markProxyOnline(); return { ...data, isLive: true }; }
-        } catch (e) { markProxyOffline(); console.warn("All indices fetch failed:", e); }
-      }
-      // NO MOCK — return empty/null values
-      return {
-        vix: null,
-        sectors: [],
-        advances: 0,
-        declines: 0,
-        unchanged: 0,
-        isLive: false,
-      };
-    },
-    refetchInterval: wsConnected ? 120000 : ((query) => query.state.data?.isLive ? 30000 : 120000),
-    staleTime: 15000,
-    retry: 1,
-  });
+  const pollingQuery = useMarketIndexSnapshot();
 
   // Merge WebSocket VIX over polled VIX
   const mergedData = useMemo(() => {
-    const base = pollingQuery.data || {
+    const base = pollingQuery.data?.allIndices || {
       vix: null, sectors: [], advances: 0, declines: 0, unchanged: 0, isLive: false,
     };
 
@@ -346,7 +352,7 @@ export function useAllIndices() {
       };
     }
 
-    return base;
+    return { ...base, isLive: pollingQuery.data?.isLive ?? false };
   }, [pollingQuery.data, wsVix]);
 
   return { data: mergedData, isLoading: pollingQuery.isLoading };
@@ -357,10 +363,10 @@ export function useAllIndices() {
 export function useFnOStocks() {
   return useQuery({
     queryKey: ["nse-fno-stocks"],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       if (shouldTryProxy()) {
         try {
-          const stocks = await fetchLiveFnOStocks();
+          const stocks = await fetchLiveFnOStocks(signal);
           if (stocks.length > 0) {
             markProxyOnline();
             const gainers = [...stocks].filter(s => s.changePercent > 0).sort((a, b) => b.changePercent - a.changePercent).slice(0, 5);
@@ -373,7 +379,11 @@ export function useFnOStocks() {
             const source = hasOI ? "nse" as const : "tradingview" as const;
             return { gainers, losers, mostActive, allStocks: stocks, isLive: true, source };
           }
-        } catch (e) { markProxyOffline(); console.warn("F&O stocks fetch failed:", e); }
+        } catch (e) {
+          if (signal.aborted) throw e;
+          markProxyOffline();
+          console.warn("F&O stocks fetch failed:", e);
+        }
       }
       // Try local DB price snapshots
       const dbPrices = await getCachedPricesOnce();
@@ -409,7 +419,7 @@ export function useFnOStocks() {
     },
     refetchInterval: (query) => query.state.data?.isLive ? 30000 : 120000,
     staleTime: 15000,
-    retry: 1,
+    retry: false,
   });
 }
 
@@ -481,12 +491,18 @@ export function invalidateLocalPriceCache() {
 export function useProxyHealth() {
   return useQuery({
     queryKey: ["proxy-health"],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       try {
-        const health = await fetchProxyHealth();
+        const health = await fetchProxyHealth(signal);
         return { ...health, reachable: true };
-      } catch {
-        return { reachable: false, status: "offline" };
+      } catch (error) {
+        if (signal.aborted) throw error;
+        console.warn("Market-data proxy health check failed:", error);
+        return {
+          reachable: false,
+          status: "offline",
+          errorMessage: error instanceof Error ? error.message : "The market-data proxy is unavailable.",
+        };
       }
     },
     refetchInterval: 30000,

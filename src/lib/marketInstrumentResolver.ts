@@ -1,65 +1,58 @@
-import { APPROVED_200_STOCKS, getUnderlyingFromTradingSymbol, type ApprovedStock } from "@/lib/approvedInstruments";
-import type { ApprovedIndex } from "@/lib/approvedIndices";
-import { canonicalIndexSymbol, classifyInstrument, isCashEquityListing, isProductionInstrument } from "@/lib/instrumentClassification";
+import { canonicalIndexSymbol, classifyInstrument, hasActiveInstrumentExpiry, isCashEquityListing, isProductionInstrument } from "@/lib/instrumentClassification";
 import type { Instrument } from "@/lib/localDatabase";
-import { findWatchlistInstrument } from "@/lib/watchlistInstrument";
 
 function normalizeSymbol(value: string): string {
   return value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
-export interface ResolvedApprovedStock {
-  stock: ApprovedStock;
-  instrument?: Instrument;
-}
-
-export function resolveApprovedStockUniverse(instruments: readonly Instrument[]): ResolvedApprovedStock[] {
-  const approvedSymbols = new Map<string, string>();
-  for (const stock of APPROVED_200_STOCKS) {
-    approvedSymbols.set(normalizeSymbol(stock.symbol), stock.symbol);
-    approvedSymbols.set(normalizeSymbol(stock.dhanSymbol), stock.symbol);
-  }
-
-  const bySymbol = new Map<string, Instrument>();
+export function resolveCashEquityUniverse(instruments: readonly Instrument[]): Instrument[] {
+  const unique = new Map<string, Instrument>();
   for (const instrument of instruments) {
     if (
-      instrument.exchangeSegment !== "NSE_EQ" ||
+      !["NSE_EQ", "BSE_EQ"].includes(instrument.exchangeSegment) ||
       !isProductionInstrument(instrument) ||
       !isCashEquityListing(instrument)
     ) continue;
 
-    const approvedSymbol = [instrument.symbol, instrument.tradingSymbol]
-      .map(normalizeSymbol)
-      .map((symbol) => approvedSymbols.get(symbol))
-      .find((symbol): symbol is string => Boolean(symbol));
-    if (approvedSymbol && !bySymbol.has(approvedSymbol)) bySymbol.set(approvedSymbol, instrument);
+    const identity = `${instrument.exchangeSegment}:${instrument.providerInstrumentId ?? instrument.securityId}`;
+    if (!unique.has(identity)) unique.set(identity, instrument);
   }
 
-  return APPROVED_200_STOCKS.map((stock) => {
-    const instrument = bySymbol.get(stock.symbol)
-      ?? findWatchlistInstrument(instruments, stock.symbol);
-    return {
-      stock,
-      instrument: instrument?.exchangeSegment === "NSE_EQ" ? instrument : undefined,
-    };
-  });
+  return [...unique.values()].sort((left, right) =>
+    left.tradingSymbol.localeCompare(right.tradingSymbol) ||
+    left.exchangeSegment.localeCompare(right.exchangeSegment) ||
+    left.securityId.localeCompare(right.securityId),
+  );
 }
 
-export function findApprovedIndexInstrument(
+export function resolveIndianIndexUniverse(instruments: readonly Instrument[]): Instrument[] {
+  const unique = new Map<string, Instrument>();
+  for (const instrument of instruments) {
+    if (!isProductionInstrument(instrument) || classifyInstrument(instrument) !== "indices") continue;
+    const identity = `${instrument.exchangeSegment}:${instrument.providerInstrumentId ?? instrument.securityId}`;
+    if (!unique.has(identity)) unique.set(identity, instrument);
+  }
+
+  return [...unique.values()].sort((left, right) =>
+    left.tradingSymbol.localeCompare(right.tradingSymbol) ||
+    left.exchangeSegment.localeCompare(right.exchangeSegment) ||
+    left.securityId.localeCompare(right.securityId),
+  );
+}
+
+export function resolveOptionChainUnderlyings(
   instruments: readonly Instrument[],
-  index: Pick<ApprovedIndex, "symbol" | "segment">,
-): Instrument | undefined {
-  const canonicalSymbol = canonicalIndexSymbol(index.symbol).toUpperCase();
-  return instruments.find((instrument) => {
-    if (
-      !isProductionInstrument(instrument) ||
-      classifyInstrument(instrument) !== "indices" ||
-      instrument.exchangeSegment !== index.segment
-    ) return false;
-    return [instrument.symbol, instrument.tradingSymbol].some(
-      (symbol) => canonicalIndexSymbol(symbol).toUpperCase() === canonicalSymbol,
-    );
-  });
+  instrumentType: "OPTIDX" | "OPTSTK",
+): string[] {
+  return [...new Set(instruments
+    .filter((instrument) =>
+      isProductionInstrument(instrument) &&
+      instrument.instrumentType === instrumentType &&
+      classifyInstrument(instrument) === "options" &&
+      hasActiveInstrumentExpiry(instrument.expiryDate),
+    )
+    .map((instrument) => instrument.symbol.trim().toUpperCase())
+    .filter(Boolean))].sort();
 }
 
 export function findDhanOptionInstrument(
@@ -70,16 +63,17 @@ export function findDhanOptionInstrument(
     strike: number;
     optionType: "CE" | "PE";
     underlyingSecurityId?: string;
+    exchange?: string;
   },
 ): Instrument | undefined {
   const underlying = normalizeSymbol(option.underlying);
   const canonicalUnderlying = normalizeSymbol(canonicalIndexSymbol(option.underlying));
-  // Dhan's master stores "YYYY-MM-DD HH:mm:ss"; the option-chain API uses "YYYY-MM-DD".
   const expiryDay = option.expiry.slice(0, 10);
   return instruments.find((instrument) => {
     if (
       instrument.provider !== "dhan" ||
       classifyInstrument(instrument) !== "options" ||
+      (option.exchange && instrument.exchange !== option.exchange) ||
       (instrument.expiryDate ?? "").slice(0, 10) !== expiryDay ||
       Number(instrument.strikePrice) !== option.strike ||
       instrument.optionType !== option.optionType
@@ -89,9 +83,16 @@ export function findDhanOptionInstrument(
       return instrument.underlyingSecurityId === option.underlyingSecurityId;
     }
 
-    const rawInstrumentUnderlying = getUnderlyingFromTradingSymbol(instrument.tradingSymbol) ?? instrument.symbol;
-    const instrumentUnderlying = normalizeSymbol(rawInstrumentUnderlying);
-    const canonicalInstrumentUnderlying = normalizeSymbol(canonicalIndexSymbol(rawInstrumentUnderlying));
-    return instrumentUnderlying === underlying || canonicalInstrumentUnderlying === canonicalUnderlying;
+    const instrumentUnderlying = normalizeSymbol(canonicalIndexSymbol(instrument.symbol));
+    if (instrumentUnderlying === underlying || instrumentUnderlying === canonicalUnderlying) return true;
+
+    const rawTradingSymbol = instrument.tradingSymbol.trim().toUpperCase();
+    const tradingSymbol = normalizeSymbol(rawTradingSymbol);
+    const contractUnderlying = normalizeSymbol(rawTradingSymbol.split(/[-\s]/, 1)[0]);
+    if (contractUnderlying === underlying || contractUnderlying === canonicalUnderlying) return true;
+    return [underlying, canonicalUnderlying].some((candidate) => {
+      if (!tradingSymbol.startsWith(candidate)) return false;
+      return /^\d/.test(tradingSymbol.slice(candidate.length));
+    });
   });
 }
