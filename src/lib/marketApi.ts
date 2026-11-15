@@ -18,7 +18,7 @@ export interface IndianNewsArticle {
 }
 
 // Broker credentials are server-side only; customer requests must never forward them.
-const INSTRUMENT_MASTER_TIMEOUT_MS = 15_000;
+const INSTRUMENT_MASTER_TIMEOUT_MS = 60_000;
 
 async function fetchDhanProxy(endpoint: string, params?: Record<string, string>, signal?: AbortSignal): Promise<any> {
   const qp = new URLSearchParams({ endpoint, ...params });

@@ -100,6 +100,25 @@ describe("browser broker credential boundary", () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain("/api/dhan-proxy?endpoint=instruments");
   });
 
+  it("allows enough time for the full Dhan instrument master response", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+      () => new Promise<Response>(() => {}),
+    );
+    const request = fetchDhanInstrumentMaster();
+    let settled = false;
+    void request.then(() => { settled = true; }, () => { settled = true; });
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(44_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(request).rejects.toThrow("Request timed out after 60000 ms.");
+  });
+
   it("does not forward browser-held Dhan credentials to the legacy proxy", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
       instruments: [],

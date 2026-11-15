@@ -30,7 +30,13 @@ import {
 import { classifyInstrument, hasActiveInstrumentExpiry, isCashEquityListing, type InstrumentCategory } from "@/lib/instrumentClassification";
 import { fetchDhanInstrumentMaster } from "@/lib/marketApi";
 import { normalizeProviderInstrument } from "@/lib/instrumentMaster";
-import { requestTerminalMarketData } from "@/lib/terminalApi";
+
+function filterCachedDhanInstruments(instruments: readonly Instrument[]): Instrument[] {
+  return instruments.filter((instrument) =>
+    instrument.provider === "dhan" &&
+    (classifyInstrument(instrument) !== "stocks" || isCashEquityListing(instrument))
+  );
+}
 
 // ΓöÇΓöÇ Hook: Database readiness check ΓöÇΓöÇ
 
@@ -194,7 +200,7 @@ export function useInstrumentLookup() {
         list.push(instrument);
       };
 
-      const normalizeMasterRows = async (rows: unknown[], sourceName: string): Promise<Instrument[]> => {
+      const normalizeMasterRows = async (rows: unknown[]): Promise<Instrument[]> => {
         const instruments: Instrument[] = [];
         for (let index = 0; index < rows.length; index += 1) {
           if (index > 0 && index % 2_000 === 0) {
@@ -205,7 +211,7 @@ export function useInstrumentLookup() {
           if (!row || typeof row !== "object") continue;
           const source = row as Record<string, unknown>;
           const instrumentName = String(source.SEM_INSTRUMENT_NAME ?? source.instrumentType ?? "").toUpperCase();
-          if (!["EQUITY", "INDEX", "FUTSTK", "FUTIDX", "OPTSTK", "OPTIDX"].includes(instrumentName)) continue;
+          if (!["EQUITY", "ES", "INDEX", "FUTSTK", "FUTIDX", "OPTSTK", "OPTIDX"].includes(instrumentName)) continue;
           const normalized = normalizeProviderInstrument(source, "dhan", index).instrument;
           if (!normalized) continue;
           const category = classifyInstrument(normalized);
@@ -214,63 +220,33 @@ export function useInstrumentLookup() {
           if ((category === "futures" || category === "options") && !hasActiveInstrumentExpiry(normalized.expiryDate)) continue;
           addInstrument(instruments, normalized);
         }
-        if (instruments.length === 0 && sourceName === "Official Dhan instrument master") {
-          return [];
-        }
         return instruments;
       };
 
-      let terminalList: Instrument[] = [];
-      let terminalCatalogError: string | null = null;
-      try {
-        const payload = await requestTerminalMarketData<unknown[]>(
-          null,
-          "dhan",
-          { operation: "listInstruments" },
-          "production",
-          signal,
-        );
-        if (!Array.isArray(payload)) {
-          throw new Error("invalid Dhan instrument catalog.");
-        }
-        terminalList = await normalizeMasterRows(payload, "Founder Dhan catalog");
-      } catch (error) {
-        if (signal.aborted) throw error;
-        terminalCatalogError = error instanceof Error
-          ? `Founder Dhan instrument catalog failed: ${error.message}`
-          : "Founder Dhan instrument catalog failed.";
-        console.error("Founder Dhan instrument catalog failed:", error);
-      }
-
-      let officialFallbackError: string | null = null;
       let officialMasterInstruments: Instrument[] = [];
+      let instrumentMasterError: string | null = null;
       try {
-        officialMasterInstruments = await normalizeMasterRows(await fetchDhanInstrumentMaster(signal), "Official Dhan instrument master");
+        officialMasterInstruments = await normalizeMasterRows(await fetchDhanInstrumentMaster(signal));
       } catch (error) {
         if (signal.aborted) throw error;
-        officialFallbackError = error instanceof Error
-          ? `Official Dhan instrument master fallback failed: ${error.message}`
-          : "Official Dhan instrument master fallback failed.";
-        console.error("Official Dhan instrument master fallback failed:", error);
+        instrumentMasterError = error instanceof Error
+          ? `Official Dhan instrument master failed: ${error.message}`
+          : "Official Dhan instrument master failed.";
+        console.error("Official Dhan instrument master failed:", error);
       }
 
-      const merged = [...terminalList];
-      for (const instrument of officialMasterInstruments) {
-        addInstrument(merged, instrument);
-      }
-
-      const localFallbackInstruments = (localQuery.data ?? []).filter((instrument) => instrument.provider === "dhan");
-      const finalInstruments = merged.length > 0 ? merged : localFallbackInstruments;
-      const loadError = terminalCatalogError
-        ? terminalCatalogError
-        : officialFallbackError && terminalList.length > 0
-          ? officialFallbackError
-          : null;
+      const localFallbackInstruments = filterCachedDhanInstruments(localQuery.data ?? []);
+      const finalInstruments = officialMasterInstruments.length > 0
+        ? officialMasterInstruments
+        : localFallbackInstruments;
+      const loadError = instrumentMasterError ?? (
+        officialMasterInstruments.length === 0 ? "Official Dhan instrument master returned no instruments." : null
+      );
 
       const BATCH_SIZE = 2000;
       void (async () => {
-        for (let i = 0; i < finalInstruments.length; i += BATCH_SIZE) {
-          await saveInstruments(finalInstruments.slice(i, i + BATCH_SIZE));
+        for (let i = 0; i < officialMasterInstruments.length; i += BATCH_SIZE) {
+          await saveInstruments(officialMasterInstruments.slice(i, i + BATCH_SIZE));
         }
       })().catch((error) => {
         console.error("Founder Dhan instruments could not be cached locally:", error);
@@ -283,7 +259,7 @@ export function useInstrumentLookup() {
   });
 
   const cachedDhanInstruments = useMemo(
-    () => localInstruments.filter((instrument) => instrument.provider === "dhan"),
+    () => filterCachedDhanInstruments(localInstruments),
     [localInstruments],
   );
   const allInstruments = useMemo(() => (

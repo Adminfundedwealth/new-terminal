@@ -63,6 +63,7 @@ describe("instrument classification", () => {
     expect(isCashEquityListing(instrument({ symbol: "3M INDIA LTD", tradingSymbol: "3MINDIA" }))).toBe(true);
     expect(isCashEquityListing(instrument({ symbol: "GOI T-BILL 182D-01/04/27", tradingSymbol: "GOITBILL182D" }))).toBe(false);
     expect(isCashEquityListing(instrument({ symbol: "GOI T-BILL 182D-01/04/27", tradingSymbol: "GOITBILL182D", series: "EQ" }))).toBe(false);
+    expect(isCashEquityListing(instrument({ exchange: "BSE", exchangeSegment: "BSE_EQ", symbol: "Nippon India Mutual Fund", tradingSymbol: "08ABB", series: "B" }))).toBe(false);
   });
 
   it("resolves gateway index trading symbols to their chart symbols", () => {

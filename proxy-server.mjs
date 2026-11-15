@@ -525,7 +525,10 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
         const tickSize = Number.isFinite(parsedTickSize) && parsedTickSize > 0 ? parsedTickSize : undefined;
         const customSymbol = cols[header.indexOf("SEM_CUSTOM_SYMBOL")]?.trim();
         const symbolName = cols[header.indexOf("SM_SYMBOL_NAME")]?.trim();
-        const instrumentType = cols[header.indexOf("SEM_EXCH_INSTRUMENT_TYPE")]?.trim() || instrName;
+        const exchangeInstrumentType = cols[header.indexOf("SEM_EXCH_INSTRUMENT_TYPE")]?.trim();
+        const instrumentType = ["FUTSTK", "FUTIDX", "OPTSTK", "OPTIDX"].includes(instrName)
+          ? instrName
+          : exchangeInstrumentType || instrName;
         const expiryDate = cols[header.indexOf("SEM_EXPIRY_DATE")]?.trim();
         const parsedStrikePrice = Number.parseFloat(cols[header.indexOf("SEM_STRIKE_PRICE")]?.trim());
         const strikePrice = Number.isFinite(parsedStrikePrice) && parsedStrikePrice > 0 ? parsedStrikePrice : undefined;
