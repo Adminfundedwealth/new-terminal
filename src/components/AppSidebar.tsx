@@ -38,6 +38,29 @@ const settingItems = [
   { title: "My Stats", url: "/my-stats", icon: BarChart3 },
 ];
 
+const routePreloaders: Record<string, () => Promise<unknown>> = {
+  "/": () => import("@/pages/Index"),
+  "/stocks": () => import("@/pages/Stocks"),
+  "/indices": () => import("@/pages/Indices"),
+  "/option-chain": () => import("@/pages/OptionChain"),
+  "/futures": () => import("@/pages/Futures"),
+  "/oi-analysis": () => import("@/pages/OIAnalysis"),
+  "/watchlist": () => import("@/pages/Watchlist"),
+  "/strategy-builder": () => import("@/pages/StrategyBuilder"),
+  "/position-tracker": () => import("@/pages/PositionTracker"),
+  "/calendar": () => import("@/pages/Calendar"),
+  "/market-news": () => import("@/pages/MarketNews"),
+  "/my-stats": () => import("@/pages/MyStats"),
+};
+
+function preloadRoute(url: string): void {
+  const preload = routePreloaders[url];
+  if (!preload) return;
+  void preload().catch((error) => {
+    console.error(`Could not preload route ${url}:`, error);
+  });
+}
+
 export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
@@ -51,6 +74,8 @@ export function AppSidebar() {
             to={item.url}
             end={item.url === "/"}
             title={collapsed ? item.title : undefined}
+            onPointerEnter={() => preloadRoute(item.url)}
+            onFocus={() => preloadRoute(item.url)}
             className={cn(
               "group relative flex items-center gap-2.5 text-sm font-medium transition-all duration-200",
               collapsed

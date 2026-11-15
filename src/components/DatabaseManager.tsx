@@ -206,7 +206,7 @@ export function DatabaseManager() {
       // ── Done ──
       // Invalidate all caches so hook refreshes pull from IndexedDB
       invalidateLocalPriceCache();
-      queryClient.invalidateQueries({ queryKey: ["nse-indices"] });
+      queryClient.invalidateQueries({ queryKey: ["nse-market-index-snapshot"] });
       queryClient.invalidateQueries({ queryKey: ["nse-fno-stocks"] });
       queryClient.invalidateQueries({ queryKey: ["stored-candles"] });
 

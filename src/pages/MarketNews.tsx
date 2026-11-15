@@ -30,11 +30,11 @@ function stripSummary(value: string): string {
 }
 
 export default function MarketNews() {
-  const { data, isLoading, isError, refetch, isFetching } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["indian-market-news"],
-    queryFn: fetchIndianMarketNews,
+    queryFn: ({ signal }) => fetchIndianMarketNews(signal),
     staleTime: 5 * 60 * 1000,
-    retry: 1,
+    retry: false,
   });
   const articles = useMemo(() => (data?.articles || []).filter(isIndianMarketArticle), [data]);
 
@@ -71,7 +71,9 @@ export default function MarketNews() {
         <div className="rounded-lg border border-dashed border-border/80 bg-card/30 px-4 py-10 text-center">
           <Newspaper className="mx-auto h-8 w-8 text-muted-foreground/50" />
           <p className="mt-3 text-sm font-semibold">Indian market news is unavailable</p>
-          <p className="mt-1 text-xs text-muted-foreground">No article content is shown until the server-side provider responds.</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {error instanceof Error ? error.message : "No article content is shown until the server-side provider responds."}
+          </p>
         </div>
       )}
 

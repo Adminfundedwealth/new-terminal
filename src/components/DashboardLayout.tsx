@@ -79,11 +79,16 @@ export default function DashboardLayout() {
     onToggleAlerts: () => setAlertsOpen(true),
   });
 
-  // Quick refresh — invalidate ALL queries
-  const handleQuickRefresh = useCallback(async () => {
+  // Refresh locally first; slow market-data requests must not hold the control in a busy state.
+  const handleQuickRefresh = useCallback(() => {
     setIsRefreshing(true);
-    await queryClient.invalidateQueries();
     setLastRefresh(new Date());
+    void queryClient.invalidateQueries({
+      predicate: (query) => query.queryKey[0] !== "local-instruments" &&
+        query.queryKey[0] !== "terminal-instrument-catalog",
+    }).catch((error) => {
+      console.error("Terminal refresh failed:", error);
+    });
     setTimeout(() => setIsRefreshing(false), 800);
   }, [queryClient]);
 

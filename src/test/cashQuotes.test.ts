@@ -25,7 +25,10 @@ describe("Dhan cash-equity quote requests", () => {
         timestamp: "2026-10-09T08:03:34.000Z",
       },
     });
-    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("endpoint=cash-quotes"));
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("endpoint=cash-quotes"),
+      { signal: expect.any(AbortSignal) },
+    );
     const [, init] = fetchMock.mock.calls[0] as [RequestInfo | URL, RequestInit | undefined];
     const headers = new Headers(init?.headers);
     expect(headers.has("x-dhan-client-id")).toBe(false);

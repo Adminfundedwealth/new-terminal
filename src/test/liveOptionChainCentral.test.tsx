@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { requestMarketData } = vi.hoisted(() => ({ requestMarketData: vi.fn() }));
 vi.mock("@/lib/terminalApi", async (importOriginal) => ({
@@ -11,6 +11,10 @@ vi.mock("@/lib/terminalApi", async (importOriginal) => ({
 import { useLiveOptionChain } from "@/hooks/useMarketData";
 
 describe("useLiveOptionChain Founder-global Dhan route", () => {
+  afterEach(() => {
+    requestMarketData.mockReset();
+  });
+
   function renderOptionChain(symbol: string, underlying?: { securityId: string; exchangeSegment: string }) {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const wrapper = ({ children }: { children: React.ReactNode }) => (
@@ -20,8 +24,8 @@ describe("useLiveOptionChain Founder-global Dhan route", () => {
   }
 
   it("loads a stock option chain and instruments through Founder-global Dhan", async () => {
-    requestMarketData
-      .mockResolvedValueOnce({
+    requestMarketData.mockImplementation((_accountId: null, _provider: string, request: { operation: string }) =>
+      Promise.resolve(request.operation === "getOptionChain" ? {
         provider: "dhan",
         chain: [{
           strikePrice: 1200,
@@ -33,8 +37,8 @@ describe("useLiveOptionChain Founder-global Dhan route", () => {
         totalPEOI: 80,
         expiries: ["2026-10-29"],
         afterHours: false,
-      })
-      .mockResolvedValueOnce([]);
+      } : []),
+    );
 
     const { result } = renderOptionChain("RELIANCE", { securityId: "2885", exchangeSegment: "NSE_EQ" });
 
@@ -44,19 +48,27 @@ describe("useLiveOptionChain Founder-global Dhan route", () => {
       source: "dhan",
       chain: [{ strikePrice: 1200 }],
     });
-    expect(requestMarketData).toHaveBeenNthCalledWith(1, null, "dhan", {
-      operation: "getOptionChain",
-      underlying: "RELIANCE",
-    });
-    expect(requestMarketData).toHaveBeenNthCalledWith(2, null, "dhan", {
-      operation: "searchInstruments",
-      query: "RELIANCE",
-    });
+    expect(requestMarketData).toHaveBeenNthCalledWith(
+      1,
+      null,
+      "dhan",
+      { operation: "getOptionChain", underlying: "RELIANCE" },
+      "production",
+      expect.any(AbortSignal),
+    );
+    expect(requestMarketData).toHaveBeenNthCalledWith(
+      2,
+      null,
+      "dhan",
+      { operation: "searchInstruments", query: "RELIANCE" },
+      "production",
+      expect.any(AbortSignal),
+    );
   });
 
   it("loads index option chains without requiring an account or per-account instrument", async () => {
-    requestMarketData
-      .mockResolvedValueOnce({
+    requestMarketData.mockImplementation((_accountId: null, _provider: string, request: { operation: string }) =>
+      Promise.resolve(request.operation === "getOptionChain" ? {
         provider: "dhan",
         chain: [{
           strikePrice: 25000,
@@ -68,15 +80,19 @@ describe("useLiveOptionChain Founder-global Dhan route", () => {
         totalPEOI: 80,
         expiries: [],
         afterHours: false,
-      })
-      .mockResolvedValueOnce([]);
+      } : []),
+    );
 
     const { result } = renderOptionChain("NIFTY");
 
     await waitFor(() => expect(result.current.data?.isLive).toBe(true));
-    expect(requestMarketData).toHaveBeenCalledWith(null, "dhan", {
-      operation: "getOptionChain",
-      underlying: "NIFTY",
-    });
+    expect(requestMarketData).toHaveBeenNthCalledWith(
+      1,
+      null,
+      "dhan",
+      { operation: "getOptionChain", underlying: "NIFTY" },
+      "production",
+      expect.any(AbortSignal),
+    );
   });
 });
