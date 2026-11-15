@@ -19,6 +19,22 @@ describe("Task 35 instrument master", () => {
     expect(normalizeProviderInstrument(row({ SEM_SMST_SECURITY_ID: "13", SEM_EXM: "IDX_I", SEM_TRADING_SYMBOL: "NIFTY 50", SEM_CUSTOM_SYMBOL: "NIFTY 50", SEM_INSTRUMENT_NAME: "INDEX" }), "dhan").instrument).toMatchObject({ exchange: "NSE", exchangeSegment: "IDX_I", instrumentType: "INDEX", lotSize: 1 });
   });
 
+  it("accepts index rows when Dhan omits tick size", () => {
+    const result = normalizeProviderInstrument({
+      securityId: "5024",
+      symbol: "GIFTNIFTY",
+      tradingSymbol: "GIFTNIFTY",
+      exchange: "NSE",
+      exchangeSegment: "IDX_I",
+      instrumentType: "INDEX",
+      lotSize: 1,
+      series: "X",
+    }, "dhan").instrument;
+
+    expect(result).toMatchObject({ securityId: "5024", symbol: "GIFTNIFTY", instrumentType: "INDEX" });
+    expect(result?.tickSize).toBeUndefined();
+  });
+
   it("maps official Dhan ES instrument types to cash equities", () => {
     const result = normalizeProviderInstrument({
       SEM_EXM_EXCH_ID: "NSE",

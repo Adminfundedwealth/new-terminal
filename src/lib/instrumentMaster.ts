@@ -81,12 +81,12 @@ export function normalizeProviderInstrument(rawValue: unknown, provider: Instrum
   const lotSize = numberValue(first(raw, ["lotSize", "lot_size", "SEM_LOT_SIZE", "SEM_LOT_UNITS"])) ?? (instrumentType === "INDEX" ? 1 : undefined);
   const tickSize = numberValue(first(raw, ["tickSize", "tick_size", "SEM_TICK_SIZE"]));
   const underlyingSecurityId = text(first(raw, ["underlyingSecurityId", "underlying_security_id", "underlying_token", "SEM_UNDERLYING_SECURITY_ID"])) || undefined;
-  const missing = [!securityId && "provider instrument identifier", !tradingSymbol && "trading symbol", !symbol && "display symbol", !segment && "exchange segment", !instrumentType && "instrument type", lotSize === undefined && "lot size", tickSize === undefined && "tick size"].filter(Boolean) as string[];
+  const missing = [!securityId && "provider instrument identifier", !tradingSymbol && "trading symbol", !symbol && "display symbol", !segment && "exchange segment", !instrumentType && "instrument type", lotSize === undefined && "lot size", tickSize === undefined && instrumentType !== "INDEX" && "tick size"].filter(Boolean) as string[];
   if (missing.length) return { issue: { index, code: "MISSING_FIELD", message: `Missing ${missing.join(", ")}.` } };
   if (!SUPPORTED_SEGMENTS.has(segment) && segment !== "IDX_I" && segment !== "BSE_IDX") return { issue: { index, code: "INVALID_VALUE", message: `Unsupported exchange segment: ${segment}.` } };
   if (["FUTSTK", "FUTIDX", "FUTCOM", "FUTCUR"].includes(instrumentType) && !expiryDate) return { issue: { index, code: "INVALID_VALUE", message: "Futures require a valid expiry." } };
   if (["OPTSTK", "OPTIDX", "OPTFUT", "OPTCUR"].includes(instrumentType) && (!expiryDate || strikePrice === undefined || strikePrice <= 0 || !["CE", "PE"].includes(optionType || ""))) return { issue: { index, code: "INVALID_VALUE", message: "Options require expiry, positive strike, and CE or PE option type." } };
-  if (lotSize <= 0 || tickSize <= 0) return { issue: { index, code: "INVALID_VALUE", message: "Lot size and tick size must be positive." } };
+  if (lotSize <= 0 || (tickSize !== undefined && tickSize <= 0)) return { issue: { index, code: "INVALID_VALUE", message: "Lot size and tick size must be positive." } };
   return { instrument: { securityId, symbol, tradingSymbol, displayName: text(first(raw, ["displayName", "display_name", "SEM_CUSTOM_SYMBOL", "name"])) || symbol, exchange, exchangeSegment: segment, instrumentType, providerInstrumentType, lotSize, tickSize, series, expiryDate, strikePrice, optionType: ["CE", "PE"].includes(optionType || "") ? optionType : undefined, underlyingSecurityId, provider, providerInstrumentId: securityId } };
 }
 
