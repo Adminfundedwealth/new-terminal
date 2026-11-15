@@ -1,287 +1,202 @@
-import { useRef, useEffect, useState, useCallback } from "react";
-import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries, type IChartApi, type Time } from "lightweight-charts";
-import { useChartData } from "@/hooks/useChartData";
-import { useIsDark, getChartColors } from "@/hooks/useIsDark";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { useEffect, useRef, useState } from "react";
+import { createWidget, type Widget } from "openalgo-charts/widget";
+import "openalgo-charts/draw";
+import "openalgo-charts/indicators";
+import "openalgo-charts/transform";
+import "openalgo-charts/workspace";
+import { BarChart3 } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { BarChart3, Loader2, X, CandlestickChart, LineChart } from "lucide-react";
-
-const TIME_RANGES = ["1W", "1M", "3M", "6M", "1Y"] as const;
-type TimeRange = (typeof TIME_RANGES)[number];
+import { useIsDark } from "@/hooks/useIsDark";
+import {
+  createIndexedDbWorkspaceStorage,
+  WorkspaceRepository,
+} from "openalgo-charts/workspace";
+import {
+  FundedWealthOpenAlgoDataFeed,
+  type OpenAlgoQuoteStatus,
+} from "@/lib/openAlgoDataFeed";
+import type { TerminalMarketDataInstrument } from "@/lib/terminalApi";
 
 interface StockChartProps {
   symbol: string;
-  /** Inline mode renders directly, otherwise renders inside a Card */
+  selectedInstrument?: TerminalMarketDataInstrument;
+  /** Inline mode renders directly, otherwise renders inside a Card. */
   inline?: boolean;
-  /** Initial height in pixels */
+  /** Initial height in pixels for a non-filling chart. */
   height?: number;
   /** Fill the available inline container height. */
   fill?: boolean;
-  /** Force the existing candlestick rendering for a workspace tab. */
-  candleOnly?: boolean;
-  /** Explain why candles cannot be requested before reporting an empty history. */
+  /** Explain the chart's unavailable state in the host workspace. */
   unavailableMessage?: string;
-  /** Provider instrument ID for the selected contract. */
-  instrumentToken?: string;
-  /** If provided, renders as a Sheet (drawer) */
+  /** If provided, renders as a Sheet (drawer). */
   asSheet?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }
 
-function ChartCore({
+function quoteStatusText(status: OpenAlgoQuoteStatus, message?: string): string {
+  if (status === "live") return "Dhan quotes updating · 5s polling";
+  if (status === "stale") return message ?? "Market closed or the latest provider quote is stale.";
+  if (status === "error") return `Quote updates unavailable · ${message ?? "provider error"}`;
+  return "Connecting to Dhan quotes…";
+}
+
+function OpenAlgoChart({
   symbol,
-  height = 340,
-  fill = false,
-  candleOnly = false,
+  selectedInstrument,
+  height,
+  fill,
   unavailableMessage,
-  instrumentToken,
 }: {
   symbol: string;
-  height?: number;
-  fill?: boolean;
-  candleOnly?: boolean;
+  selectedInstrument?: TerminalMarketDataInstrument;
+  height: number;
+  fill: boolean;
   unavailableMessage?: string;
-  instrumentToken?: string;
 }) {
-  const chartContainerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-  const [range, setRange] = useState<TimeRange>("3M");
-  const [chartType, setChartType] = useState<"candle" | "line">("candle");
-  const { data: candles, isLoading, error } = useChartData(symbol, range, true, instrumentToken);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const widgetRef = useRef<Widget | null>(null);
+  const feedRef = useRef<FundedWealthOpenAlgoDataFeed | null>(null);
+  const initialSelection = useRef({
+    symbol: selectedInstrument?.tradingSymbol ?? symbol,
+    exchange: selectedInstrument?.exchange ?? "",
+    instrument: selectedInstrument,
+  });
+  const selectionKey = [
+    selectedInstrument?.providerInstrumentId ?? "",
+    selectedInstrument?.exchange ?? "",
+    selectedInstrument?.tradingSymbol ?? symbol,
+  ].join("\u001f");
+  const previousSelectionKey = useRef(selectionKey);
   const isDark = useIsDark();
-
-  const buildChart = useCallback(() => {
-    if (!chartContainerRef.current || !candles || candles.length === 0) return;
-
-    // Destroy previous chart
-    if (chartRef.current) {
-      chartRef.current.remove();
-      chartRef.current = null;
-    }
-
-    const container = chartContainerRef.current;
-    const colors = getChartColors(isDark);
-    const gridColor = isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)";
-    const crosshairColor = isDark ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.15)";
-
-    const chart = createChart(container, {
-      width: container.clientWidth,
-      height: fill ? container.clientHeight : height,
-      layout: {
-        background: { type: ColorType.Solid, color: "transparent" },
-        textColor: colors.text,
-        fontFamily: "'Inter', 'SF Pro', system-ui, sans-serif",
-        fontSize: 11,
-      },
-      grid: {
-        vertLines: { color: gridColor },
-        horzLines: { color: gridColor },
-      },
-      crosshair: {
-        vertLine: { color: crosshairColor, width: 1, style: 2, labelBackgroundColor: colors.primary },
-        horzLine: { color: crosshairColor, width: 1, style: 2, labelBackgroundColor: colors.primary },
-      },
-      rightPriceScale: {
-        borderVisible: false,
-        scaleMargins: { top: 0.1, bottom: 0.25 },
-      },
-      timeScale: {
-        borderVisible: false,
-        timeVisible: range === "1W",
-        secondsVisible: false,
-        rightOffset: 3,
-        minBarSpacing: range === "1W" ? 3 : 4,
-      },
-      handleScroll: { mouseWheel: true, pressedMouseMove: true },
-      handleScale: { mouseWheel: true, pinch: true },
-    });
-
-    chartRef.current = chart;
-
-    // Format candle data for lightweight-charts
-    const formattedCandles = candles.map((c) => ({
-      time: c.time as Time,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-    }));
-
-    const renderedChartType = candleOnly ? "candle" : chartType;
-
-    if (renderedChartType === "candle") {
-      const candleSeries = chart.addSeries(CandlestickSeries, {
-        upColor: colors.bullish,
-        downColor: colors.bearish,
-        borderUpColor: colors.bullish,
-        borderDownColor: colors.bearish,
-        wickUpColor: colors.bullish,
-        wickDownColor: colors.bearish,
-      });
-      candleSeries.setData(formattedCandles);
-    } else {
-      const isPositive = candles[candles.length - 1].close >= candles[0].close;
-      const lineColor = isPositive ? colors.bullish : colors.bearish;
-      const lineSeries = chart.addSeries(LineSeries, {
-        color: lineColor,
-        lineWidth: 2,
-        crosshairMarkerVisible: true,
-        crosshairMarkerRadius: 4,
-      });
-      lineSeries.setData(
-        candles.map((c) => ({ time: c.time as Time, value: c.close }))
-      );
-    }
-
-    // Volume histogram — tinted to match the theme's bullish/bearish palette
-    const volumeData = candles
-      .filter((c) => c.volume && c.volume > 0)
-      .map((c, i, arr) => ({
-        time: c.time as Time,
-        value: c.volume!,
-        color:
-          i > 0 && c.close >= arr[i - 1].close
-            ? `hsl(${colors.bullishRaw} / 0.25)`
-            : `hsl(${colors.bearishRaw} / 0.2)`,
-      }));
-
-    if (volumeData.length > 0) {
-      const volumeSeries = chart.addSeries(HistogramSeries, {
-        priceFormat: { type: "volume" },
-        priceScaleId: "volume",
-      });
-      volumeSeries.priceScale().applyOptions({
-        scaleMargins: { top: 0.8, bottom: 0 },
-      });
-      volumeSeries.setData(volumeData);
-    }
-
-    chart.timeScale().fitContent();
-
-    // Resize handler
-    const resizeObserver = new ResizeObserver((entries) => {
-      const { width: w, height: h } = entries[0].contentRect;
-      chart.applyOptions({ width: w, height: fill ? h : height });
-    });
-    resizeObserver.observe(container);
-
-    return () => {
-      resizeObserver.disconnect();
-      chart.remove();
-      chartRef.current = null;
-    };
-  }, [candles, height, fill, candleOnly, chartType, range, isDark]);
+  const initialTheme = useRef(isDark ? "dark" : "light");
+  const [quoteStatus, setQuoteStatus] = useState("Connecting to Dhan quotes…");
+  const [mountError, setMountError] = useState<string | null>(null);
+  const [quoteError, setQuoteError] = useState(false);
 
   useEffect(() => {
-    const cleanup = buildChart();
-    return () => cleanup?.();
-  }, [buildChart]);
+    const container = containerRef.current;
+    if (!container) return;
 
-  const lastCandle = candles?.[candles.length - 1];
-  const firstCandle = candles?.[0];
-  const priceChange =
-    lastCandle && firstCandle
-      ? ((lastCandle.close - firstCandle.close) / firstCandle.close) * 100
-      : 0;
+    let active = true;
+    let widget: Widget | null = null;
+    let feed: FundedWealthOpenAlgoDataFeed | null = null;
+    try {
+      feed = new FundedWealthOpenAlgoDataFeed(initialSelection.current.instrument, (status, message) => {
+        if (!active) return;
+        setQuoteStatus(quoteStatusText(status, message));
+        setQuoteError(status === "error");
+      });
+      feedRef.current = feed;
+      const workspaceStorage = createIndexedDbWorkspaceStorage(
+        window.indexedDB,
+        "fundedwealth-openalgo-workspaces",
+      );
+      const workspaces = new WorkspaceRepository(workspaceStorage, "primary");
+      widget = createWidget(container, {
+        feed: feed.feed,
+        symbol: initialSelection.current.symbol,
+        exchange: initialSelection.current.exchange,
+        interval: "1d",
+        theme: initialTheme.current,
+        branding: false,
+        topbar: true,
+        indicators: true,
+        panels: true,
+        rail: true,
+        drawingToolbar: true,
+        persist: "fundedwealth-openalgo",
+        workspaces,
+        lookbackBars: 500,
+        onOrder: () => {
+          toast.info("OpenAlgo chart orders are disconnected from FundedWealth. No order was placed.");
+        },
+      });
+      widgetRef.current = widget;
+      void widget.ready.then(() => {
+        if (active && initialSelection.current.symbol) {
+          widget?.setSymbol(initialSelection.current.symbol, initialSelection.current.exchange);
+        }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "The OpenAlgo chart could not be initialized.";
+      setMountError(message);
+      setQuoteError(true);
+    }
+
+    return () => {
+      active = false;
+      widget?.destroy();
+      feed?.destroy();
+      widgetRef.current = null;
+      feedRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    widgetRef.current?.setTheme(isDark ? "dark" : "light");
+  }, [isDark]);
+
+  useEffect(() => {
+    if (previousSelectionKey.current === selectionKey) return;
+    previousSelectionKey.current = selectionKey;
+    try {
+      if (selectedInstrument) feedRef.current?.registerInstrument(selectedInstrument);
+      widgetRef.current?.setSymbol(
+        selectedInstrument?.tradingSymbol ?? symbol,
+        selectedInstrument?.exchange ?? "",
+      );
+      setMountError(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "The selected instrument is not supported.";
+      setMountError(message);
+      setQuoteError(true);
+    }
+  }, [selectionKey, selectedInstrument, symbol]);
 
   return (
-    <div className={fill ? "flex h-full min-h-0 flex-col space-y-2" : "space-y-2"}>
-      {/* Controls */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <ToggleGroup
-            type="single"
-            value={range}
-            onValueChange={(v) => v && setRange(v as TimeRange)}
-            className="bg-muted rounded-md p-0.5"
-          >
-            {TIME_RANGES.map((r) => (
-              <ToggleGroupItem
-                key={r}
-                value={r}
-                className="text-xs h-6 px-2.5 data-[state=on]:bg-background data-[state=on]:shadow-sm rounded"
-              >
-                {r}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-
-          <ToggleGroup
-            type="single"
-            value={candleOnly ? "candle" : chartType}
-            onValueChange={(v) => v && !candleOnly && setChartType(v as "candle" | "line")}
-            className="bg-muted rounded-md p-0.5"
-          >
-            <ToggleGroupItem value="candle" className="h-6 w-7 p-0 data-[state=on]:bg-background data-[state=on]:shadow-sm rounded">
-              <CandlestickChart className="h-3.5 w-3.5" />
-            </ToggleGroupItem>
-            <ToggleGroupItem value="line" className="h-6 w-7 p-0 data-[state=on]:bg-background data-[state=on]:shadow-sm rounded">
-              <LineChart className="h-3.5 w-3.5" />
-            </ToggleGroupItem>
-          </ToggleGroup>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {lastCandle && (
-            <>
-              <span className="text-xs font-mono font-semibold">
-                ₹{lastCandle.close.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
-              </span>
-              <Badge
-                variant="outline"
-                className={`text-[11px] font-mono ${priceChange >= 0 ? "text-bullish border-bullish/30" : "text-bearish border-bearish/30"}`}
-              >
-                {priceChange >= 0 ? "+" : ""}
-                {priceChange.toFixed(2)}%
-              </Badge>
-            </>
-          )}
-          {isLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
-        </div>
+    <div className={`flex w-full flex-col ${fill ? "h-full min-h-[360px]" : ""}`}>
+      <div className="flex min-h-7 shrink-0 items-center justify-between gap-2 border-b border-border px-2 text-[10px] text-muted-foreground">
+        <span className="truncate">
+          FundedWealth · {selectedInstrument?.tradingSymbol ?? symbol} · Indian market data
+        </span>
+        <Badge
+          variant="outline"
+          className={`shrink-0 px-1.5 py-0 text-[9px] ${quoteError ? "border-destructive/40 text-destructive" : ""}`}
+          role="status"
+          aria-live="polite"
+        >
+          {quoteStatus}
+        </Badge>
       </div>
-
-      {/* Chart Container */}
-      <div className={fill ? "relative min-h-0 flex flex-1 flex-col" : "relative"}>
-        {isLoading && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60 backdrop-blur-sm rounded-lg">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Loading chart...
-            </div>
-          </div>
-        )}
-        {error && !candles && (
-          <div className="flex items-center justify-center h-[200px] text-sm text-muted-foreground">
-            Chart data unavailable. Start the proxy server for live data.
-          </div>
-        )}
-        <div ref={chartContainerRef} className={`w-full rounded-lg overflow-hidden ${fill ? "min-h-0 flex-1" : ""}`} />
-        {candles && candles.length === 0 && !isLoading && (
-          <div className="flex items-center justify-center h-[200px] text-sm text-muted-foreground">
-            {unavailableMessage ?? `No historical data available for ${symbol}`}
-          </div>
-        )}
-      </div>
+      {mountError && (
+        <div role="alert" className="shrink-0 px-3 py-2 text-xs text-destructive">
+          {mountError}
+        </div>
+      )}
+      {!mountError && unavailableMessage && (
+        <div className="sr-only" aria-live="polite">{unavailableMessage}</div>
+      )}
+      <div
+        ref={containerRef}
+        className={`w-full min-h-0 flex-1 overflow-hidden ${fill ? "" : "rounded-b-lg"}`}
+        style={fill ? undefined : { height }}
+        data-testid="openalgo-chart-widget"
+      />
     </div>
   );
 }
 
-/**
- * Full interactive stock chart component.
- * Can render inline (as a Card) or as a Sheet (drawer).
- */
 export function StockChart({
   symbol,
+  selectedInstrument,
   inline = false,
   height = 340,
   fill = false,
-  candleOnly = false,
   unavailableMessage,
-  instrumentToken,
   asSheet = false,
   open = false,
   onOpenChange,
@@ -289,15 +204,21 @@ export function StockChart({
   if (asSheet) {
     return (
       <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent side="bottom" className="h-[480px]">
+        <SheetContent side="bottom" className="h-[520px]">
           <SheetHeader>
             <SheetTitle className="flex items-center gap-2 text-base">
               <BarChart3 className="h-4 w-4 text-primary" />
-              {symbol} — Price Chart
+              {symbol} — Chart
             </SheetTitle>
           </SheetHeader>
-          <div className="mt-3">
-            <ChartCore symbol={symbol} height={380} unavailableMessage={unavailableMessage} instrumentToken={instrumentToken} />
+          <div className="mt-3 h-[430px] min-h-0">
+            <OpenAlgoChart
+              symbol={symbol}
+              selectedInstrument={selectedInstrument}
+              height={430}
+              fill
+              unavailableMessage={unavailableMessage}
+            />
           </div>
         </SheetContent>
       </Sheet>
@@ -305,19 +226,33 @@ export function StockChart({
   }
 
   if (inline) {
-    return <ChartCore symbol={symbol} height={height} fill={fill} candleOnly={candleOnly} unavailableMessage={unavailableMessage} instrumentToken={instrumentToken} />;
+    return (
+      <OpenAlgoChart
+        symbol={symbol}
+        selectedInstrument={selectedInstrument}
+        height={height}
+        fill={fill}
+        unavailableMessage={unavailableMessage}
+      />
+    );
   }
 
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2">
+        <CardTitle className="flex items-center gap-2 text-sm">
           <BarChart3 className="h-4 w-4 text-primary" />
-          {symbol} — Price Chart
+          {symbol} — OpenAlgo Chart
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <ChartCore symbol={symbol} height={height} unavailableMessage={unavailableMessage} instrumentToken={instrumentToken} />
+        <OpenAlgoChart
+          symbol={symbol}
+          selectedInstrument={selectedInstrument}
+          height={height}
+          fill={false}
+          unavailableMessage={unavailableMessage}
+        />
       </CardContent>
     </Card>
   );

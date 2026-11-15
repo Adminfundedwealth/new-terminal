@@ -133,10 +133,22 @@ export function InstrumentExplorer({
   const marketDataProvider = resolveTerminalMarketDataProvider(activeAccountProvider) ?? "dhan";
   const marketDataAccountId = marketDataProvider === "dhan" ? null : activeAccountId;
   const canLoadMarketData = marketDataProvider === "dhan" || Boolean(activeAccountId);
-  const chartInstrument = workspaceInstruments.find((instrument) => instrument.tradingSymbol.toUpperCase() === (chartSymbol ?? "").toUpperCase());
-  const chartInstrumentToken = chartInstrument?.provider === "zerodha"
-    ? chartInstrument.providerInstrumentId || chartInstrument.securityId
-    : chartSymbol === initialChartSymbol ? initialInstrumentToken : undefined;
+  const normalizedChartSymbol = (chartSymbol ?? "").toUpperCase();
+  const chartInstrument = rows.find((row) =>
+    row.instrument &&
+    [row.chartSymbol, row.symbol].some((candidate) =>
+      candidate?.toUpperCase() === normalizedChartSymbol
+    ),
+  )?.instrument ?? workspaceInstruments.find((instrument) =>
+    instrument.tradingSymbol.toUpperCase() === normalizedChartSymbol ||
+    (chartSymbol === initialChartSymbol &&
+      Boolean(initialInstrumentToken) &&
+      (instrument.providerInstrumentId || instrument.securityId) === initialInstrumentToken),
+  );
+  const chartDataInstrument = chartInstrument &&
+    (!chartInstrument.provider || chartInstrument.provider === "dhan")
+    ? toTerminalMarketDataInstrument(chartInstrument, marketDataProvider)
+    : undefined;
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toUpperCase();
@@ -1019,8 +1031,7 @@ export function InstrumentExplorer({
                       symbol={chartSymbol}
                       inline
                       fill
-                      candleOnly={activeTab === "Markets"}
-                      instrumentToken={chartInstrumentToken}
+                      selectedInstrument={chartDataInstrument}
                       unavailableMessage={workspaceContext === "stocks" ? chartUnavailableMessage : undefined}
                     />
                   </div>

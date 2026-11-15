@@ -1,6 +1,7 @@
 import { StockChart } from "@/components/StockChart";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import type { TerminalMarketDataInstrument } from "@/lib/terminalApi";
 
 export type ChartTab = {
   id: string;
@@ -13,6 +14,7 @@ export type ChartTab = {
   securityId: string;
   exchangeSegment: string;
   lotSize: number;
+  instrument: TerminalMarketDataInstrument;
 };
 
 export function OptionContractChartTab({
@@ -64,10 +66,9 @@ export function OptionContractChartTab({
       <div className="h-[600px] min-h-[400px]">
         <StockChart
           symbol={tab.tradingSymbol}
-          instrumentToken={tab.securityId}
+          selectedInstrument={tab.instrument}
           inline
           fill
-          candleOnly
           unavailableMessage="Historical OHLC for this contract is loading…"
         />
       </div>

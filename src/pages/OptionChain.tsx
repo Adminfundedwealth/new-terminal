@@ -92,11 +92,11 @@ import {
 } from "@/lib/optionContractWatchlist";
 
 import {
-
+  toTerminalMarketDataInstrument,
   requestTerminalMarketData,
+  type TerminalMarketDataInstrument,
   type TerminalMarketDataQuote,
   type TerminalMarketDataOptionChain,
-
 } from "@/lib/terminalApi";
 
 
@@ -599,11 +599,9 @@ type OptionTab =
       expiry: string;
 
       securityId: string;
-
       exchangeSegment: string;
-
       lotSize: number;
-
+      instrument: TerminalMarketDataInstrument;
     };
 
 type MultiExpiryRow = {
@@ -1126,11 +1124,9 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
         expiry: expiryValue,
 
         securityId: optionInstrument.providerInstrumentId || optionInstrument.securityId,
-
         exchangeSegment: optionInstrument.exchangeSegment,
-
         lotSize: optionInstrument.lotSize,
-
+        instrument: toTerminalMarketDataInstrument(optionInstrument, "dhan"),
       };
 
       return [...prev, newTab];
@@ -1966,7 +1962,21 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
       {showChart && (
 
-        <StockChart symbol={symbol} inline height={280} />
+        <StockChart
+          symbol={centralUnderlyingInstrument?.tradingSymbol ?? symbol}
+          selectedInstrument={centralUnderlyingInstrument ? {
+            provider: "dhan",
+            providerInstrumentId: centralUnderlyingInstrument.securityId,
+            symbol: centralUnderlyingInstrument.tradingSymbol,
+            tradingSymbol: centralUnderlyingInstrument.tradingSymbol,
+            exchange: centralUnderlyingInstrument.exchange ??
+              (centralUnderlyingInstrument.exchangeSegment === "BSE_IDX" ? "BSE" : "NSE"),
+            exchangeSegment: centralUnderlyingInstrument.exchangeSegment,
+            instrumentType: centralUnderlyingInstrument.instrumentType,
+          } : undefined}
+          inline
+          height={280}
+        />
 
       )}
 
