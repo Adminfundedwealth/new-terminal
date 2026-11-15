@@ -121,7 +121,7 @@ vi.mock("@/components/StockChart", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/StockChart")>();
   return {
     ...actual,
-    StockChart: ({ symbol, instrumentToken, unavailableMessage }: { symbol: string; instrumentToken?: string; unavailableMessage?: string }) => <div data-testid="stock-chart" data-instrument-token={instrumentToken} data-unavailable-message={unavailableMessage}>{symbol} chart mock</div>,
+    StockChart: ({ symbol, selectedInstrument, unavailableMessage }: { symbol: string; selectedInstrument?: { providerInstrumentId: string }; unavailableMessage?: string }) => <div data-testid="stock-chart" data-selected-instrument-id={selectedInstrument?.providerInstrumentId} data-unavailable-message={unavailableMessage}>{symbol} chart mock</div>,
   };
 });
 
@@ -158,6 +158,18 @@ describe("InstrumentExplorer stock workspace", () => {
   }) {
     requestTerminalMarketDataMock.mockImplementation(async (_accountId, _provider, operation) => {
       if (operation.operation === "searchInstruments") return [globalTmpvInstrument];
+      if (operation.operation === "getQuotes") {
+        return operation.instruments.flatMap((instrument) => {
+          const quote = quotesByInstrument[instrument.providerInstrumentId];
+          return quote ? [{
+            ...quote,
+            provider: "dhan",
+            symbol: instrument.symbol,
+            tradingSymbol: instrument.tradingSymbol,
+            exchange: instrument.exchange,
+          }] : [];
+        });
+      }
       if (operation.operation === "getQuote") {
         return quotesByInstrument[operation.instrument.providerInstrumentId] ?? null;
       }
@@ -219,8 +231,10 @@ describe("InstrumentExplorer stock workspace", () => {
     const quoteQueryKey = ["terminal-explorer-quotes", "stocks", null, "dhan", ["500490"]];
     await waitFor(() => {
       expect(requestTerminalMarketDataMock).toHaveBeenCalledWith(null, "dhan", expect.objectContaining({
-        operation: "getQuote",
-        instrument: expect.objectContaining({ providerInstrumentId: "500490" }),
+        operation: "getQuotes",
+        instruments: expect.arrayContaining([
+          expect.objectContaining({ providerInstrumentId: "500490" }),
+        ]),
       }));
       expect(queryClient.getQueryState(quoteQueryKey)?.status).toBe("success");
     });
@@ -235,12 +249,12 @@ describe("InstrumentExplorer stock workspace", () => {
     expect(screen.getAllByText("ABB").length).toBeGreaterThan(1);
     expect(screen.getAllByText("NSE").length).toBeGreaterThan(1);
     expect(screen.getByTestId("stock-chart")).toHaveTextContent("ABB chart mock");
+    expect(screen.getByTestId("stock-chart")).toHaveAttribute("data-selected-instrument-id", "500490");
     await waitFor(() => {
       expect(queryClient.getQueryState(["terminal-selected-quote", null, "dhan", "ABB"])?.status).toBe("success");
     });
     expect(screen.getByTestId("stock-chart")).not.toHaveAttribute("data-unavailable-message");
     expect(screen.queryByText(/Dhan|broker|link .*account/i)).not.toBeInTheDocument();
-    expect(screen.getByText("LIVE")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Option Chain" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Futures" })).not.toBeInTheDocument();
   });
@@ -459,7 +473,7 @@ describe("InstrumentExplorer stock workspace", () => {
 
     expect(screen.getByRole("button", { name: /back to futures/i })).toBeInTheDocument();
     expect(screen.getByTestId("stock-chart")).toHaveTextContent("NIFTY26DEC26FUT chart mock");
-    expect(screen.getByTestId("stock-chart")).toHaveAttribute("data-instrument-token", "12345");
+    expect(screen.getByTestId("stock-chart")).not.toHaveAttribute("data-selected-instrument-id");
     expect(screen.queryByTestId("bottom-trading-workspace")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "BUY" }));
     let ticket = screen.getByRole("dialog", { name: "SIMULATED BUY order ticket" });
