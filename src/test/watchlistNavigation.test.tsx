@@ -72,8 +72,12 @@ describe("Watchlist instrument chart navigation", () => {
       expect(screen.getByRole("button", { name: "View chart for RELIANCE" })).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "View chart for AAFS27C" })).not.toBeInTheDocument();
       expect(screen.getByText(/2 supported symbols/)).toBeInTheDocument();
-      expect(screen.getByRole("status")).toHaveTextContent("No supported cash-equity or index instrument found for 1 watchlist symbol: AAFS27C");
+      expect(screen.getByText("1 unsupported watchlist symbol hidden from the table")).toBeInTheDocument();
+      expect(screen.getByText("AAFS27C")).not.toBeVisible();
     });
+
+    fireEvent.click(screen.getByText("1 unsupported watchlist symbol hidden from the table"));
+    expect(screen.getByText("AAFS27C")).toBeVisible();
   });
 
   it("rejects adding a debt-series instrument", () => {

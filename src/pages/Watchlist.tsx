@@ -252,9 +252,14 @@ export default function Watchlist() {
       </div>
       {addSymbolError && <p className="text-xs text-destructive" role="alert">{addSymbolError}</p>}
       {instrumentsLoaded && supportedInstruments.length > 0 && unresolvedSymbols.length > 0 && (
-        <p className="text-xs text-amber-500" role="status">
-          No supported cash-equity or index instrument found for {unresolvedSymbols.length} watchlist symbol{unresolvedSymbols.length === 1 ? "" : "s"}: {unresolvedSymbols.join(", ")}
-        </p>
+        <details className="rounded border border-amber-500/20 bg-amber-500/5 px-2 py-1 text-xs text-amber-500">
+          <summary className="cursor-pointer select-none">
+            {unresolvedSymbols.length} unsupported watchlist symbol{unresolvedSymbols.length === 1 ? "" : "s"} hidden from the table
+          </summary>
+          <p className="mt-1 max-h-24 overflow-y-auto break-all pr-1 leading-relaxed">
+            {unresolvedSymbols.join(", ")}
+          </p>
+        </details>
       )}
 
       {optionContracts.length > 0 && (
