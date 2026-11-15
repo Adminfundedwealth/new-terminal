@@ -11,7 +11,7 @@ vi.mock("@/components/StockChart", () => ({
 }));
 
 describe("OptionContractChartTab", () => {
-  it("opens the selected option symbol using its exact provider ID and displays contract identity", () => {
+  it("passes the exact selected option contract to the chart and displays its identity", () => {
     render(
       <OptionContractChartTab
         tab={{
@@ -25,6 +25,18 @@ describe("OptionContractChartTab", () => {
           securityId: "987654",
           exchangeSegment: "NSE_FNO",
           lotSize: 250,
+          instrument: {
+            provider: "dhan",
+            providerInstrumentId: "987654",
+            symbol: "RELIANCE",
+            tradingSymbol: "RELIANCE26NOV1340CE",
+            exchange: "NSE",
+            exchangeSegment: "NSE_FNO",
+            instrumentType: "OPTSTK",
+            expiryDate: "2026-11-26",
+            strikePrice: 1340,
+            optionType: "CE",
+          },
         }}
         onBuy={vi.fn()}
         onSell={vi.fn()}
@@ -34,7 +46,14 @@ describe("OptionContractChartTab", () => {
     expect(screen.getByText("ID 987654 · Lot 250")).toBeInTheDocument();
     expect(stockChart).toHaveBeenCalledWith(expect.objectContaining({
       symbol: "RELIANCE26NOV1340CE",
-      instrumentToken: "987654",
+      selectedInstrument: expect.objectContaining({
+        providerInstrumentId: "987654",
+        exchange: "NSE",
+        exchangeSegment: "NSE_FNO",
+        expiryDate: "2026-11-26",
+        strikePrice: 1340,
+        optionType: "CE",
+      }),
     }));
   });
 });
