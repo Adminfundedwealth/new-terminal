@@ -196,6 +196,7 @@ export function useInstrumentLookup() {
       const normalizeMasterRows = async (rows: unknown[]): Promise<Instrument[]> => {
         const instruments: Instrument[] = [];
         const seenKeys = new Set<string>();
+        const catalogNow = new Date();
         for (let index = 0; index < rows.length; index += 1) {
           if (index > 0 && index % 2_000 === 0) {
             await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -211,7 +212,7 @@ export function useInstrumentLookup() {
           const category = classifyInstrument(normalized);
           if (!category || !["stocks", "indices", "futures", "options"].includes(category)) continue;
           if (category === "stocks" && !isCashEquityListing(normalized)) continue;
-          if ((category === "futures" || category === "options") && !hasActiveInstrumentExpiry(normalized.expiryDate)) continue;
+          if ((category === "futures" || category === "options") && !hasActiveInstrumentExpiry(normalized.expiryDate, catalogNow)) continue;
           const key = `${normalized.exchangeSegment}:${normalized.providerInstrumentId || normalized.securityId}`;
           if (seenKeys.has(key)) continue;
           seenKeys.add(key);

@@ -6,6 +6,13 @@ const EQUITY_SEGMENTS = new Set(["NSE_EQ", "BSE_EQ"]);
 const INDEX_SEGMENTS = new Set(["IDX_I", "BSE_IDX"]);
 const NSE_EQUITY_SERIES = new Set(["EQ", "BE", "BZ", "IV", "RR", "SM", "ST", "X", "XT"]);
 const BSE_EQUITY_SERIES = new Set(["A", "B", "IF", "NS", "NT", "T", "X", "XT", "Z"]);
+const INDIA_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Asia/Kolkata",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+const INDIA_DATE_KEYS = new WeakMap<Date, string>();
 const INDEX_SYMBOL_ALIASES: Record<string, string> = {
   NIFTY: "NIFTY",
   NIFTY50: "NIFTY",
@@ -25,14 +32,13 @@ function normalized(value: string | undefined): string {
 }
 
 function indiaDateKey(date: Date): string {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(date);
+  const cached = INDIA_DATE_KEYS.get(date);
+  if (cached) return cached;
+  const parts = INDIA_DATE_FORMATTER.formatToParts(date);
   const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((value) => value.type === type)?.value ?? "";
-  return `${part("year")}-${part("month")}-${part("day")}`;
+  const key = `${part("year")}-${part("month")}-${part("day")}`;
+  INDIA_DATE_KEYS.set(date, key);
+  return key;
 }
 
 export function hasActiveInstrumentExpiry(expiryDate: string | undefined, now = new Date()): boolean {
