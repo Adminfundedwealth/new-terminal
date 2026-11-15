@@ -52,6 +52,11 @@ function request(body, headers = {}) {
 
 function makeStore({ identity = null, account = null, conflict = false, accountAction } = {}) {
   const calls = { invites: 0, creates: 0, reconciles: 0, audits: 0, inspectOptions: [] };
+  const ruleVersion = {
+    id: "77777777-7777-4777-8777-777777777777",
+    status: "active",
+    rules: { evaluation_rules: { max_drawdown_percent: 6 } },
+  };
   let currentIdentity = identity;
   let currentAccount = account;
   return {
@@ -65,7 +70,7 @@ function makeStore({ identity = null, account = null, conflict = false, accountA
           account: currentAccount,
           identityAction: currentIdentity ? "reuse_existing_identity" : "invite_existing_customer",
           accountAction: accountAction ?? (currentAccount ? "already_linked" : "create_terminal_mapping"),
-          ruleSet: {},
+          ruleVersion,
         };
       },
       async inviteIdentity() {
@@ -112,6 +117,12 @@ test("ensures funded and passed accounts while refusing breached accounts", asyn
       challenge: { ...source.challenge, status },
     });
     assert.equal(result.created, true);
+    assert.equal(result.ruleVersionId, "77777777-7777-4777-8777-777777777777");
+    assert.deepEqual(result.ruleVersion, {
+      id: "77777777-7777-4777-8777-777777777777",
+      status: "active",
+      rules: { evaluation_rules: { max_drawdown_percent: 6 } },
+    });
   }
 
   const { store } = makeStore();
@@ -637,6 +648,11 @@ test("preserves sanitized database failure details when the audit preflight fail
         account: null,
         identityAction: "reuse_existing_identity",
         accountAction: "create_terminal_mapping",
+        ruleVersion: {
+          id: "77777777-7777-4777-8777-777777777777",
+          status: "active",
+          rules: { evaluation_rules: { max_drawdown_percent: 6 } },
+        },
       };
     },
     async writeAudit() {

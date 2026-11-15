@@ -147,6 +147,23 @@ export function canonicalizeLegacyInstantFundedRules(ruleVersion) {
   return canonicalizeLegacyFundedRules(ruleVersion, "INSTANT");
 }
 
+function terminalRuleBinding(ruleVersion) {
+  if (!ruleVersion?.id || ruleVersion.status !== "active" ||
+      !ruleVersion.rules || typeof ruleVersion.rules !== "object" ||
+      Object.keys(ruleVersion.rules).length === 0) {
+    throw Object.assign(new Error("An active terminal rule version could not be verified for this account."), { status: 409 });
+  }
+
+  return {
+    ruleVersionId: ruleVersion.id,
+    ruleVersion: {
+      id: ruleVersion.id,
+      status: ruleVersion.status,
+      rules: ruleVersion.rules,
+    },
+  };
+}
+
 function makeSupabaseStore({ fetchImpl, env }) {
   const baseUrl = env.SUPABASE_URL?.replace(/\/+$/, "");
   const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY ?? env.SUPABASE_SECRET_KEY;
@@ -321,7 +338,7 @@ function makeSupabaseStore({ fetchImpl, env }) {
     const catalog = await ensureCatalog(source, { repairLegacyFundedRules });
     let product = null;
     let phase = null;
-    let ruleVersion = null;
+    let ruleVersion = catalog.ruleVersion;
     if (existing) {
       [product] = await rows("products", new URLSearchParams({
         select: "id,code,status",
@@ -613,13 +630,14 @@ export function createTerminalAccountLinkWorkflow(store) {
   async function link(source, actor) {
     const validated = validateSource(source);
     const plan = await store.inspect(validated, { repairLegacyFundedRules: true });
+    const ruleBinding = terminalRuleBinding(plan.ruleVersion);
     if (plan.accountAction === "already_linked") {
       try {
         await store.writeAudit(validated, plan.identity, plan.account, actor, "already_linked");
       } catch {
         throw Object.assign(new Error("The mapping already exists, but its terminal audit event could not be recorded."), { status: 500 });
       }
-      return { created: false, accountId: plan.account.id, identityId: plan.identity.id };
+      return { created: false, accountId: plan.account.id, identityId: plan.identity.id, ...ruleBinding };
     }
 
     const identity = plan.identity ?? await store.inviteIdentity(validated);
@@ -644,9 +662,9 @@ export function createTerminalAccountLinkWorkflow(store) {
     try {
       await store.writeAudit(validated, identity, account, actor, reconciled ? "external_account_id_reconciled" : "linked");
     } catch {
-      return { created: !reconciled, reconciled, accountId: account.id, identityId: identity.id, auditPending: true };
+      return { created: !reconciled, reconciled, accountId: account.id, identityId: identity.id, auditPending: true, ...ruleBinding };
     }
-    return { created: !reconciled, reconciled, accountId: account.id, identityId: identity.id };
+    return { created: !reconciled, reconciled, accountId: account.id, identityId: identity.id, ...ruleBinding };
   }
 
   async function ensure(source) {
