@@ -81,6 +81,7 @@ export function isCashEquityListing(instrument: Instrument): boolean {
   if (classifyInstrument(instrument) !== "stocks") return false;
   const symbol = instrument.symbol || instrument.tradingSymbol || "";
   if (!isCashEquitySymbol(symbol)) return false;
+  if (normalized(instrument.providerInstrumentType) === "ES") return true;
   const series = normalized(instrument.series);
   if (series) {
     const exchange = normalized(instrument.exchange);

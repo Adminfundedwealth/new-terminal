@@ -25,6 +25,7 @@ export interface Instrument {
   tickSize?: number;
   provider?: "dhan" | "kite" | "zerodha" | "angel_one" | "upstox" | "fivepaisa" | "fyers" | "aliceblue";
   providerInstrumentId?: string;
+  providerInstrumentType?: string;
   exchange?: string;
   series?: string;
   underlyingSecurityId?: string;

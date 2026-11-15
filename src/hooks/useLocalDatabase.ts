@@ -193,15 +193,9 @@ export function useInstrumentLookup() {
   const gatewayQuery = useQuery({
     queryKey: ["terminal-instrument-catalog", "founder-dhan"],
     queryFn: async ({ signal }) => {
-      const addInstrument = (list: Instrument[], instrument?: Instrument | null) => {
-        if (!instrument) return;
-        const key = `${instrument.exchangeSegment}:${instrument.providerInstrumentId || instrument.securityId}`;
-        if (list.some((existing) => `${existing.exchangeSegment}:${existing.providerInstrumentId || existing.securityId}` === key)) return;
-        list.push(instrument);
-      };
-
       const normalizeMasterRows = async (rows: unknown[]): Promise<Instrument[]> => {
         const instruments: Instrument[] = [];
+        const seenKeys = new Set<string>();
         for (let index = 0; index < rows.length; index += 1) {
           if (index > 0 && index % 2_000 === 0) {
             await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -218,7 +212,10 @@ export function useInstrumentLookup() {
           if (!category || !["stocks", "indices", "futures", "options"].includes(category)) continue;
           if (category === "stocks" && !isCashEquityListing(normalized)) continue;
           if ((category === "futures" || category === "options") && !hasActiveInstrumentExpiry(normalized.expiryDate)) continue;
-          addInstrument(instruments, normalized);
+          const key = `${normalized.exchangeSegment}:${normalized.providerInstrumentId || normalized.securityId}`;
+          if (seenKeys.has(key)) continue;
+          seenKeys.add(key);
+          instruments.push(normalized);
         }
         return instruments;
       };

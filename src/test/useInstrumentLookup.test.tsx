@@ -64,7 +64,7 @@ describe("useInstrumentLookup Dhan catalog", () => {
         instrumentType: "ES",
         lotSize: 1,
         tickSize: 0.05,
-        series: "A",
+        series: "MT",
       },
       {
         securityId: "543151",
@@ -148,7 +148,7 @@ describe("useInstrumentLookup Dhan catalog", () => {
     expect(result.current.instruments.some((instrument) => instrument.tradingSymbol === "08ABB")).toBe(false);
     expect(saveInstruments).toHaveBeenCalledWith(expect.arrayContaining([
       expect.objectContaining({ tradingSymbol: "RELIANCE", series: "EQ" }),
-      expect.objectContaining({ tradingSymbol: "TCS", series: "A" }),
+      expect.objectContaining({ tradingSymbol: "TCS", series: "MT", providerInstrumentType: "ES" }),
       expect.objectContaining({ tradingSymbol: "RELIANCE-2099-01-29", instrumentType: "FUTSTK", lotSize: 250 }),
       expect.objectContaining({ tradingSymbol: "NIFTY-2099-01-29-25000-PE", instrumentType: "OPTIDX" }),
     ]));
