@@ -28,8 +28,8 @@ import {
   type Instrument,
 } from "@/lib/localDatabase";
 import { classifyInstrument, hasActiveInstrumentExpiry, isCashEquityListing, type InstrumentCategory } from "@/lib/instrumentClassification";
-import { fetchDhanInstrumentMaster } from "@/lib/marketApi";
 import { normalizeProviderInstrument } from "@/lib/instrumentMaster";
+import { requestTerminalMarketData } from "@/lib/terminalApi";
 
 function filterCachedDhanInstruments(instruments: readonly Instrument[]): Instrument[] {
   return instruments.filter((instrument) =>
@@ -224,13 +224,20 @@ export function useInstrumentLookup() {
       let officialMasterInstruments: Instrument[] = [];
       let instrumentMasterError: string | null = null;
       try {
-        officialMasterInstruments = await normalizeMasterRows(await fetchDhanInstrumentMaster(signal));
+        const catalog = await requestTerminalMarketData<unknown[]>(
+          null,
+          "dhan",
+          { operation: "listInstruments" },
+          "production",
+          signal,
+        );
+        officialMasterInstruments = await normalizeMasterRows(catalog);
       } catch (error) {
         if (signal.aborted) throw error;
         instrumentMasterError = error instanceof Error
-          ? `Official Dhan instrument master failed: ${error.message}`
-          : "Official Dhan instrument master failed.";
-        console.error("Official Dhan instrument master failed:", error);
+          ? `Central Dhan instrument catalog failed: ${error.message}`
+          : "Central Dhan instrument catalog failed.";
+        console.error("Central Dhan instrument catalog failed:", error);
       }
 
       const localFallbackInstruments = filterCachedDhanInstruments(localQuery.data ?? []);
@@ -238,7 +245,7 @@ export function useInstrumentLookup() {
         ? officialMasterInstruments
         : localFallbackInstruments;
       const loadError = instrumentMasterError ?? (
-        officialMasterInstruments.length === 0 ? "Official Dhan instrument master returned no instruments." : null
+        officialMasterInstruments.length === 0 ? "Central Dhan instrument catalog returned no instruments." : null
       );
 
       const BATCH_SIZE = 2000;
