@@ -84,7 +84,7 @@ import { toast } from "sonner";
 import { useInstrumentLookup } from "@/hooks/useLocalDatabase";
 
 import { classifyInstrument } from "@/lib/instrumentClassification";
-import { findDhanOptionInstrument } from "@/lib/marketInstrumentResolver";
+import { findDhanOptionInstrument, resolveOptionChainUnderlyings } from "@/lib/marketInstrumentResolver";
 import {
   optionContractWatchlistKey,
   readOptionContractWatchlist,
@@ -98,225 +98,6 @@ import {
   type TerminalMarketDataQuote,
   type TerminalMarketDataOptionChain,
 } from "@/lib/terminalApi";
-
-
-
-//  Symbol categories for organized browsing 
-
-const SYMBOL_CATEGORIES: { label: string; symbols: { label: string; value: string }[] }[] = [
-
-  {
-
-    label: "Indices",
-
-    symbols: [
-
-      { label: "NIFTY 50", value: "NIFTY" },
-      { label: "SENSEX", value: "SENSEX" },
-
-      { label: "BANK NIFTY", value: "BANKNIFTY" },
-
-      { label: "FIN NIFTY", value: "FINNIFTY" },
-
-      { label: "MIDCAP NIFTY", value: "MIDCPNIFTY" },
-
-    ],
-
-  },
-
-  {
-
-    label: "Nifty 50 Stocks",
-
-    symbols: [
-
-      "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "HINDUNILVR",
-
-      "SBIN", "BHARTIARTL", "ITC", "KOTAKBANK", "LT", "AXISBANK",
-
-      "ASIANPAINT", "MARUTI", "TATAMOTORS", "SUNPHARMA", "TITAN",
-
-      "WIPRO", "ULTRACEMCO", "BAJFINANCE", "HCLTECH", "NTPC",
-
-      "POWERGRID", "ONGC", "ADANIENT", "ADANIPORTS", "COALINDIA",
-
-      "DRREDDY", "NESTLEIND", "CIPLA", "BAJAJFINSV", "GRASIM",
-
-      "JSWSTEEL", "BRITANNIA", "TECHM", "INDUSINDBK",
-
-      "HINDALCO", "M&M", "APOLLOHOSP", "EICHERMOT", "DIVISLAB",
-
-      "BPCL", "HEROMOTOCO", "TATASTEEL", "SBILIFE", "HDFCLIFE",
-
-      "SHRIRAMFIN", "TRENT", "BAJAJ-AUTO",
-
-    ].map(s => ({ label: s, value: s })),
-
-  },
-
-  {
-
-    label: "Banking & Finance",
-
-    symbols: [
-
-      "BANKBARODA", "PNB", "CANBK", "IDFCFIRSTB", "FEDERALBNK",
-
-      "BANDHANBNK", "RBLBANK", "AUBANK", "MANAPPURAM", "MUTHOOTFIN",
-
-      "CHOLAFIN", "LICHSGFIN", "CANFINHOME", "ICICIGI", "ICICIPRULI",
-
-      "HDFCAMC", "SBICARD", "RECLTD", "PFC",
-
-    ].map(s => ({ label: s, value: s })),
-
-  },
-
-  {
-
-    label: "IT & Technology",
-
-    symbols: [
-
-      "LTIM", "MPHASIS", "COFORGE", "PERSISTENT", "LTTS",
-
-      "HAPPSTMNDS", "TATAELXSI", "DIXON",
-
-    ].map(s => ({ label: s, value: s })),
-
-  },
-
-  {
-
-    label: "Pharma & Healthcare",
-
-    symbols: [
-
-      "TORNTPHARM", "LUPIN", "AUROPHARMA", "BIOCON", "ALKEM",
-
-      "IPCALAB", "LALPATHLAB", "METROPOLIS", "ABBOTINDIA", "SYNGENE", "GLENMARK",
-
-    ].map(s => ({ label: s, value: s })),
-
-  },
-
-  {
-
-    label: "Auto & Ancillary",
-
-    symbols: [
-
-      "ASHOKLEY", "ESCORTS", "TVSMOTOR", "MRF", "MOTHERSON",
-
-      "EXIDEIND", "BALKRISIND", "BHARATFORG",
-
-    ].map(s => ({ label: s, value: s })),
-
-  },
-
-  {
-
-    label: "Metals & Mining",
-
-    symbols: [
-
-      "VEDL", "JINDALSTEL", "SAIL", "NMDC", "NATIONALUM",
-
-      "MOIL", "HINDALCO", "TATASTEEL",
-
-    ].map(s => ({ label: s, value: s })),
-
-  },
-
-  {
-
-    label: "Energy & Oil",
-
-    symbols: [
-
-      "IOC", "GAIL", "PETRONET", "IGL", "MGL", "PIIND", "NHPC", "TATAPOWER",
-
-    ].map(s => ({ label: s, value: s })),
-
-  },
-
-  {
-
-    label: "Defence & PSU",
-
-    symbols: [
-
-      "HAL", "BEL", "BHEL", "IRCTC", "IRFC", "RVNL", "CONCOR", "SUZLON",
-
-    ].map(s => ({ label: s, value: s })),
-
-  },
-
-  {
-
-    label: "Infra & Capital Goods",
-
-    symbols: [
-
-      "SIEMENS", "ABB", "CUMMINSIND", "VOLTAS", "HAVELLS",
-
-      "CROMPTON", "POLYCAB", "ADANIGREEN", "ADANITRANS",
-
-    ].map(s => ({ label: s, value: s })),
-
-  },
-
-  {
-
-    label: "FMCG & Consumer",
-
-    symbols: [
-
-      "GODREJCP", "DABUR", "MARICO", "COLPAL", "EMAMILTD", "UBL",
-
-      "PAGEIND", "BATAINDIA", "JUBLFOOD",
-
-    ].map(s => ({ label: s, value: s })),
-
-  },
-
-  {
-
-    label: "Real Estate",
-
-    symbols: [
-
-      "DLF", "GODREJPROP", "OBEROIRLTY", "PRESTIGE", "BRIGADE", "PHOENIXLTD",
-
-    ].map(s => ({ label: s, value: s })),
-
-  },
-
-  {
-
-    label: "New Age & Others",
-
-    symbols: [
-
-      "ZOMATO", "PAYTM", "NYKAA", "POLICYBZR", "DELHIVERY", "INDIGO",
-
-      "MCX", "PVRINOX", "SUNTV", "ZEEL", "IDEA",
-
-    ].map(s => ({ label: s, value: s })),
-
-  },
-
-];
-
-
-
-// Flat list for search
-
-const ALL_SYMBOLS = SYMBOL_CATEGORIES.flatMap(cat => cat.symbols);
-
-const INDEX_SYMBOLS = new Set(["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"]);
-
-const STOCK_SYMBOLS = new Set(ALL_SYMBOLS.filter(s => !INDEX_SYMBOLS.has(s.value)).map(s => s.value));
 
 
 
@@ -623,6 +404,8 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
   const navigate = useNavigate();
 
   const { instruments: masterInstruments, isLoaded: isMasterLoaded, loadError: masterLoadError } = useInstrumentLookup();
+  const optionIndexSymbols = useMemo(() => new Set(resolveOptionChainUnderlyings(masterInstruments, "OPTIDX")), [masterInstruments]);
+  const optionStockSymbols = useMemo(() => new Set(resolveOptionChainUnderlyings(masterInstruments, "OPTSTK")), [masterInstruments]);
 
   const [marketView, setMarketView] = useState<"stocks" | "indices">(defaultMarketView);
 
@@ -688,22 +471,26 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     const requestedSymbol = searchParams.get("symbol")?.trim().toUpperCase();
     if (requestedSymbol) {
       setSymbol(requestedSymbol);
-      setMarketView(INDEX_SYMBOLS.has(requestedSymbol) ? "indices" : "stocks");
+      setMarketView(optionIndexSymbols.has(requestedSymbol) ? "indices" : "stocks");
       return;
     }
     setMarketView(defaultMarketView);
 
     if (defaultMarketView === "indices") {
 
-      setSymbol(current => INDEX_SYMBOLS.has(current) ? current : "NIFTY");
+      setSymbol(current => optionIndexSymbols.has(current)
+        ? current
+        : [...optionIndexSymbols].sort()[0] ?? current);
 
     } else {
 
-      setSymbol(current => STOCK_SYMBOLS.has(current) ? current : "RELIANCE");
+      setSymbol(current => optionStockSymbols.has(current)
+        ? current
+        : [...optionStockSymbols].sort()[0] ?? current);
 
     }
 
-  }, [defaultMarketView, searchParams]);
+  }, [defaultMarketView, optionIndexSymbols, optionStockSymbols, searchParams]);
 
 
 
@@ -711,37 +498,13 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
     if (isMasterLoaded) {
 
-      const category = marketView === "indices" ? "indices" : "stocks";
-
-      const symbols = masterInstruments
-
-        .filter(instrument => classifyInstrument(instrument) === category)
-
-        .reduce<{ label: string; value: string }[]>((result, instrument) => {
-
-          if (!result.some(item => item.value === instrument.symbol)) {
-
-            result.push({ label: instrument.symbol, value: instrument.symbol });
-
-          }
-
-          return result;
-
-        }, [])
-
-        .sort((a, b) => a.label.localeCompare(b.label));
-
-      return [{ label: marketView === "indices" ? "Indices" : "Stocks", symbols }];
-
+      const underlyingSymbols = marketView === "indices" ? optionIndexSymbols : optionStockSymbols;
+      const symbols = [...underlyingSymbols].map((value) => ({ label: value, value }));
+      return [{ label: marketView === "indices" ? "Index options" : "Stock options", symbols }];
     }
 
-    return marketView === "indices"
-
-      ? SYMBOL_CATEGORIES.filter(cat => cat.label === "Indices")
-
-      : SYMBOL_CATEGORIES.filter(cat => cat.label !== "Indices");
-
-  }, [isMasterLoaded, masterInstruments, marketView]);
+    return [];
+  }, [isMasterLoaded, marketView, optionIndexSymbols, optionStockSymbols]);
 
 
 
@@ -759,11 +522,14 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
 
     );
 
-    const preferredSegment = normalizedSymbol === "SENSEX"
-      ? "BSE_IDX"
-      : INDEX_SYMBOLS.has(normalizedSymbol) ? "IDX_I" : "NSE_EQ";
+    const preferredExchange = optionIndexSymbols.has(normalizedSymbol)
+      ? masterInstruments.find((instrument) =>
+          instrument.instrumentType === "OPTIDX" &&
+          instrument.symbol.toUpperCase() === normalizedSymbol,
+        )?.exchange
+      : "NSE";
 
-    const match = candidates.find((instrument) => instrument.exchangeSegment === preferredSegment) ?? candidates[0];
+    const match = candidates.find((instrument) => instrument.exchange === preferredExchange) ?? candidates[0];
 
     return match ? {
       securityId: match.providerInstrumentId || match.securityId,
@@ -773,7 +539,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
       instrumentType: match.instrumentType,
     } : undefined;
 
-  }, [masterInstruments, symbol]);
+  }, [masterInstruments, optionIndexSymbols, symbol]);
   const underlyingExchangeLabel = centralUnderlyingInstrument?.exchangeSegment === "BSE_IDX" ? "BSE"
     : centralUnderlyingInstrument?.exchangeSegment === "NSE_EQ" || centralUnderlyingInstrument?.exchangeSegment === "IDX_I" ? "NSE"
       : undefined;
@@ -781,7 +547,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
   const underlyingQuoteQuery = useQuery({
     queryKey: ["option-chain-underlying-quote", symbol, quoteInstrument?.securityId, quoteInstrument?.exchangeSegment],
     enabled: Boolean(quoteInstrument?.securityId && quoteInstrument.exchangeSegment),
-    queryFn: () => {
+    queryFn: ({ signal }) => {
       if (!quoteInstrument) throw new Error(`The instrument catalog could not resolve the ${symbol} underlying quote.`);
       return requestTerminalMarketData<TerminalMarketDataQuote>(null, "dhan", {
         operation: "getQuote",
@@ -794,7 +560,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
           exchangeSegment: quoteInstrument.exchangeSegment,
           instrumentType: quoteInstrument.instrumentType,
         },
-      });
+      }, "production", signal);
     },
     staleTime: 3_000,
     refetchInterval: 5_000,
@@ -893,6 +659,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
     strike: chainSummary.atmStrike,
     optionType: "CE",
     underlyingSecurityId: centralUnderlyingInstrument?.securityId,
+    exchange: centralUnderlyingInstrument?.exchange,
   }), [chainSummary.atmStrike, masterInstruments, symbol, selectedExpiry, data?.expiries, centralUnderlyingInstrument]);
   const marketLot = lotSize > 0 ? lotSize : (atmLotInstrument?.lotSize ?? 0);
   const chainIsLive = isLive && isWithinNseSessionAt();
@@ -1085,6 +852,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
       strike,
       optionType: type,
       underlyingSecurityId: centralUnderlyingInstrument?.securityId,
+      exchange: centralUnderlyingInstrument?.exchange,
     });
     if (!optionInstrument) {
       toast.error(`Dhan's instrument master could not resolve ${symbol} ${expiryValue} ${strike} ${type}.`);
@@ -1191,6 +959,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
       strike,
       optionType: type,
       underlyingSecurityId: centralUnderlyingInstrument?.securityId,
+      exchange: centralUnderlyingInstrument?.exchange,
     });
     if (!optionInstrument) {
       toast.error(`Dhan's instrument master could not resolve ${symbol} ${expiryValue} ${strike} ${type}.`);
@@ -1345,6 +1114,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
       const instrument = findDhanOptionInstrument(masterInstruments, {
         underlying: symbol, expiry: currentExpiryValue, strike, optionType: type,
         underlyingSecurityId: centralUnderlyingInstrument?.securityId,
+        exchange: centralUnderlyingInstrument?.exchange,
       });
       if (instrument) setFullscreenTabId(instrument.tradingSymbol);
     }
@@ -1443,11 +1213,11 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
   const byStrikeQueries = useQueries({
     queries: expiries.map((expiry) => ({
       queryKey: ["option-chain-by-strike", symbol, expiry.value],
-      queryFn: () => requestTerminalMarketData<TerminalMarketDataOptionChain>(null, "dhan", {
+      queryFn: ({ signal }) => requestTerminalMarketData<TerminalMarketDataOptionChain>(null, "dhan", {
         operation: "getOptionChain",
         underlying: symbol.toUpperCase(),
         expiry: expiry.value,
-      }),
+      }, "production", signal),
       enabled: viewMode === "strike" && Boolean(selectedStrike),
       staleTime: 3_000,
       retry: false,

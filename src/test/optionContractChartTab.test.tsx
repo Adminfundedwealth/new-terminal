@@ -12,6 +12,8 @@ vi.mock("@/components/StockChart", () => ({
 
 describe("OptionContractChartTab", () => {
   it("passes the exact selected option contract to the chart and displays its identity", () => {
+    const onBuy = vi.fn();
+    const onSell = vi.fn();
     render(
       <OptionContractChartTab
         tab={{
@@ -38,14 +40,16 @@ describe("OptionContractChartTab", () => {
             optionType: "CE",
           },
         }}
-        onBuy={vi.fn()}
-        onSell={vi.fn()}
+        onBuy={onBuy}
+        onSell={onSell}
       />,
     );
 
     expect(screen.getByText("ID 987654 · Lot 250")).toBeInTheDocument();
     expect(stockChart).toHaveBeenCalledWith(expect.objectContaining({
       symbol: "RELIANCE26NOV1340CE",
+      onBuy,
+      onSell,
       selectedInstrument: expect.objectContaining({
         providerInstrumentId: "987654",
         exchange: "NSE",

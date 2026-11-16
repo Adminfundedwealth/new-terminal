@@ -44,6 +44,8 @@ try {
 const PORT = parseInt(process.env.PROXY_PORT || "4002", 10);
 const DHAN_BASE = "https://api.dhan.co/v2";
 const NSE_BASE = "https://www.nseindia.com";
+const NSE_INDICES_BASE = "https://www.nseindia.in";
+const NSE_REQUEST_TIMEOUT_MS = 8000;
 
 // ── Import broker backend modules ──
 import { DhanMarketDataProvider } from "./dist/brokers/dhan.js";
@@ -660,6 +662,7 @@ async function getNSESession() {
         "Upgrade-Insecure-Requests": "1",
       },
       redirect: "follow",
+      signal: AbortSignal.timeout(NSE_REQUEST_TIMEOUT_MS),
     });
     
     // Extract ALL set-cookie headers
@@ -740,16 +743,18 @@ async function handleNSEProxy(params) {
   // Try NSE with session retry
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const cookies = await getNSESession();
-      const nseRes = await fetch(`${NSE_BASE}${apiPath}`, {
+      const cookies = endpoint === "indices" ? "" : await getNSESession();
+      const nseApiBase = endpoint === "indices" ? NSE_INDICES_BASE : NSE_BASE;
+      const nseRes = await fetch(`${nseApiBase}${apiPath}`, {
         headers: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
           Accept: "application/json, text/plain, */*",
           "Accept-Language": "en-US,en;q=0.9",
           "Accept-Encoding": "gzip, deflate",
           Referer: "https://www.nseindia.com/option-chain",
-          Cookie: cookies,
+          ...(cookies ? { Cookie: cookies } : {}),
         },
+        signal: AbortSignal.timeout(NSE_REQUEST_TIMEOUT_MS),
       });
 
       if (!nseRes.ok) {

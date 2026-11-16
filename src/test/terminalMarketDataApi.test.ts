@@ -163,6 +163,42 @@ describe("Main Terminal market-data contract", () => {
     });
   });
 
+  it("allows a Dhan quote request to complete beyond the legacy 2.5-second client deadline", async () => {
+    vi.useFakeTimers();
+    const quote = {
+      provider: "dhan",
+      symbol: "HDFCBANK",
+      tradingSymbol: "HDFCBANK",
+      exchange: "NSE",
+      ltp: 1725.5,
+      timestamp: "2026-10-01T09:15:00.000Z",
+    };
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => {
+      setTimeout(() => {
+        resolve(new Response(JSON.stringify({ data: quote }), { status: 200 }));
+      }, 3_000);
+    }));
+
+    try {
+      const request = requestTerminalMarketData(null, "dhan", {
+        operation: "getQuote",
+        instrument: {
+          provider: "dhan",
+          providerInstrumentId: "1330",
+          symbol: "HDFCBANK",
+          tradingSymbol: "HDFCBANK",
+          exchange: "NSE",
+          exchangeSegment: "NSE_EQ",
+          instrumentType: "EQUITY",
+        },
+      });
+      await vi.advanceTimersByTimeAsync(3_000);
+      await expect(request).resolves.toEqual(quote);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("never puts the customer token or broker credentials in the request body", async () => {
     const instrument = {
       provider: "kite" as const,
@@ -219,6 +255,64 @@ describe("Main Terminal market-data contract", () => {
     expect(parsedUrl.searchParams.has("access_token")).toBe(false);
     expect(new Headers(init.headers).get("Authorization")).toBe(`Bearer ${accessToken}`);
     expect(quote).toEqual(quoteEvent);
+  });
+
+  it("subscribes to the exact Dhan contract identity for chart streaming", async () => {
+    const contract = {
+      provider: "dhan" as const,
+      providerInstrumentId: "987654",
+      symbol: "NIFTY",
+      tradingSymbol: "NIFTY26NOV25000CE",
+      exchange: "NSE",
+      exchangeSegment: "NSE_FNO",
+      instrumentType: "OPTIDX",
+      expiryDate: "2026-11-26",
+      strikePrice: 25000,
+      optionType: "CE",
+    };
+    const quoteEvent: TerminalRealtimeQuoteEvent = {
+      provider: "dhan",
+      environment: "production",
+      symbol: "NSE_FNO:987654",
+      quote: {
+        provider: "dhan",
+        symbol: "NIFTY",
+        tradingSymbol: contract.tradingSymbol,
+        exchange: "NSE",
+        ltp: 120,
+        open: 110,
+        high: 125,
+        low: 105,
+        previousClose: 115,
+        change: 5,
+        changePercent: 4.35,
+        volume: 1000,
+        openInterest: 2000,
+        timestamp: "2026-10-01T09:15:00.000Z",
+      },
+    };
+    fetchMock.mockResolvedValueOnce(new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(`event: quote\ndata: ${JSON.stringify(quoteEvent)}\n\n`));
+      },
+    }), { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+
+    const quoteReceived = new Promise<TerminalRealtimeQuoteEvent>((resolve) => {
+      const unsubscribe = subscribeToTerminalMarketDataStream(null, "dhan", [contract], (event) => {
+        unsubscribe();
+        resolve(event);
+      });
+    });
+    await expect(quoteReceived).resolves.toEqual(quoteEvent);
+
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    const query = new URL(url, "https://main.test").searchParams;
+    expect(query.has("symbols")).toBe(false);
+    expect(JSON.parse(query.get("contracts") ?? "[]")).toEqual([{
+      providerInstrumentId: contract.providerInstrumentId,
+      tradingSymbol: contract.tradingSymbol,
+      exchangeSegment: contract.exchangeSegment,
+    }]);
   });
 
   it("requests provider status with the same customer/account/provider authorization context", async () => {

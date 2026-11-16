@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { loadStockChart } from "@/components/stockChartLoader";
+import type { OrderRequest } from "openalgo-charts/widget";
 import { normalizeCanonicalPosition, uniqueCanonicalPositions } from "@/components/CustomerPositionTable";
 import { isWatchlisted } from "@/lib/watchlist";
 import { useLiveOptionChain } from "@/hooks/useMarketData";
@@ -25,6 +26,8 @@ import {
   type TerminalMarketDataQuote,
 } from "@/lib/terminalApi";
 import { fetchCentralMarketQuotes } from "@/lib/centralMarketQuotes";
+import { subscribeToTerminalMarketDataStream, type TerminalRealtimeStatus } from "@/lib/terminalApi";
+import { isWithinNseSessionAt } from "@/lib/marketApi";
 import type { Instrument } from "@/lib/localDatabase";
 
 export type ExplorerAsset = "stocks" | "indices" | "futures";
@@ -50,6 +53,8 @@ export interface ExplorerRow {
   oi?: number | null;
   oiChange?: number | null;
   isFresh?: boolean;
+  isLive?: boolean;
+  quoteTimestamp?: string;
   searchText?: string;
 }
 
@@ -112,7 +117,10 @@ export function InstrumentExplorer({
   initialInstrumentToken,
 }: ExplorerProps) {
   const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<"activity" | "symbol" | "price" | "change">("activity");
   const [currentPage, setCurrentPage] = useState(0);
+  const [streamQuotes, setStreamQuotes] = useState<Record<string, TerminalMarketDataQuote>>({});
+  const [streamStatus, setStreamStatus] = useState<TerminalRealtimeStatus>("disconnected");
   const [chartSymbol, setChartSymbol] = useState<string | null>(initialChartSymbol ?? null);
   const [activeTab, setActiveTab] = useState("Charts");
   const [workspaceContext, setWorkspaceContext] = useState<"stocks" | "options" | "futures">(initialWorkspaceContext ?? (asset === "futures" ? "futures" : "stocks"));
@@ -156,12 +164,17 @@ export function InstrumentExplorer({
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toUpperCase();
-    if (!q) return rows;
-    return rows.filter((row) => {
+    const matched = !q ? rows : rows.filter((row) => {
       const haystack = `${row.symbol} ${row.label} ${row.contract ?? ""} ${row.underlying ?? ""} ${row.searchText ?? ""}`.toUpperCase();
       return haystack.includes(q);
     });
-  }, [rows, search]);
+    if (sortBy === "activity") return matched;
+    return [...matched].sort((left, right) => {
+      if (sortBy === "symbol") return left.symbol.localeCompare(right.symbol);
+      if (sortBy === "price") return (right.ltp ?? -Infinity) - (left.ltp ?? -Infinity);
+      return (right.changePercent ?? -Infinity) - (left.changePercent ?? -Infinity);
+    });
+  }, [rows, search, sortBy]);
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / EXPLORER_PAGE_SIZE));
   const safePage = Math.min(currentPage, pageCount - 1);
   const visibleRows = useMemo(
@@ -170,6 +183,43 @@ export function InstrumentExplorer({
   );
 
   useEffect(() => setCurrentPage(0), [search]);
+
+  useEffect(() => {
+    if (asset !== "stocks" || !canLoadMarketData || visibleRows.length === 0 || !visibleRows.some((row) => row.instrument)) {
+      setStreamStatus("disconnected");
+      return;
+    }
+
+    setStreamQuotes({});
+    const symbols = [...new Set(visibleRows
+      .filter((row) => row.instrument?.provider === "dhan")
+      .map((row) => row.instrument?.tradingSymbol ?? row.symbol))];
+    if (symbols.length === 0) return;
+
+    return subscribeToTerminalMarketDataStream(
+      marketDataAccountId,
+      marketDataProvider,
+      symbols,
+      (event) => {
+        const quote = event.quote;
+        const timestamp = Date.parse(quote.timestamp);
+        if (
+          event.provider !== marketDataProvider ||
+          !Number.isFinite(quote.ltp) ||
+          quote.ltp <= 0 ||
+          !Number.isFinite(timestamp)
+        ) return;
+        const segment = quote.exchange === "BSE" ? "BSE_EQ" : "NSE_EQ";
+        const key = `${segment}:${quote.tradingSymbol}`;
+        setStreamQuotes((current) => {
+          const previous = current[key];
+          if (previous && Date.parse(previous.timestamp) > timestamp) return current;
+          return { ...current, [key]: quote };
+        });
+      },
+      setStreamStatus,
+    );
+  }, [asset, canLoadMarketData, marketDataAccountId, marketDataProvider, visibleRows]);
 
   const visibleQuotesQuery = useQuery({
     queryKey: [
@@ -242,9 +292,15 @@ export function InstrumentExplorer({
       : visibleQuotesQuery.data?.errors[0] ?? (visibleQuotesQuery.error instanceof Error ? visibleQuotesQuery.error.message : null);
 
   const displayedRows = useMemo(() => visibleRows.map((row) => {
-    const quote = visibleQuotesQuery.data?.quotes[row.chartSymbol ?? row.symbol];
-    if (!quote || !Number.isFinite(quote.ltp) || quote.ltp <= 0) return row;
+    const rowKey = row.chartSymbol ?? row.symbol;
+    const quote = streamQuotes[rowKey] ?? visibleQuotesQuery.data?.quotes[rowKey];
+    if (!quote || !Number.isFinite(quote.ltp) || quote.ltp <= 0) {
+      const age = row.quoteTimestamp ? Date.now() - Date.parse(row.quoteTimestamp) : Infinity;
+      const fresh = Number.isFinite(age) && age >= 0 && age <= 60_000;
+      return { ...row, isFresh: fresh, isLive: fresh };
+    }
     const quoteAge = Date.now() - Date.parse(quote.timestamp);
+    const isFresh = Number.isFinite(quoteAge) && quoteAge >= 0 && quoteAge <= 60_000;
     return {
       ...row,
       ltp: quote.ltp,
@@ -255,9 +311,24 @@ export function InstrumentExplorer({
       low: quote.low,
       volume: quote.volume,
       oi: quote.openInterest,
-      isFresh: Number.isFinite(quoteAge) && quoteAge >= 0 && quoteAge <= 60_000,
+      quoteTimestamp: quote.timestamp,
+      isFresh,
+      isLive: isFresh,
     };
-  }), [visibleRows, visibleQuotesQuery.data]);
+  }), [visibleRows, streamQuotes, visibleQuotesQuery.data]);
+  const freshQuoteCount = displayedRows.filter((row) => row.isLive).length;
+  const quoteTimestamp = displayedRows
+    .map((row) => row.quoteTimestamp)
+    .filter((timestamp): timestamp is string => Boolean(timestamp))
+    .sort((left, right) => Date.parse(right) - Date.parse(left))[0];
+  const marketDataLabel = freshQuoteCount > 0
+    ? streamStatus === "connected" ? "LIVE" : "POLLING"
+    : quoteTimestamp
+      ? isWithinNseSessionAt() ? "STALE" : "PREVIOUS SESSION"
+      : "UNAVAILABLE";
+  const marketDataAsOf = quoteTimestamp
+    ? new Date(quoteTimestamp).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" })
+    : null;
 
   const ticketInstrument = useMemo(() => {
     const matches = workspaceInstruments.filter((instrument) => {
@@ -476,13 +547,18 @@ export function InstrumentExplorer({
     setTicketMessage("");
   };
 
-  const openOrderTicket = (side: "BUY" | "SELL") => {
+  const openOrderTicket = (side: "BUY" | "SELL", chartOrder?: OrderRequest) => {
     setTicketSide(side);
-    setOrderType("MARKET");
+    const nextOrderType = chartOrder?.type === "LIMIT"
+      ? "LIMIT"
+      : chartOrder?.type === "SL"
+        ? "STOP"
+        : "MARKET";
+    setOrderType(nextOrderType);
     const ticketCategory = ticketInstrument ? classifyInstrument(ticketInstrument) : null;
     setQuantity(ticketCategory === "futures" || ticketCategory === "options" ? String(ticketInstrument?.lotSize ?? 1) : "1");
-    setLimitPrice("");
-    setTriggerPrice("");
+    setLimitPrice(nextOrderType === "LIMIT" && chartOrder?.price != null ? String(chartOrder.price) : "");
+    setTriggerPrice(nextOrderType === "STOP" && chartOrder?.price != null ? String(chartOrder.price) : "");
     setTakeProfitEnabled(false);
     setTakeProfitPrice("");
     setTakeProfitTicks("75");
@@ -511,9 +587,13 @@ export function InstrumentExplorer({
       ?? stockMatches[0];
     const ticketCategory = ticketInstrument ? classifyInstrument(ticketInstrument) : null;
     const isDerivative = ticketCategory === "futures" || ticketCategory === "options";
-    if (workspaceContext !== "stocks" && (!ticketInstrument || !isDerivative || ticketInstrument.provider !== "zerodha")) {
+    if (workspaceContext !== "stocks" && (
+      !ticketInstrument ||
+      !isDerivative ||
+      (ticketInstrument.provider !== "zerodha" && ticketInstrument.provider !== "dhan")
+    )) {
       setTicketState("error");
-      setTicketMessage("Select a valid Kite futures or options contract.");
+      setTicketMessage("Select a valid Indian futures or options contract.");
       return;
     }
     const currentPrice = selectedQuote?.ltp ?? 0;
@@ -559,9 +639,7 @@ export function InstrumentExplorer({
     setTicketState("submitting");
     setTicketMessage("");
     try {
-      const orderInstrument = isDerivative && ticketInstrument
-        ? { ...ticketInstrument, exchange: "NSE", exchangeSegment: "NSE_FNO" }
-        : undefined;
+      const orderInstrument = isDerivative ? ticketInstrument : undefined;
       const result = await createTerminalOrder({
         account_id: activeAccountId,
         client_order_id: `customer-${createClientOrderId()}`,
@@ -670,6 +748,26 @@ export function InstrumentExplorer({
               <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
             </div>
             <div className="flex items-center gap-2">
+              {asset === "stocks" && (
+                <Badge
+                  variant="outline"
+                  aria-label={`Market data ${marketDataLabel}${marketDataAsOf ? ` as of ${marketDataAsOf}` : ""}`}
+                  className={freshQuoteCount > 0 ? "border-bullish/30 text-bullish" : "border-amber-500/30 text-amber-600"}
+                >
+                  {marketDataLabel}{marketDataAsOf ? ` · ${marketDataAsOf}` : ""}
+                </Badge>
+              )}
+              <select
+                aria-label={`Sort ${asset}`}
+                value={sortBy}
+                onChange={(event) => setSortBy(event.target.value as typeof sortBy)}
+                className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+              >
+                <option value="activity">Most active</option>
+                <option value="symbol">Symbol A–Z</option>
+                <option value="price">Price high–low</option>
+                <option value="change">Change high–low</option>
+              </select>
               <div className="relative">
                 <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
                 <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={searchPlaceholder ?? "Search..."} className="h-8 w-56 pl-8 text-xs" />
@@ -1048,6 +1146,9 @@ export function InstrumentExplorer({
                         inline
                         fill
                         selectedInstrument={chartDataInstrument}
+                        onBuy={() => openOrderTicket("BUY")}
+                        onSell={() => openOrderTicket("SELL")}
+                        onOrder={(order) => openOrderTicket(order.side, order)}
                         unavailableMessage={workspaceContext === "stocks" ? chartUnavailableMessage : undefined}
                       />
                     </Suspense>

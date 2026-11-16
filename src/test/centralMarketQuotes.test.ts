@@ -71,10 +71,14 @@ describe("central market quotes", () => {
       }) },
     ]);
 
-    expect(requestTerminalMarketData).toHaveBeenCalledTimes(1);
+    expect(requestTerminalMarketData).toHaveBeenCalledTimes(2);
     expect(vi.mocked(requestTerminalMarketData).mock.calls.map(([accountId, provider]) => [accountId, provider])).toEqual([
       [null, "dhan"],
+      [null, "dhan"],
     ]);
+    expect(vi.mocked(requestTerminalMarketData).mock.calls.map(([, , request]) =>
+      request.operation === "getQuotes" ? [...new Set(request.instruments.map((item) => item.exchangeSegment))] : []
+    )).toEqual([["NSE_EQ"], ["IDX_I"]]);
     expect(result.errors).toEqual([]);
     expect(result.quotes.RELIANCE).toMatchObject({ provider: "dhan", ltp: 1207.7, tradingSymbol: "RELIANCE" });
     expect(result.quotes.NIFTY).toMatchObject({ provider: "dhan", ltp: 25000, exchange: "NSE" });
@@ -95,10 +99,12 @@ describe("central market quotes", () => {
   it("retries a global Dhan quote batch once after rate limiting", async () => {
     vi.mocked(requestTerminalMarketData)
       .mockRejectedValueOnce(new TerminalMarketDataError("RATE_LIMITED", 429))
-      .mockResolvedValueOnce([
-        quote("2885", 1207.7, "RELIANCE"),
-        quote("13", 25000, "NIFTY"),
-      ] as never);
+      .mockImplementation(async (_accountId, _provider, request) => {
+        if (request.operation !== "getQuotes") return [];
+        return request.instruments.map((item) =>
+          quote(item.providerInstrumentId, item.providerInstrumentId === "13" ? 25000 : 1207.7, item.tradingSymbol)
+        ) as never;
+      });
 
     const result = await fetchCentralMarketQuotes([
       { key: "RELIANCE", instrument: instrument() },
@@ -110,9 +116,100 @@ describe("central market quotes", () => {
       }) },
     ]);
 
-    expect(requestTerminalMarketData).toHaveBeenCalledTimes(2);
+    expect(requestTerminalMarketData).toHaveBeenCalledTimes(3);
     expect(result.quotes).toMatchObject({ RELIANCE: { ltp: 1207.7 }, NIFTY: { ltp: 25000 } });
     expect(result.errors).toEqual([]);
+  });
+
+  it("splits mixed NSE and BSE cash listings into exchange-segment-safe batches", async () => {
+    vi.mocked(requestTerminalMarketData).mockImplementation(async (_accountId, _provider, request) => {
+      if (request.operation !== "getQuotes") return [];
+      return request.instruments.map((item) => ({
+        ...quote(item.providerInstrumentId, 1200, item.tradingSymbol),
+        exchange: item.exchange,
+      })) as never;
+    });
+
+    const result = await fetchCentralMarketQuotes([
+      { key: "NSE_EQ:RELIANCE", instrument: instrument() },
+      { key: "BSE_EQ:RELIANCE", instrument: instrument({
+        securityId: "500325",
+        providerInstrumentId: "500325",
+        exchange: "BSE",
+        exchangeSegment: "BSE_EQ",
+      }) },
+    ]);
+
+    const requests = vi.mocked(requestTerminalMarketData).mock.calls.map(([, , request]) => request);
+    expect(requests).toHaveLength(2);
+    expect(requests.every((request) =>
+      request.operation === "getQuotes" &&
+      new Set(request.instruments.map((item) => item.exchangeSegment)).size === 1
+    )).toBe(true);
+    expect(result.quotes).toHaveProperty("NSE_EQ:RELIANCE");
+    expect(result.quotes).toHaveProperty("BSE_EQ:RELIANCE");
+  });
+
+  it("keeps each Dhan quote batch within the 1,000-instrument provider limit", async () => {
+    vi.mocked(requestTerminalMarketData).mockImplementation(async (_accountId, _provider, request) => {
+      if (request.operation !== "getQuotes") return [];
+      return request.instruments.map((item) => ({
+        ...quote(item.providerInstrumentId, 1200, item.tradingSymbol),
+        exchange: item.exchange,
+      })) as never;
+    });
+    const targets = Array.from({ length: 1_001 }, (_, index) => {
+      const id = String(100_000 + index);
+      return {
+        key: `NSE_EQ:SYMBOL${id}`,
+        instrument: instrument({
+          securityId: id,
+          providerInstrumentId: id,
+          symbol: `SYMBOL${id}`,
+          tradingSymbol: `SYMBOL${id}`,
+        }),
+      };
+    });
+
+    await fetchCentralMarketQuotes(targets);
+
+    const sizes = vi.mocked(requestTerminalMarketData).mock.calls.map(([, , request]) =>
+      request.operation === "getQuotes" ? request.instruments.length : 0
+    );
+    expect(sizes).toEqual([1_000, 1]);
+  });
+
+  it("fetches large quote catalogs with bounded batch concurrency", async () => {
+    let activeRequests = 0;
+    let maxActiveRequests = 0;
+    vi.mocked(requestTerminalMarketData).mockImplementation(async (_accountId, _provider, request) => {
+      if (request.operation !== "getQuotes") return [];
+      activeRequests += 1;
+      maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      activeRequests -= 1;
+      return request.instruments.map((item) => ({
+        ...quote(item.providerInstrumentId, 1200, item.tradingSymbol),
+        exchange: item.exchange,
+      })) as never;
+    });
+    const targets = Array.from({ length: 4_001 }, (_, index) => {
+      const id = String(200_000 + index);
+      return {
+        key: `NSE_EQ:SYMBOL${id}`,
+        instrument: instrument({
+          securityId: id,
+          providerInstrumentId: id,
+          symbol: `SYMBOL${id}`,
+          tradingSymbol: `SYMBOL${id}`,
+        }),
+      };
+    });
+
+    await fetchCentralMarketQuotes(targets);
+
+    expect(maxActiveRequests).toBe(3);
+    expect(requestTerminalMarketData).toHaveBeenCalledTimes(5);
   });
 
   it("resolves the saved TATAMOTORS key to its current NSE passenger-vehicle listing", async () => {
