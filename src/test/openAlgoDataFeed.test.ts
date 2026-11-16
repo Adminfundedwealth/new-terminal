@@ -1,11 +1,30 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  FundedWealthOpenAlgoDataFeed,
   isIndianMarketInstrument,
   normalizeDhanCandle,
   normalizeDhanCandles,
   parseDhanTimestamp,
 } from "@/lib/openAlgoDataFeed";
 import type { TerminalMarketDataInstrument } from "@/lib/terminalApi";
+
+const {
+  requestTerminalMarketDataMock,
+  subscribeToTerminalMarketDataStreamMock,
+} = vi.hoisted(() => ({
+  requestTerminalMarketDataMock: vi.fn(),
+  subscribeToTerminalMarketDataStreamMock: vi.fn(() => vi.fn()),
+}));
+vi.mock("@/lib/terminalApi", () => ({
+  requestTerminalMarketData: requestTerminalMarketDataMock,
+  subscribeToTerminalMarketDataStream: subscribeToTerminalMarketDataStreamMock,
+}));
+
+beforeEach(() => {
+  requestTerminalMarketDataMock.mockReset();
+  subscribeToTerminalMarketDataStreamMock.mockReset();
+  subscribeToTerminalMarketDataStreamMock.mockReturnValue(vi.fn());
+});
 
 function instrument(
   overrides: Partial<TerminalMarketDataInstrument> = {},
@@ -104,5 +123,88 @@ describe("OpenAlgo FundedWealth datafeed", () => {
     expect(bars).toHaveLength(1);
     expect(warn).toHaveBeenCalledWith("Skipped 1 invalid Dhan historical candle(s) for NIFTY-Dec2026-FUT.");
     warn.mockRestore();
+  });
+
+  it("forwards the chart history cancellation signal to the Dhan request", async () => {
+    requestTerminalMarketDataMock.mockImplementationOnce(() => new Promise(() => {}));
+    const datafeed = new FundedWealthOpenAlgoDataFeed(instrument(), vi.fn());
+    const controller = new AbortController();
+
+    const request = datafeed.feed.getBars({
+      symbol: "HDFCBANK",
+      exchange: "NSE",
+      interval: "1d",
+      from: Date.UTC(2026, 4, 4) / 1000,
+      to: Date.UTC(2026, 4, 5) / 1000,
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(requestTerminalMarketDataMock).toHaveBeenCalledOnce());
+
+    const [, provider, operation, environment, requestSignal] =
+      requestTerminalMarketDataMock.mock.calls[0] as unknown as [
+        null,
+        string,
+        { operation: string },
+        string,
+        AbortSignal,
+      ];
+    expect(provider).toBe("dhan");
+    expect(operation.operation).toBe("getHistoricalCandles");
+    expect(environment).toBe("production");
+    expect(requestSignal).toBeInstanceOf(AbortSignal);
+    controller.abort();
+    expect(requestSignal.aborted).toBe(true);
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
+    datafeed.destroy();
+  });
+
+  it("subscribes to the selected Dhan contract stream and cleans it up on removal", () => {
+    const unsubscribe = vi.fn();
+    subscribeToTerminalMarketDataStreamMock.mockReturnValueOnce(unsubscribe);
+    const datafeed = new FundedWealthOpenAlgoDataFeed(instrument(), vi.fn());
+    const onBar = vi.fn();
+    const cancel = datafeed.feed.subscribeBars({
+      symbol: "HDFCBANK",
+      exchange: "NSE",
+      interval: "1m",
+    }, onBar);
+
+    expect(subscribeToTerminalMarketDataStreamMock).toHaveBeenCalledWith(
+      null,
+      "dhan",
+      [instrument()],
+      expect.any(Function),
+      expect.any(Function),
+    );
+    const onQuote = subscribeToTerminalMarketDataStreamMock.mock.calls[0]?.[3] as (
+      event: {
+        provider: string;
+        quote: {
+          timestamp: string;
+          ltp: number;
+          volume: number;
+          openInterest: number | null;
+        };
+      },
+    ) => void;
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-01T03:45:30.000Z"));
+    onQuote({
+      provider: "dhan",
+      quote: {
+        timestamp: "2026-10-01T03:45:30.000Z",
+        ltp: 1725.5,
+        volume: 100,
+        openInterest: null,
+      },
+    });
+    expect(onBar).toHaveBeenCalledWith(
+      expect.objectContaining({ open: 1725.5, high: 1725.5, low: 1725.5, close: 1725.5 }),
+      expect.objectContaining({ provisional: true }),
+    );
+    vi.useRealTimers();
+    cancel();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    datafeed.destroy();
   });
 });

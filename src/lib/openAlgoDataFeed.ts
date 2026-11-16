@@ -15,15 +15,14 @@ import type {
 } from "openalgo-charts";
 import {
   requestTerminalMarketData,
+  subscribeToTerminalMarketDataStream,
   type TerminalMarketDataCandle,
   type TerminalMarketDataInstrument,
-  type TerminalMarketDataQuote,
 } from "@/lib/terminalApi";
 
 const INDIA_TIME_ZONE = "Asia/Kolkata";
 const INDIA_OFFSET_SECONDS = 5 * 60 * 60 + 30 * 60;
 const SESSION_ANCHOR_SECONDS = (9 * 60 + 15) * 60 - INDIA_OFFSET_SECONDS;
-const QUOTE_POLL_INTERVAL_MS = 5_000;
 
 const ALLOWED_SEGMENTS = new Set([
   "NSE_EQ",
@@ -271,6 +270,8 @@ export class FundedWealthOpenAlgoDataFeed {
       null,
       "dhan",
       { operation: "searchInstruments", query },
+      "production",
+      request.signal,
     );
     if (request.signal?.aborted) throw abortError();
     return matches
@@ -331,6 +332,8 @@ export class FundedWealthOpenAlgoDataFeed {
         fromDate: localDate(from),
         toDate: localDate(to),
       },
+      "production",
+      request.signal,
     );
     if (request.signal?.aborted) throw abortError();
     const fromBound = interval === "1d" ? localMidnight(from) : from;
@@ -365,47 +368,46 @@ export class FundedWealthOpenAlgoDataFeed {
     if (options.seedFrom) builder.seed(options.seedFrom, options.cumDayVolumeSoFar);
 
     let active = true;
-    let inFlight = false;
-    const refresh = async () => {
-      if (!active || inFlight) return;
-      inFlight = true;
-      try {
-        const quote = await requestTerminalMarketData<TerminalMarketDataQuote>(
-          null,
-          "dhan",
-          { operation: "getQuote", instrument },
-        );
+    const unsubscribe = subscribeToTerminalMarketDataStream(
+      null,
+      "dhan",
+      [instrument],
+      (event) => {
+        if (!active || event.provider !== "dhan") return;
+        const quote = event.quote;
+        try {
+          const time = parseDhanTimestamp(quote.timestamp);
+          if (!Number.isFinite(quote.ltp) || quote.ltp <= 0) {
+            throw new Error("The market-data service returned an invalid quote.");
+          }
+          const now = Math.floor(Date.now() / 1000);
+          if (indiaCalendar.phaseAt(now) !== "regular" || now - time > 60) {
+            this.onQuoteStatus("stale", "Market closed or the latest provider quote is stale.");
+            return;
+          }
+          const update = builder.onTick({
+            time,
+            price: quote.ltp,
+            ...(quote.volume == null ? {} : { cumDayVolume: quote.volume }),
+            ...(quote.openInterest == null ? {} : { oi: quote.openInterest }),
+          });
+          if (update) onBar(update.bar, { provisional: update.provisional });
+          this.onQuoteStatus("live");
+        } catch (error) {
+          this.onQuoteStatus("error", errorMessage(error));
+        }
+      },
+      (status) => {
         if (!active) return;
-        const time = parseDhanTimestamp(quote.timestamp);
-        if (!Number.isFinite(quote.ltp) || quote.ltp <= 0) {
-          throw new Error("The market-data service returned an invalid quote.");
-        }
-        const now = Math.floor(Date.now() / 1000);
-        if (indiaCalendar.phaseAt(now) !== "regular" || now - time > 60) {
-          this.onQuoteStatus("stale", "Market closed or the latest provider quote is stale.");
-          return;
-        }
-        const update = builder.onTick({
-          time,
-          price: quote.ltp,
-          ...(quote.volume == null ? {} : { cumDayVolume: quote.volume }),
-          ...(quote.openInterest == null ? {} : { oi: quote.openInterest }),
-        });
-        if (update) onBar(update.bar, { provisional: update.provisional });
-        this.onQuoteStatus("live");
-      } catch (error) {
-        if (active) this.onQuoteStatus("error", errorMessage(error));
-      } finally {
-        inFlight = false;
-      }
-    };
-
+        if (status === "error") this.onQuoteStatus("error", "The Dhan quote stream is unavailable.");
+        else if (status === "disconnected") this.onQuoteStatus("stale", "Dhan quote stream disconnected.");
+        else if (status !== "connected") this.onQuoteStatus("connecting");
+      },
+    );
     this.onQuoteStatus("connecting");
-    void refresh();
-    const timer = setInterval(() => void refresh(), QUOTE_POLL_INTERVAL_MS);
     return () => {
       active = false;
-      clearInterval(timer);
+      unsubscribe();
     };
   }
 }

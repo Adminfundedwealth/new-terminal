@@ -6,8 +6,9 @@ import { useLiveOptionChain } from "@/hooks/useMarketData";
 import { createTerminalOrder, fetchTerminalExecutions, fetchTerminalOrders, fetchTerminalPositions, modifyTerminalPositionProtection } from "@/lib/terminalApi";
 import type { Instrument } from "@/lib/localDatabase";
 
-const { requestTerminalMarketDataMock } = vi.hoisted(() => ({
+const { requestTerminalMarketDataMock, stockChartPropsMock } = vi.hoisted(() => ({
   requestTerminalMarketDataMock: vi.fn(),
+  stockChartPropsMock: vi.fn(),
 }));
 
 vi.mock("@/hooks/useLocalDatabase", async (importOriginal) => {
@@ -48,6 +49,7 @@ vi.mock("@/lib/terminalApi", async (importOriginal) => {
       provider === "dhan" ? "dhan" : provider === "kite" || provider === "zerodha" ? "kite" : null
     ),
     requestTerminalMarketData: requestTerminalMarketDataMock,
+    subscribeToTerminalMarketDataStream: vi.fn(() => () => {}),
     createTerminalOrder: vi.fn().mockResolvedValue({ ok: true, order: { id: "mock-order" } }),
     modifyTerminalPositionProtection: vi.fn().mockResolvedValue({}),
     fetchTerminalPositions: vi.fn().mockResolvedValue({
@@ -119,7 +121,16 @@ vi.mock("@/lib/terminalApi", async (importOriginal) => {
 
 vi.mock("@/components/stockChartLoader", () => ({
   loadStockChart: () => Promise.resolve({
-    StockChart: ({ symbol, selectedInstrument, unavailableMessage }: { symbol: string; selectedInstrument?: { providerInstrumentId: string }; unavailableMessage?: string }) => <div data-testid="stock-chart" data-selected-instrument-id={selectedInstrument?.providerInstrumentId} data-unavailable-message={unavailableMessage}>{symbol} chart mock</div>,
+    StockChart: ({ symbol, selectedInstrument, unavailableMessage, onBuy, onSell }: { symbol: string; selectedInstrument?: { providerInstrumentId: string }; unavailableMessage?: string; onBuy?: () => void; onSell?: () => void }) => {
+      stockChartPropsMock({ onBuy, onSell });
+      return (
+        <>
+          <div data-testid="stock-chart" data-selected-instrument-id={selectedInstrument?.providerInstrumentId} data-unavailable-message={unavailableMessage}>{symbol} chart mock</div>
+          {onBuy && <button type="button" onClick={onBuy}>Chart Buy</button>}
+          {onSell && <button type="button" onClick={onSell}>Chart Sell</button>}
+        </>
+      );
+    },
   }),
 }));
 
@@ -510,6 +521,52 @@ describe("InstrumentExplorer stock workspace", () => {
       instrument: expect.objectContaining({ provider: "zerodha", exchangeSegment: "NSE_FNO" }),
     })));
   });
+
+  it("opens the existing simulated ticket from chart Buy and Sell controls", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    vi.mocked(createTerminalOrder).mockClear();
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InstrumentExplorer
+          title="Stocks"
+          subtitle="NSE-listed equity quotes."
+          asset="stocks"
+          rows={[{
+            symbol: "TMPV",
+            chartSymbol: "TMPV",
+            label: "Tata Motors Passenger Vehicles",
+            ltp: 279.9,
+            change: 6.9,
+            changePercent: 2.53,
+            open: 275.8,
+            high: 280.95,
+            low: 274.6,
+            volume: 6_360_894,
+            instrument: globalTmpvInstrument,
+          }]}
+          isLoading={false}
+          watchedSymbols={[]}
+          onToggleWatchlist={() => {}}
+          activeAccountId="account-1"
+          initialChartSymbol="TMPV"
+        />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("stock-chart")).toHaveTextContent("TMPV chart mock"));
+    expect(stockChartPropsMock).toHaveBeenLastCalledWith(expect.objectContaining({
+      onBuy: expect.any(Function),
+      onSell: expect.any(Function),
+    }));
+    fireEvent.click(screen.getByRole("button", { name: "Chart Buy" }));
+    expect(screen.getByRole("dialog", { name: "SIMULATED BUY order ticket" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close order ticket" }));
+    fireEvent.click(screen.getByRole("button", { name: "Chart Sell" }));
+    expect(screen.getByRole("dialog", { name: "SIMULATED SELL order ticket" })).toBeInTheDocument();
+    expect(createTerminalOrder).not.toHaveBeenCalled();
+  }, 15_000);
 
   it("prices a deep-linked Kite option ticket from its real chain leg", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });

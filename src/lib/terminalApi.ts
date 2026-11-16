@@ -14,6 +14,7 @@ export function resolveTerminalOsBase(configuredUrl: string | undefined, isProdu
 }
 
 const TERMINAL_OS_BASE = resolveTerminalOsBase(import.meta.env.VITE_TERMINAL_OS_URL, import.meta.env.PROD);
+const DHAN_MARKET_DATA_REQUEST_TIMEOUT_MS = 12_000;
 
 export interface TerminalAccount {
   id: string;
@@ -414,6 +415,7 @@ export interface TerminalMarketDataQuote {
   change: number | null;
   changePercent: number | null;
   volume: number | null;
+  tradedValue?: number | null;
   openInterest: number | null;
   timestamp: string;
 }
@@ -706,7 +708,9 @@ export async function requestTerminalMarketData<T>(
 
   const scopedAccountId = provider === "dhan" ? null : accountId;
   if (!scopedAccountId && provider !== "dhan") throw new Error("A trading account is required for account-scoped market data.");
-  return withRequestTimeout(DEFAULT_REQUEST_TIMEOUT_MS, async (requestSignal) => {
+  return withRequestTimeout(
+    provider === "dhan" ? DHAN_MARKET_DATA_REQUEST_TIMEOUT_MS : DEFAULT_REQUEST_TIMEOUT_MS,
+    async (requestSignal) => {
     const accessToken = await getCustomerAccessToken();
     const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/market-data`, {
       method: "POST",
@@ -720,7 +724,9 @@ export async function requestTerminalMarketData<T>(
       signal: requestSignal,
     });
     return readMarketDataResponse<T>(response);
-  }, signal);
+    },
+    signal,
+  );
 }
 
 export async function fetchTerminalMarketDataStatus(
@@ -755,6 +761,7 @@ export type TerminalRealtimeStatus = "connecting" | "connected" | "reconnecting"
 
 interface TerminalRealtimeSubscriber {
   symbols: Set<string>;
+  contracts: Map<string, TerminalMarketDataInstrument>;
   onQuote: (event: TerminalRealtimeQuoteEvent) => void;
   onStatus?: (status: TerminalRealtimeStatus) => void;
 }
@@ -764,12 +771,17 @@ interface TerminalRealtimePool {
   provider: TerminalMarketDataProvider;
   environment: "production" | "paper" | "sandbox";
   symbols: Set<string>;
+  contracts: Map<string, TerminalMarketDataInstrument>;
   subscribers: Set<TerminalRealtimeSubscriber>;
   controller: AbortController | null;
   generation: number;
 }
 
 const terminalRealtimePools = new Map<string, TerminalRealtimePool>();
+
+function realtimeContractKey(instrument: TerminalMarketDataInstrument): string {
+  return `${instrument.exchangeSegment.toUpperCase()}:${instrument.providerInstrumentId}`;
+}
 
 function notifyRealtimeStatus(pool: TerminalRealtimePool, status: TerminalRealtimeStatus): void {
   for (const subscriber of pool.subscribers) subscriber.onStatus?.(status);
@@ -790,8 +802,16 @@ async function readRealtimeStream(pool: TerminalRealtimePool, generation: number
   const query = new URLSearchParams({
     provider: pool.provider,
     environment: pool.environment,
-    symbols: [...pool.symbols].sort().join(","),
   });
+  const symbols = [...pool.symbols].filter((symbol) => !pool.contracts.has(symbol)).sort();
+  if (symbols.length) query.set("symbols", symbols.join(","));
+  if (pool.contracts.size) {
+    query.set("contracts", JSON.stringify([...pool.contracts.values()].map((instrument) => ({
+      providerInstrumentId: instrument.providerInstrumentId,
+      tradingSymbol: instrument.tradingSymbol,
+      exchangeSegment: instrument.exchangeSegment,
+    }))));
+  }
   if (pool.accountId) query.set("account_id", pool.accountId);
   const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/market-data/stream?${query}`, {
     credentials: "omit",
@@ -867,25 +887,41 @@ function startRealtimePool(pool: TerminalRealtimePool): void {
 export function subscribeToTerminalMarketDataStream(
   accountId: string | null,
   provider: TerminalMarketDataProvider,
-  symbols: string[],
+  symbols: Array<string | TerminalMarketDataInstrument>,
   onQuote: (event: TerminalRealtimeQuoteEvent) => void,
   onStatus?: (status: TerminalRealtimeStatus) => void,
   environment: "production" | "paper" | "sandbox" = "production",
 ): () => void {
-  const normalizedSymbols = [...new Set(symbols.map((symbol) => symbol.trim()).filter(Boolean))];
+  const normalizedSymbols = [...new Set(symbols
+    .filter((symbol): symbol is string => typeof symbol === "string")
+    .map((symbol) => symbol.trim())
+    .filter(Boolean))];
+  const normalizedContracts = new Map(symbols
+    .filter((instrument): instrument is TerminalMarketDataInstrument => typeof instrument !== "string")
+    .map((instrument) => [realtimeContractKey(instrument), instrument]));
+  if (normalizedContracts.size > 0 && provider !== "dhan") {
+    throw new Error("Exact contract subscriptions are only supported by the central Dhan feed.");
+  }
   const scopedAccountId = provider === "dhan" ? null : accountId;
-  if ((!scopedAccountId && provider !== "dhan") || normalizedSymbols.length === 0) return () => undefined;
+  const subscriptionSymbols = new Set([...normalizedSymbols, ...normalizedContracts.keys()]);
+  if ((!scopedAccountId && provider !== "dhan") || subscriptionSymbols.size === 0) return () => undefined;
   const key = `${scopedAccountId ?? "platform"}:${provider}:${environment}`;
   let pool = terminalRealtimePools.get(key);
   if (!pool) {
-    pool = { accountId: scopedAccountId, provider, environment, symbols: new Set(), subscribers: new Set(), controller: null, generation: 0 };
+    pool = { accountId: scopedAccountId, provider, environment, symbols: new Set(), contracts: new Map(), subscribers: new Set(), controller: null, generation: 0 };
     terminalRealtimePools.set(key, pool);
   }
-  const subscriber: TerminalRealtimeSubscriber = { symbols: new Set(normalizedSymbols), onQuote, onStatus };
+  const subscriber: TerminalRealtimeSubscriber = { symbols: subscriptionSymbols, contracts: normalizedContracts, onQuote, onStatus };
   const previousSymbolCount = pool.symbols.size;
-  normalizedSymbols.forEach((symbol) => pool?.symbols.add(symbol));
+  const previousContractCount = pool.contracts.size;
+  subscriptionSymbols.forEach((symbol) => pool?.symbols.add(symbol));
+  normalizedContracts.forEach((instrument, contractKey) => pool?.contracts.set(contractKey, instrument));
   pool.subscribers.add(subscriber);
-  if (pool.symbols.size !== previousSymbolCount || !pool.controller) startRealtimePool(pool);
+  if (
+    pool.symbols.size !== previousSymbolCount ||
+    pool.contracts.size !== previousContractCount ||
+    !pool.controller
+  ) startRealtimePool(pool);
 
   return () => {
     const current = terminalRealtimePools.get(key);
@@ -894,6 +930,7 @@ export function subscribeToTerminalMarketDataStream(
     const stillNeeded = new Set([...current.subscribers].flatMap((item) => [...item.symbols]));
     const changed = stillNeeded.size !== current.symbols.size || [...current.symbols].some((symbol) => !stillNeeded.has(symbol));
     current.symbols = stillNeeded;
+    current.contracts = new Map([...current.subscribers].flatMap((item) => [...item.contracts]));
     if (current.subscribers.size === 0) {
       current.controller?.abort();
       current.generation++;

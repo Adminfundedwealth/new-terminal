@@ -1,14 +1,25 @@
 import { useEffect, useRef, useState } from "react";
-import { createWidget, type Widget } from "openalgo-charts/widget";
+import { createWidget, type OrderRequest, type Widget } from "openalgo-charts/widget";
 import "openalgo-charts/draw";
 import "openalgo-charts/indicators";
 import "openalgo-charts/transform";
 import "openalgo-charts/workspace";
-import { BarChart3 } from "lucide-react";
+import { BarChart3, Check, WalletCards } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { useAccountContext } from "@/hooks/useAccountContext";
 import { useIsDark } from "@/hooks/useIsDark";
 import {
   createIndexedDbWorkspaceStorage,
@@ -35,13 +46,88 @@ interface StockChartProps {
   asSheet?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  onBuy?: () => void;
+  onSell?: () => void;
+  onOrder?: (order: OrderRequest) => void;
 }
 
 function quoteStatusText(status: OpenAlgoQuoteStatus, message?: string): string {
-  if (status === "live") return "Dhan quotes updating · 5s polling";
+  if (status === "live") return "Dhan quotes live";
   if (status === "stale") return message ?? "Market closed or the latest provider quote is stale.";
   if (status === "error") return `Quote updates unavailable · ${message ?? "provider error"}`;
   return "Connecting to Dhan quotes…";
+}
+
+function formatAccountBalance(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  return `₹${value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function ChartAccountControl() {
+  const {
+    accounts,
+    accountContext,
+    activeAccountId,
+    isLoading,
+    hasNoAccount,
+    selectAccount,
+  } = useAccountContext();
+  const selectedAccount = accounts.find((account) => account.id === activeAccountId);
+  const accountLabel = selectedAccount?.account_code ?? (hasNoAccount ? "No account" : "Account unavailable");
+  const balance = accountContext?.account.current_balance ?? selectedAccount?.balance;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-7 gap-1.5 px-2 text-[10px]"
+          aria-label={`FundedWealth account ${accountLabel}, balance ${formatAccountBalance(balance)}`}
+          aria-busy={isLoading}
+        >
+          <WalletCards className="h-3 w-3" />
+          <span>Account</span>
+          <span className="max-w-24 truncate font-medium">{accountLabel}</span>
+          <span className="font-mono">{formatAccountBalance(balance)}</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-72">
+        <DropdownMenuLabel>FundedWealth trading accounts</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {accounts.length > 0 ? (
+          <DropdownMenuRadioGroup
+            value={activeAccountId ?? ""}
+            onValueChange={(accountId) => {
+              void selectAccount(accountId).catch((error: unknown) => {
+                toast.error(error instanceof Error ? error.message : "Unable to switch trading account.");
+              });
+            }}
+          >
+            {accounts.map((account) => (
+              <DropdownMenuRadioItem key={account.id} value={account.id} className="items-start py-2">
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="truncate font-medium">{account.account_code ?? account.id.slice(0, 8)}</span>
+                    {account.id === activeAccountId && <Check className="h-3.5 w-3.5 text-primary" />}
+                  </span>
+                  <span className="mt-1 flex justify-between gap-2 text-[10px] text-muted-foreground">
+                    <span>{account.status}</span>
+                    <span className="font-mono">{formatAccountBalance(account.id === activeAccountId ? balance : account.balance)}</span>
+                  </span>
+                </span>
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        ) : (
+          <p className="px-2 py-2 text-xs text-muted-foreground">
+            {isLoading ? "Loading trading account…" : hasNoAccount ? "No trading account is available." : "Account details are unavailable."}
+          </p>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }
 
 function OpenAlgoChart({
@@ -50,16 +136,24 @@ function OpenAlgoChart({
   height,
   fill,
   unavailableMessage,
+  onBuy,
+  onSell,
+  onOrder,
 }: {
   symbol: string;
   selectedInstrument?: TerminalMarketDataInstrument;
   height: number;
   fill: boolean;
   unavailableMessage?: string;
+  onBuy?: () => void;
+  onSell?: () => void;
+  onOrder?: (order: OrderRequest) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetRef = useRef<Widget | null>(null);
   const feedRef = useRef<FundedWealthOpenAlgoDataFeed | null>(null);
+  const onOrderRef = useRef(onOrder);
+  onOrderRef.current = onOrder;
   const initialSelection = useRef({
     symbol: selectedInstrument?.tradingSymbol ?? symbol,
     exchange: selectedInstrument?.exchange ?? "",
@@ -111,9 +205,9 @@ function OpenAlgoChart({
         persist: "fundedwealth-openalgo",
         workspaces,
         lookbackBars: 500,
-        onOrder: () => {
-          toast.info("OpenAlgo chart orders are disconnected from FundedWealth. No order was placed.");
-        },
+        ...(onOrderRef.current
+          ? { onOrder: (order: OrderRequest) => onOrderRef.current?.(order) }
+          : {}),
       });
       widgetRef.current = widget;
       void widget.ready.then(() => {
@@ -159,18 +253,42 @@ function OpenAlgoChart({
 
   return (
     <div className={`flex w-full flex-col ${fill ? "h-full min-h-[360px]" : ""}`}>
-      <div className="flex min-h-7 shrink-0 items-center justify-between gap-2 border-b border-border px-2 text-[10px] text-muted-foreground">
+      <div className="flex min-h-8 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-2 py-1 text-[10px] text-muted-foreground">
         <span className="truncate">
           FundedWealth · {selectedInstrument?.tradingSymbol ?? symbol} · Indian market data
         </span>
-        <Badge
-          variant="outline"
-          className={`shrink-0 px-1.5 py-0 text-[9px] ${quoteError ? "border-destructive/40 text-destructive" : ""}`}
-          role="status"
-          aria-live="polite"
-        >
-          {quoteStatus}
-        </Badge>
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+          {onBuy && (
+            <Button
+              type="button"
+              size="sm"
+              className="h-7 bg-emerald-600 px-2 text-[10px] text-white hover:bg-emerald-700"
+              onClick={onBuy}
+            >
+              Buy
+            </Button>
+          )}
+          {onSell && (
+            <Button
+              type="button"
+              size="sm"
+              variant="destructive"
+              className="h-7 px-2 text-[10px]"
+              onClick={onSell}
+            >
+              Sell
+            </Button>
+          )}
+          <ChartAccountControl />
+          <Badge
+            variant="outline"
+            className={`shrink-0 px-1.5 py-0 text-[9px] ${quoteError ? "border-destructive/40 text-destructive" : ""}`}
+            role="status"
+            aria-live="polite"
+          >
+            {quoteStatus}
+          </Badge>
+        </div>
       </div>
       {mountError && (
         <div role="alert" className="shrink-0 px-3 py-2 text-xs text-destructive">
@@ -200,6 +318,9 @@ export function StockChart({
   asSheet = false,
   open = false,
   onOpenChange,
+  onBuy,
+  onSell,
+  onOrder,
 }: StockChartProps) {
   if (asSheet) {
     return (
@@ -218,6 +339,9 @@ export function StockChart({
               height={430}
               fill
               unavailableMessage={unavailableMessage}
+              onBuy={onBuy}
+              onSell={onSell}
+              onOrder={onOrder}
             />
           </div>
         </SheetContent>
@@ -233,6 +357,9 @@ export function StockChart({
         height={height}
         fill={fill}
         unavailableMessage={unavailableMessage}
+        onBuy={onBuy}
+        onSell={onSell}
+        onOrder={onOrder}
       />
     );
   }
@@ -252,6 +379,9 @@ export function StockChart({
           height={height}
           fill={false}
           unavailableMessage={unavailableMessage}
+          onBuy={onBuy}
+          onSell={onSell}
+          onOrder={onOrder}
         />
       </CardContent>
     </Card>

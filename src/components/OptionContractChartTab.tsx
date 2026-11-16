@@ -67,6 +67,8 @@ export function OptionContractChartTab({
         <StockChart
           symbol={tab.tradingSymbol}
           selectedInstrument={tab.instrument}
+          onBuy={onBuy}
+          onSell={onSell}
           inline
           fill
           unavailableMessage="Historical OHLC for this contract is loading…"

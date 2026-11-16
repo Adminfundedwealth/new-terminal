@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   findDhanOptionInstrument,
+  rankCashEquitiesByActivity,
   resolveCashEquityUniverse,
   resolveIndianIndexUniverse,
   resolveOptionChainUnderlyings,
@@ -36,18 +37,64 @@ describe("canonical market instrument resolution", () => {
     expect(resolveCashEquityUniverse([newListing])).toEqual([newListing]);
   });
 
-  it("preserves distinct NSE and BSE listings but deduplicates repeated provider identities", () => {
+  it("prefers the NSE listing and deduplicates the same company across exchanges", () => {
     const bseListing = instrument({
       securityId: "500180",
       providerInstrumentId: "500180",
       symbol: "HDFC BANK LTD.",
+      displayName: "HDFC BANK LIMITED",
+      tradingSymbol: "HDFCBANK",
       exchange: "BSE",
       exchangeSegment: "BSE_EQ",
       series: "A",
     });
     const nseListing = instrument();
 
-    expect(resolveCashEquityUniverse([bseListing, nseListing, nseListing])).toEqual([bseListing, nseListing]);
+    expect(resolveCashEquityUniverse([bseListing, nseListing, nseListing])).toEqual([nseListing]);
+  });
+
+  it("keeps BSE-only shares while preferring NSE when symbols differ but company names match", () => {
+    const nseListing = instrument({ displayName: "TATA MOTORS PASSENGER VEHICLES LIMITED", tradingSymbol: "TMPV" });
+    const bseListing = instrument({
+      displayName: "TATA MOTORS PASSENGER VEHICLES LTD.",
+      exchange: "BSE",
+      exchangeSegment: "BSE_EQ",
+      tradingSymbol: "TATAMOTORSPV",
+    });
+    const bseOnly = instrument({
+      securityId: "500001",
+      providerInstrumentId: "500001",
+      symbol: "BSE ONLY LIMITED",
+      displayName: "BSE ONLY LIMITED",
+      exchange: "BSE",
+      exchangeSegment: "BSE_EQ",
+      tradingSymbol: "BSEONLY",
+      series: "A",
+    });
+
+    expect(resolveCashEquityUniverse([bseListing, bseOnly, nseListing])).toEqual([bseOnly, nseListing]);
+  });
+
+  it("ranks only instruments with real quote and session activity data", () => {
+    const reliance = instrument({ symbol: "RELIANCE INDUSTRIES LTD", tradingSymbol: "RELIANCE" });
+    const tcs = instrument({
+      securityId: "11536",
+      providerInstrumentId: "11536",
+      symbol: "TCS",
+      tradingSymbol: "TCS",
+    });
+    const unavailable = instrument({
+      securityId: "99999",
+      providerInstrumentId: "99999",
+      symbol: "MISSING",
+      tradingSymbol: "MISSING",
+    });
+    const quotes = new Map([
+      ["NSE_EQ:RELIANCE", { ltp: 1200, volume: 100, timestamp: "2026-11-16T03:45:00.000Z" }],
+      ["NSE_EQ:TCS", { ltp: 3000, volume: 500, timestamp: "2026-11-16T03:45:00.000Z" }],
+    ]);
+
+    expect(rankCashEquitiesByActivity([reliance, tcs, unavailable], quotes)).toEqual([tcs, reliance]);
   });
 
   it("includes all provider-backed NSE and BSE indices", () => {

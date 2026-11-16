@@ -1,4 +1,5 @@
 import type { Instrument } from "@/lib/localDatabase";
+import { RequestTimeoutError } from "@/lib/requestTimeout";
 import {
   requestTerminalMarketData,
   TerminalMarketDataError,
@@ -12,11 +13,30 @@ export interface CentralMarketQuoteTarget {
 }
 
 const RATE_LIMIT_RETRY_DELAY_MS = 1_500;
+const MAX_CONCURRENT_BATCHES = 3;
 
-function isRateLimitError(error: unknown): boolean {
-  return error instanceof TerminalMarketDataError
-    ? error.status === 429
-    : error instanceof Error && /\b429\b/.test(error.message);
+function isRetryableBatchError(error: unknown): boolean {
+  return error instanceof RequestTimeoutError ||
+    error instanceof TypeError ||
+    (error instanceof TerminalMarketDataError && (error.status === 429 || error.status >= 500));
+}
+
+function waitBeforeRetry(signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason ?? new DOMException("Request aborted.", "AbortError"));
+      return;
+    }
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, RATE_LIMIT_RETRY_DELAY_MS);
+    const onAbort = () => {
+      clearTimeout(timeout);
+      reject(signal?.reason ?? new DOMException("Request aborted.", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 /**
@@ -40,10 +60,25 @@ export async function fetchCentralMarketQuotes(targets: CentralMarketQuoteTarget
 
   const quotes: Record<string, TerminalMarketDataQuote> = {};
 
-  // Terminal OS groups a single request by exchange segment (up to 1000 instruments).
+  // Dhan quote requests must contain one exchange segment and at most 1000 instruments.
   const BATCH = 1000;
-  for (let offset = 0; offset < resolved.length; offset += BATCH) {
-    const batch = resolved.slice(offset, offset + BATCH);
+  const bySegment = new Map<string, typeof resolved>();
+  for (const target of resolved) {
+    const segment = target.instrument.exchangeSegment;
+    const segmentTargets = bySegment.get(segment) ?? [];
+    segmentTargets.push(target);
+    bySegment.set(segment, segmentTargets);
+  }
+
+  const batches: Array<typeof resolved> = [];
+  for (const segmentTargets of bySegment.values()) {
+    for (let offset = 0; offset < segmentTargets.length; offset += BATCH) {
+      batches.push(segmentTargets.slice(offset, offset + BATCH));
+    }
+  }
+
+  let nextBatch = 0;
+  const fetchBatch = async (batch: typeof resolved[number][]) => {
     const terminalInstruments = batch.map(({ instrument }) =>
       toTerminalMarketDataInstrument({
         ...instrument,
@@ -66,18 +101,17 @@ export async function fetchCentralMarketQuotes(targets: CentralMarketQuoteTarget
         break;
       } catch (error) {
         failure = error;
-        if (attempt > 0 || !isRateLimitError(error)) break;
-        await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_RETRY_DELAY_MS));
+        if (attempt > 0 || !isRetryableBatchError(error)) break;
+        await waitBeforeRetry(signal);
       }
     }
 
     if (!batchQuotes) {
       const message = failure instanceof Error ? failure.message : "A central Dhan quote request failed.";
       errors.push(`Central Dhan quote batch failed: ${message}`);
-      continue;
+      return;
     }
 
-    // Match quotes back to targets by exchange:tradingSymbol
     const bySymbol = new Map(batchQuotes.map((q) => [
       `${q.exchange}:${q.tradingSymbol}`.toUpperCase(),
       q,
@@ -88,12 +122,21 @@ export async function fetchCentralMarketQuotes(targets: CentralMarketQuoteTarget
       const quote =
         bySymbol.get(`${exchange}:${instrument.tradingSymbol.toUpperCase()}`) ??
         bySymbol.get(`${exchange}:${instrument.symbol.toUpperCase()}`);
-      if (quote) {
-        quotes[key] = quote;
-      }
-      // Don't push an error per symbol — a missing quote at market close is normal
+      if (quote) quotes[key] = quote;
     }
-  }
+  };
+
+  const workers = Array.from(
+    { length: Math.min(MAX_CONCURRENT_BATCHES, batches.length) },
+    async () => {
+      while (nextBatch < batches.length) {
+        if (signal?.aborted) throw signal.reason ?? new DOMException("Request aborted.", "AbortError");
+        const batch = batches[nextBatch++];
+        await fetchBatch(batch);
+      }
+    },
+  );
+  await Promise.all(workers);
 
   return { quotes, errors: [...new Set(errors)] };
 }
