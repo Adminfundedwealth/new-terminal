@@ -96,6 +96,37 @@ describe("central market quotes", () => {
     expect(result.errors).toEqual(["Central Dhan quote batch failed: global provider unavailable"]);
   });
 
+  it("keeps successful batch quotes when another Dhan batch fails", async () => {
+    vi.mocked(requestTerminalMarketData).mockImplementation(async (_accountId, _provider, request) => {
+      if (request.operation !== "getQuotes") return [];
+      if (request.instruments[0]?.providerInstrumentId === "101000") {
+        return request.instruments.map((item) =>
+          quote(item.providerInstrumentId, 1200, item.tradingSymbol)
+        ) as never;
+      }
+      throw new Error("batch unavailable");
+    });
+
+    const targets = Array.from({ length: 1_001 }, (_, index) => {
+      const id = String(101_000 + index);
+      return {
+        key: `NSE_EQ:SYMBOL${id}`,
+        instrument: instrument({
+          securityId: id,
+          providerInstrumentId: id,
+          symbol: `SYMBOL${id}`,
+          tradingSymbol: `SYMBOL${id}`,
+        }),
+      };
+    });
+
+    const result = await fetchCentralMarketQuotes(targets);
+
+    expect(result.quotes["NSE_EQ:SYMBOL101000"]).toMatchObject({ ltp: 1200 });
+    expect(Object.keys(result.quotes)).toHaveLength(1_000);
+    expect(result.errors).toEqual(["Central Dhan quote batch failed: batch unavailable"]);
+  });
+
   it("retries a global Dhan quote batch once after rate limiting", async () => {
     vi.mocked(requestTerminalMarketData)
       .mockRejectedValueOnce(new TerminalMarketDataError("RATE_LIMITED", 429))

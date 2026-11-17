@@ -971,7 +971,7 @@ export function InstrumentExplorer({
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-2 pt-0">
                   <div className="space-y-1">
-                    {workspaceContext === "stocks" && filteredRows.map((row) => {
+                    {workspaceContext === "stocks" && visibleRows.map((row) => {
                       const positive = (row.changePercent ?? 0) >= 0;
                       const active = (row.chartSymbol ?? row.symbol) === chartSymbol;
 
