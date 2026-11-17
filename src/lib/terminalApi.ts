@@ -1216,22 +1216,24 @@ export function fetchTerminalExecutions(accountId?: string) {
 export function fetchTerminalRisk(accountId?: string) {
   return (async (): Promise<{ data: TerminalRiskSummary }> => {
     if (!accountId) throw new Error("A trading account is required to load risk data.");
+    const ownerUserId = await getAuthenticatedCustomerId();
     const { data, error } = await supabase
       .from("risk_events")
-      .select("id, trading_account_id, event_type, severity, rule_type, threshold_value, actual_value, acknowledged, created_at")
-      .eq("trading_account_id", accountId)
-      .order("created_at", { ascending: false })
+      .select("id, account_id, owner_user_id, event_type, severity, metric_name, metric_value, limit_value, breach_status, breach_reason, occurred_at, resolved_at, metadata")
+      .eq("owner_user_id", ownerUserId)
+      .eq("account_id", accountId)
+      .order("occurred_at", { ascending: false })
       .limit(100);
     if (error) throw new Error(`Risk events request failed: ${error.message}`);
 
     const recentEvents = data ?? [];
-    const openEvents = recentEvents.filter((event) => event.acknowledged === false);
+    const openEvents = recentEvents.filter((event) => event.breach_status === "open");
     return {
       data: {
         accounts_at_risk: openEvents.length > 0 ? 1 : 0,
         breached: openEvents.length,
-        critical: openEvents.filter((event) => event.severity.toLowerCase() === "critical").length,
-        warning: openEvents.filter((event) => event.severity.toLowerCase() === "warning").length,
+        critical: openEvents.filter((event) => String(event.severity).toLowerCase() === "critical").length,
+        warning: openEvents.filter((event) => String(event.severity).toLowerCase() === "warning").length,
         recent_events: recentEvents,
       },
     };
@@ -1241,24 +1243,26 @@ export function fetchTerminalRisk(accountId?: string) {
 export function fetchTerminalPerformance(accountId?: string) {
   return (async (): Promise<PaginatedResponse<TerminalPerformanceRow>> => {
     if (!accountId) throw new Error("A trading account is required to load performance data.");
+    const ownerUserId = await getAuthenticatedCustomerId();
     const { data, error } = await supabase
-      .from("account_metrics")
-      .select("id, trading_account_id, date, starting_balance, ending_balance, realized_pnl, total_trades, winning_trades, losing_trades")
-      .eq("trading_account_id", accountId)
-      .order("date", { ascending: true })
+      .from("daily_performance")
+      .select("id, account_id, owner_user_id, trading_date, opening_balance, closing_balance, realized_pnl, trade_count, winning_trades, losing_trades")
+      .eq("owner_user_id", ownerUserId)
+      .eq("account_id", accountId)
+      .order("trading_date", { ascending: true })
       .limit(100);
     if (error) throw new Error(`Daily performance request failed: ${error.message}`);
 
     const rows: TerminalPerformanceRow[] = (data ?? []).map((row) => ({
       id: row.id,
-      trading_account_id: row.trading_account_id,
-      date: row.date,
-      opening_balance: row.starting_balance == null ? null : Number(row.starting_balance),
-      closing_balance: row.ending_balance == null ? null : Number(row.ending_balance),
-      daily_pnl: Number(row.realized_pnl),
-      total_trades: row.total_trades,
-      winning_trades: row.winning_trades,
-      losing_trades: row.losing_trades,
+      trading_account_id: row.account_id,
+      date: row.trading_date,
+      opening_balance: row.opening_balance == null ? null : Number(row.opening_balance),
+      closing_balance: row.closing_balance == null ? null : Number(row.closing_balance),
+      daily_pnl: Number(row.realized_pnl ?? 0),
+      total_trades: Number(row.trade_count ?? 0),
+      winning_trades: Number(row.winning_trades ?? 0),
+      losing_trades: Number(row.losing_trades ?? 0),
     }));
     return {
       data: rows,
@@ -1272,20 +1276,29 @@ export function fetchTerminalWatchlists() {
     const ownerUserId = await getAuthenticatedCustomerId();
     const { data, error } = await supabase
       .from("watchlists")
-      .select("id, trader_id, name, items")
-      .eq("trader_id", ownerUserId)
+      .select("id, owner_user_id, name, watchlist_items(symbol, display_order)")
+      .eq("owner_user_id", ownerUserId)
       .order("created_at", { ascending: false })
       .limit(100);
     if (error) throw new Error(`Watchlists request failed: ${error.message}`);
 
     const rows: TerminalWatchlist[] = (data ?? []).map((row) => {
-      const items = Array.isArray(row.items) ? row.items : [];
+      const items = Array.isArray(row.watchlist_items) ? [...row.watchlist_items] : [];
+      items.sort((left, right) => {
+        const leftOrder = typeof left === "object" && left && "display_order" in left
+          ? Number((left as Record<string, unknown>).display_order ?? 0)
+          : 0;
+        const rightOrder = typeof right === "object" && right && "display_order" in right
+          ? Number((right as Record<string, unknown>).display_order ?? 0)
+          : 0;
+        return leftOrder - rightOrder;
+      });
       const symbols = items
-        .map((item) => (typeof item === "string" ? item : typeof item === "object" && item && "symbol" in item ? String((item as Record<string, unknown>).symbol ?? "") : ""))
+        .map((item) => (typeof item === "object" && item && "symbol" in item ? String((item as Record<string, unknown>).symbol ?? "") : ""))
         .filter(Boolean);
       return {
         id: row.id,
-        trader_id: row.trader_id,
+        trader_id: row.owner_user_id,
         name: row.name,
         items: symbols,
         is_default: false,
