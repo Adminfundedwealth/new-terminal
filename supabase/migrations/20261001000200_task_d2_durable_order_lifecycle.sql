@@ -128,8 +128,8 @@ begin
   if symbol_value is null or exchange_value is null or side_value not in ('buy', 'sell') then
     return jsonb_build_object('ok', false, 'replayed', false, 'error', jsonb_build_object('code', 'INVALID_ORDER', 'message', 'Order identity is invalid'));
   end if;
-  if order_type_value = 'STOP' then order_type_value := 'SL'; end if;
-  if order_type_value = 'STOP-LIMIT' then order_type_value := 'SL-M'; end if;
+  if order_type_value = 'STOP' then order_type_value := 'SL-M'; end if;
+  if order_type_value = 'STOP-LIMIT' then order_type_value := 'SL'; end if;
   if order_type_value not in ('MARKET', 'LIMIT', 'SL', 'SL-M') then
     return jsonb_build_object('ok', false, 'replayed', false, 'error', jsonb_build_object('code', 'INVALID_ORDER_TYPE', 'message', 'Order type is not supported'));
   end if;
@@ -148,7 +148,7 @@ begin
   if take_profit_value is not null and take_profit_value <= 0 then
     return jsonb_build_object('ok', false, 'replayed', false, 'error', jsonb_build_object('code', 'INVALID_TAKE_PROFIT', 'message', 'Take profit must be positive'));
   end if;
-  if order_type_value in ('LIMIT', 'SL-M') and price_value is null then
+  if order_type_value in ('LIMIT', 'SL') and price_value is null then
     return jsonb_build_object('ok', false, 'replayed', false, 'error', jsonb_build_object('code', 'INVALID_PRICE', 'message', 'This order type requires a positive price'));
   end if;
   if order_type_value in ('SL', 'SL-M') and trigger_price_value is null then

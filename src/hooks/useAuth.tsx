@@ -29,13 +29,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
     };
 
-    void supabase.auth.getSession().then(({ data, error }) => {
-      if (!mounted) return;
-      if (error) {
-        console.error("Supabase session initialization failed:", error.message);
+    const initializeSession = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (!mounted) return;
+        if (error) {
+          console.error("Supabase session initialization failed:", error.message);
+        }
+        finalizeSession(data.session ?? null);
+      } catch (error) {
+        console.error("Supabase session initialization failed:", error);
+        finalizeSession(null);
       }
-      finalizeSession(data.session ?? null);
-    });
+    };
+
+    void initializeSession();
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       if (!mounted) return;

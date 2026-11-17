@@ -159,8 +159,8 @@ function optionalPositive(value: unknown, name: string): number | null {
 
 function normalizeOrderType(value: unknown): OrderType {
   const type = requiredText(value, "orderType").toUpperCase().replace(/[-_ ]/g, "-");
-  if (type === "STOP") return "SL";
-  if (type === "STOP-LIMIT") return "SL-M";
+  if (type === "STOP") return "SL-M";
+  if (type === "STOP-LIMIT") return "SL";
   if (type === "MARKET" || type === "LIMIT" || type === "SL" || type === "SL-M") return type;
   throw new Error(`Unsupported order type: ${type}`);
 }
@@ -200,6 +200,7 @@ export function normalizeOrder(input: OrderInput): CanonicalOrder {
   const price = optionalPositive(input.price, "price");
   const triggerPrice = optionalPositive(input.triggerPrice, "triggerPrice");
   if (orderType === "LIMIT" && price == null) throw new Error("LIMIT orders require price");
+  if (orderType === "SL" && price == null) throw new Error("SL orders require a stop-limit price");
   if ((orderType === "SL" || orderType === "SL-M") && triggerPrice == null) throw new Error("stop orders require triggerPrice");
   const status = normalizeStatus(input.status);
   const createdAt = input.createdAt ?? new Date().toISOString();

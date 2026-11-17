@@ -67,6 +67,21 @@ describe("CustomerOrderTable", () => {
     expect(screen.getAllByText("Immutable terminal state")).toHaveLength(1);
   });
 
+  it("disables cancellation while pending and surfaces server rejection", () => {
+    render(
+      <CustomerOrderTable
+        orders={[order("open")]}
+        onCancel={vi.fn()}
+        cancellingOrderId="order-open"
+        actionError="Order can no longer be cancelled"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Cancel order-open" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel order-open" })).toHaveTextContent("Cancelling...");
+    expect(screen.getByRole("alert")).toHaveTextContent("Order can no longer be cancelled");
+  });
+
   it("deduplicates duplicate or retried canonical responses by order id", () => {
     const first = order("pending", { id: "same-order" });
     const second = order("open", { id: "same-order", updatedAt: "2026-09-24T09:01:00.000Z" });

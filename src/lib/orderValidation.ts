@@ -73,11 +73,10 @@ export function validateOrder(request: OrderValidationRequest, options: OrderVal
   if (!["MARKET", "LIMIT", "SL", "SL-M", "STOP", "STOP-LIMIT"].includes(normalizedType)) return failure("INVALID_ORDER_TYPE", "Order type is not supported");
   if (!finitePositive(request.quantity) || !Number.isInteger(request.quantity)) return failure("INVALID_QUANTITY", "Quantity must be a positive whole number");
   if (options.instrument && request.quantity % options.instrument.lotSize !== 0) return failure("INVALID_QUANTITY", "Quantity must be a multiple of the instrument lot size");
-  const canonicalType = normalizedType === "STOP" ? "SL" : normalizedType === "STOP-LIMIT" ? "SL-M" : normalizedType;
+  const canonicalType = normalizedType === "STOP" ? "SL-M" : normalizedType === "STOP-LIMIT" ? "SL" : normalizedType;
   if (canonicalType === "LIMIT" && !finitePositive(request.price)) return failure("INVALID_PRICE", "Limit orders require a positive price");
-  if (canonicalType === "SL-M" && !finitePositive(request.price)) return failure("INVALID_PRICE", "Stop-limit orders require a positive price");
-  if (canonicalType === "SL" && !finitePositive(request.triggerPrice)) return failure("INVALID_TRIGGER_PRICE", "Stop-market orders require a positive trigger price");
-  if (canonicalType === "SL-M" && !finitePositive(request.triggerPrice)) return failure("INVALID_TRIGGER_PRICE", "Stop-limit orders require a positive trigger price");
+  if (canonicalType === "SL" && !finitePositive(request.price)) return failure("INVALID_PRICE", "Stop-limit orders require a positive price");
+  if ((canonicalType === "SL" || canonicalType === "SL-M") && !finitePositive(request.triggerPrice)) return failure("INVALID_TRIGGER_PRICE", "Stop orders require a positive trigger price");
   if (request.price != null && !finitePositive(request.price)) return failure("INVALID_PRICE", "Price must be positive");
   if (request.triggerPrice != null && !finitePositive(request.triggerPrice)) return failure("INVALID_TRIGGER_PRICE", "Trigger price must be positive");
   if (request.product != null) {

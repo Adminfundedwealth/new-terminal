@@ -34,6 +34,8 @@ export function CustomerOrderTable({
   onRetry,
   onCancel,
   onModify,
+  actionError,
+  cancellingOrderId,
 }: {
   orders: readonly TerminalOrder[];
   isLoading?: boolean;
@@ -43,6 +45,8 @@ export function CustomerOrderTable({
   onRetry?: () => void;
   onCancel?: (order: TerminalOrder) => void;
   onModify?: (order: TerminalOrder) => void;
+  actionError?: string;
+  cancellingOrderId?: string;
 }) {
   if (isLoading) return <div role="status" className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />Loading canonical orders...</div>;
   if (isError) return <div role="alert" className="flex items-center justify-between gap-2 text-xs text-muted-foreground"><span className="flex items-center gap-1.5"><AlertCircle className="h-3 w-3" />{errorMessage ?? "Orders unavailable: authentication or account access is required."}</span>{onRetry && <button type="button" className="inline-flex items-center gap-1 underline" onClick={onRetry}><RefreshCw className="h-3 w-3" />Retry</button>}</div>;
@@ -51,6 +55,7 @@ export function CustomerOrderTable({
   const uniqueOrders = uniqueCanonicalOrders(orders);
   return <div className="space-y-2" aria-label="Customer canonical orders">
     {isFetching && <div role="status" className="flex items-center gap-1.5 text-[11px] text-muted-foreground"><RefreshCw className="h-3 w-3 animate-spin" />Refreshing canonical order state...</div>}
+    {actionError && <p role="alert" className="text-xs text-destructive">{actionError}</p>}
     {uniqueOrders.map((order) => {
       const terminal = TERMINAL_STATUSES.has(order.status);
       const canCancel = canCancelStatus(order.status);
@@ -68,7 +73,7 @@ export function CustomerOrderTable({
         <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
           <span>{order.filledQuantity}/{order.quantity} filled</span>
           {terminal ? <span>Immutable terminal state</span> : <span className="flex gap-2">
-            {canCancel && <button type="button" onClick={() => onCancel?.(order)} disabled={!onCancel} aria-label={`Cancel ${order.id}`}>Cancel</button>}
+            {canCancel && <button type="button" onClick={() => onCancel?.(order)} disabled={!onCancel || cancellingOrderId === order.id} aria-label={`Cancel ${order.id}`}>{cancellingOrderId === order.id ? "Cancelling..." : "Cancel"}</button>}
             {canModify && <button type="button" onClick={() => onModify?.(order)} disabled={!onModify} aria-label={`Modify ${order.id}`}>Modify</button>}
           </span>}
         </div>

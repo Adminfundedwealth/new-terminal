@@ -73,7 +73,13 @@ declare
   requested_price numeric := coalesce(nullif(request->>'requested_price', '')::numeric, nullif(request->>'price', '')::numeric);
   current_equity numeric;
   projected_notional numeric;
+  pending_notional numeric;
+  requested_notional numeric;
+  available_margin_value numeric;
+  max_leverage_value numeric;
+  required_margin numeric;
   aggregate_quantity numeric;
+  pending_quantity numeric;
   aggregate_lots numeric;
   daily_loss_value numeric;
   reason_code text;
@@ -148,6 +154,18 @@ begin
   from public.positions p
   where p.account_id = account_row.id and p.owner_user_id = auth.uid() and p.position_status = 'open'
     and upper(p.symbol) = upper(coalesce(request->>'symbol', ''));
+  select coalesce(sum(greatest(o.quantity - o.filled_quantity, 0)), 0) into pending_quantity
+  from public.orders o
+  where o.account_id = account_row.id and o.owner_user_id = auth.uid()
+    and upper(o.symbol) = upper(coalesce(request->>'symbol', ''))
+    and o.status in ('requested', 'pending', 'open', 'partially_filled');
+  select coalesce(sum(greatest(o.quantity - o.filled_quantity, 0) * coalesce(o.price, o.trigger_price, 0)), 0)
+    into pending_notional
+  from public.orders o
+  where o.account_id = account_row.id and o.owner_user_id = auth.uid()
+    and o.status in ('requested', 'pending', 'open', 'partially_filled');
+  aggregate_quantity := aggregate_quantity + pending_quantity;
+  requested_notional := coalesce(requested_price, nullif(request->>'trigger_price', '')::numeric, 0) * requested_quantity;
 
   if rules ? 'daily_loss_limit' and daily_loss_value >= (rules->>'daily_loss_limit')::numeric then
     reason_code := 'DAILY_LOSS_EXCEEDED'; reason_text := 'Daily loss limit reached';
@@ -169,11 +187,23 @@ begin
   if reason_code is null and rules ? 'max_leverage' then
     select coalesce(sum(abs(p.quantity) * coalesce(p.last_price, p.average_price)), 0) into projected_notional
     from public.positions p where p.account_id = account_row.id and p.owner_user_id = auth.uid() and p.position_status = 'open';
-    projected_notional := projected_notional + coalesce(requested_price, 0) * requested_quantity;
-    if current_equity <= 0 or projected_notional / current_equity > (rules->>'max_leverage')::numeric then
+    projected_notional := projected_notional + pending_notional + requested_notional;
+    max_leverage_value := nullif(rules->>'max_leverage', '')::numeric;
+    available_margin_value := coalesce(account_row.available_margin, account_row.current_balance - coalesce(account_row.used_margin, 0));
+    if max_leverage_value is null or max_leverage_value <= 0 then
+      reason_code := 'RULE_CONFIGURATION_MISSING'; reason_text := 'Maximum leverage must be greater than zero';
+      rule_name := 'max_leverage';
+    else
+      required_margin := requested_notional / max_leverage_value;
+    end if;
+    if reason_code is null and (current_equity <= 0 or projected_notional / current_equity > max_leverage_value) then
       reason_code := 'LEVERAGE_EXCEEDED'; reason_text := 'Projected account leverage exceeds the configured maximum';
       rule_name := 'max_leverage'; current_value := case when current_equity > 0 then projected_notional / current_equity else null end;
-      configured_limit := (rules->>'max_leverage')::numeric;
+      configured_limit := max_leverage_value;
+    elsif reason_code is null and available_margin_value - pending_notional / max_leverage_value < required_margin then
+      reason_code := 'AVAILABLE_MARGIN_EXCEEDED'; reason_text := 'Available margin is insufficient for this order and pending orders';
+      rule_name := 'available_margin'; current_value := available_margin_value - pending_notional / max_leverage_value;
+      configured_limit := required_margin;
     end if;
   end if;
 

@@ -39,9 +39,16 @@ vi.mock("@/pages/RealtimeMockE2E", () => ({
   default: () => <div data-testid="synthetic-terminal-workspace">Synthetic terminal workspace</div>,
 }));
 
-vi.mock("@/pages/Login", () => ({
-  default: () => <div data-testid="customer-login">Customer login</div>,
-}));
+vi.mock("@/pages/Login", async () => {
+  const { useLocation } = await import("react-router-dom");
+  return {
+    default: function CustomerLogin() {
+      const location = useLocation();
+      const from = (location.state as { from?: string } | null)?.from ?? "";
+      return <div data-testid="customer-login" data-from={from}>Customer login</div>;
+    },
+  };
+});
 
 import App from "@/App";
 
@@ -93,6 +100,16 @@ describe("Task D7-A controlled Main Terminal certification", () => {
     render(<App />);
 
     expect(await screen.findByTestId("customer-login")).toBeInTheDocument();
+    expect(screen.queryByTestId("main-terminal-shell")).not.toBeInTheDocument();
+  });
+
+  it("preserves the requested protected route when redirecting an unauthenticated customer", async () => {
+    window.history.replaceState({}, "", "/stocks");
+    supabaseAuth.getSession.mockResolvedValueOnce({ data: { session: null }, error: null });
+    render(<App />);
+
+    const customerLogin = await screen.findByTestId("customer-login");
+    expect(customerLogin).toHaveAttribute("data-from", "/stocks");
     expect(screen.queryByTestId("main-terminal-shell")).not.toBeInTheDocument();
   });
 

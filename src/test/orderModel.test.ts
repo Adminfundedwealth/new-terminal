@@ -34,10 +34,12 @@ describe("canonical order model", () => {
 
   it("requires applicable prices and supports limit and stop orders", () => {
     expect(order({ orderType: "LIMIT", price: 23050, timeInForce: "IOC" })).toMatchObject({ orderType: "LIMIT", price: 23050, timeInForce: "IOC" });
-    expect(order({ orderType: "STOP", triggerPrice: 23100 })).toMatchObject({ orderType: "SL", triggerPrice: 23100 });
-    expect(order({ orderType: "STOP_LIMIT", triggerPrice: 23100, price: 23110 })).toMatchObject({ orderType: "SL-M", triggerPrice: 23100, price: 23110 });
+    expect(order({ orderType: "STOP", triggerPrice: 23100 })).toMatchObject({ orderType: "SL-M", triggerPrice: 23100 });
+    expect(order({ orderType: "STOP_LIMIT", triggerPrice: 23100, price: 23110 })).toMatchObject({ orderType: "SL", triggerPrice: 23100, price: 23110 });
+    expect(order({ orderType: "SL-M", triggerPrice: 23100 })).toMatchObject({ orderType: "SL-M", triggerPrice: 23100, price: null });
     expect(() => order({ orderType: "LIMIT" })).toThrow("require price");
-    expect(() => order({ orderType: "SL" })).toThrow("require triggerPrice");
+    expect(() => order({ orderType: "SL", price: 23110 })).toThrow("require triggerPrice");
+    expect(() => order({ orderType: "SL", triggerPrice: 23100 })).toThrow("stop-limit price");
   });
 
   it("validates quantities, prices, identities, and malformed objects", () => {

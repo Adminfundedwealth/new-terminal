@@ -87,7 +87,7 @@ describe("Kite derivative order routing", () => {
 
   beforeEach(() => {
     getSession.mockResolvedValue({ data: { session: { access_token: accessToken } }, error: null });
-    fetchMock = vi.fn(async () => new Response(JSON.stringify({ data: { ok: true, order: { id: "canonical-order" } } }), { status: 200 }));
+    fetchMock = vi.fn(async () => new Response(JSON.stringify({ data: { ok: true, order: { id: "canonical-order", status: "requested" } } }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
   });
 

@@ -1,4 +1,4 @@
-import { useQueries } from "@tanstack/react-query";
+import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, CheckCircle2, Loader2, ShieldAlert } from "lucide-react";
 import { useEffect } from "react";
 import {
@@ -8,8 +8,8 @@ import {
   fetchTerminalPositions,
   fetchTerminalRisk,
   fetchTerminalWatchlists,
-  subscribeToTerminalOrders,
-  subscribeToTerminalPositions,
+  cancelTerminalOrder,
+  subscribeToTerminalTradingState,
 } from "@/lib/terminalApi";
 import { CustomerOrderTable } from "@/components/CustomerOrderTable";
 import { CustomerPositionTable } from "@/components/CustomerPositionTable";
@@ -44,7 +44,14 @@ function DataState({
 export function TerminalAccountData() {
   const { user } = useAuth();
   const { activeAccountId } = useAccountContext();
+  const queryClient = useQueryClient();
   const userId = user?.id ?? "anonymous";
+  const cancelOrderMutation = useMutation({
+    mutationFn: ({ orderId, accountId }: { orderId: string; accountId: string }) => cancelTerminalOrder(orderId, accountId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: accountContextQueryKeys.terminal(userId, "orders", activeAccountId ?? "none") });
+    },
+  });
   const [positions, orders, executions, risk, performance, watchlists] = useQueries({
     queries: [
       { queryKey: accountContextQueryKeys.terminal(userId, "positions", activeAccountId ?? "none"), queryFn: () => fetchTerminalPositions(activeAccountId ?? undefined), retry: false, staleTime: 30_000, enabled: Boolean(activeAccountId && user?.id) },
@@ -58,17 +65,11 @@ export function TerminalAccountData() {
 
   useEffect(() => {
     if (!activeAccountId || !user?.id) return;
-    return subscribeToTerminalPositions(activeAccountId, () => {
-      void positions.refetch();
+    return subscribeToTerminalTradingState(activeAccountId, () => {
+      void queryClient.invalidateQueries({ queryKey: ["customer-account", user.id, "terminal"] });
+      void queryClient.invalidateQueries({ queryKey: ["terminal-os"] });
     });
-  }, [activeAccountId, user?.id, positions.refetch]);
-
-  useEffect(() => {
-    if (!activeAccountId || !user?.id) return;
-    return subscribeToTerminalOrders(activeAccountId, () => {
-      void orders.refetch();
-    });
-  }, [activeAccountId, user?.id, orders.refetch]);
+  }, [activeAccountId, queryClient, user?.id]);
 
   const riskData = risk.data?.data;
   const performanceRows = performance.data?.data ?? [];
@@ -83,7 +84,7 @@ export function TerminalAccountData() {
       <div className="mb-3 flex items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-semibold">Canonical account data</h2>
-          <p className="text-[11px] text-muted-foreground">Read-only data from Terminal OS. Local Simulated Trading is separate.</p>
+          <p className="text-[11px] text-muted-foreground">Orders, executions, positions, risk and performance are synchronized from Terminal OS.</p>
         </div>
         <ShieldAlert className="h-4 w-4 text-muted-foreground" />
       </div>
@@ -151,6 +152,9 @@ export function TerminalAccountData() {
           isFetching={orders.isFetching && !orders.isLoading}
           errorMessage={orders.error instanceof Error ? orders.error.message : undefined}
           onRetry={() => void orders.refetch()}
+          onCancel={(order) => cancelOrderMutation.mutate({ orderId: order.id, accountId: order.accountId })}
+          actionError={cancelOrderMutation.error instanceof Error ? cancelOrderMutation.error.message : undefined}
+          cancellingOrderId={cancelOrderMutation.isPending ? cancelOrderMutation.variables?.orderId : undefined}
         />
       </div>
     </section>

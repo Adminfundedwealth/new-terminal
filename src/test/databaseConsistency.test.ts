@@ -87,6 +87,10 @@ describe("canonical database consistency", () => {
     expect(migrationSql).toContain("create table if not exists public.rule_audit_log");
     expect(migrationSql).toContain("create or replace function public.evaluate_pre_trade_risk(request jsonb)");
     expect(migrationSql).toContain("max_position_lots");
+    expect(migrationSql).toContain("o.status in ('requested', 'pending', 'open', 'partially_filled')");
+    expect(migrationSql).toContain("aggregate_quantity := aggregate_quantity + pending_quantity");
+    expect(migrationSql).toContain("pending_notional + requested_notional");
+    expect(migrationSql).toContain("available_margin_value - pending_notional / max_leverage_value < required_margin");
     expect(migrationSql).toContain("weekend_trading_allowed");
     expect(migrationSql).toContain("news_restrictions");
     expect(migrationSql).toContain("max_leverage");
@@ -124,6 +128,25 @@ describe("canonical database consistency", () => {
     expect(migrationSql).toContain("create or replace function public.record_execution_fill(");
     expect(migrationSql).toContain("grant execute on function public.claim_next_order_execution_outbox");
     expect(migrationSql).toContain("grant execute on function public.record_execution_fill");
+  });
+
+  it("records account balance effects once per execution in the same transaction", () => {
+    expect(migrationSql).toContain("create table if not exists public.account_ledger_entries");
+    expect(migrationSql).toContain("foreign key (account_id, owner_user_id) references public.trading_accounts(id, owner_user_id)");
+    expect(migrationSql).toContain("foreign key (order_id, account_id, owner_user_id) references public.orders(id, account_id, owner_user_id)");
+    expect(migrationSql).toContain("unique (account_id, external_execution_id)");
+    expect(migrationSql).toContain("create trigger executions_record_account_ledger_entry");
+    expect(migrationSql).toContain("amount_value := realized_delta - coalesce(new.fees, 0) - coalesce(new.taxes, 0)");
+    expect(migrationSql).toContain("coalesce(account_row.current_balance, account_row.starting_balance) + amount_value");
+    expect(migrationSql).toContain("on conflict (account_id, external_execution_id) do nothing");
+  });
+
+  it("supports owner-scoped cancellation without leaving executable outbox work", () => {
+    expect(migrationSql).toContain("create or replace function public.cancel_simulated_order(");
+    expect(migrationSql).toContain("ord.owner_user_id = auth.uid()");
+    expect(migrationSql).toContain("set status = 'cancelled'");
+    expect(migrationSql).toContain("set state = 'completed'");
+    expect(migrationSql).toContain("grant execute on function public.cancel_simulated_order(uuid, uuid) to authenticated");
   });
 
   it("adds bounded D6 recovery RPCs without relaxing D2 database idempotency", () => {

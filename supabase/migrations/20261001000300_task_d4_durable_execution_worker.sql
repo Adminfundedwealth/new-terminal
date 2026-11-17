@@ -365,7 +365,7 @@ begin
 
   select exists (
     select 1 from public.execution_submissions s
-    where s.outbox_id = claimed_row.id and s.submission_state = 'started'
+    where s.outbox_id = claimed_row.id and s.submission_state in ('started', 'acknowledged')
   ) into recovery_only_value;
 
   return jsonb_build_object(
@@ -467,7 +467,8 @@ begin
     'client_order_id', row_submission.client_order_id,
     'provider_order_id', row_outbox.provider_order_id,
     'submission_state', row_submission.submission_state,
-    'provider_response', row_submission.provider_response
+    'provider_response', row_submission.provider_response,
+    'provider_request', row_submission.provider_request
   );
 end;
 $$;

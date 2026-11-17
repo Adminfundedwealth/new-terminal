@@ -51,10 +51,10 @@ async function checkDatabase(): Promise<boolean> {
     || account?.prop_firm !== "D6B_TEST"
     || account?.external_account_id !== "D6B-SYNTHETIC-ACCOUNT") return false;
   const { data: order, error: orderError } = await supabase
-    .from("orders")
-    .select("id, account_id, client_order_id")
+    .from("trading_orders")
+    .select("id, trading_account_id, client_order_id")
     .eq("id", syntheticOrderId)
-    .eq("account_id", syntheticAccountId)
+    .eq("trading_account_id", syntheticAccountId)
     .maybeSingle();
   if (orderError || order?.id !== syntheticOrderId || !order.client_order_id.startsWith("D6B-SYNTH-")) return false;
   const { data: outbox, error: outboxError } = await supabase

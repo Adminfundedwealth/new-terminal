@@ -4,7 +4,13 @@ import type { RiskRequest } from "@/lib/riskEngine";
 import type { Instrument } from "@/lib/localDatabase";
 import type { OptionData } from "@/lib/mockData";
 import type { RawOptionLeg } from "@/lib/optionChainAnalytics";
-import { deserializeCanonicalOrder, type CanonicalOrderRow, type CanonicalOrder } from "@/lib/orderModel";
+import {
+  deserializeCanonicalOrder,
+  ORDER_STATUSES,
+  type CanonicalOrderRow,
+  type CanonicalOrder,
+  type OrderStatus,
+} from "@/lib/orderModel";
 import { REALTIME_MOCK_TEST_ACCOUNT_ID } from "@/lib/realtimeMockTestScope";
 import { DEFAULT_REQUEST_TIMEOUT_MS, withRequestTimeout } from "@/lib/requestTimeout";
 
@@ -90,9 +96,13 @@ export interface CreateOrderRequest {
 export interface CreateOrderResponse {
   ok: boolean;
   replayed?: boolean;
-  order?: Record<string, unknown>;
+  order?: Record<string, unknown> & { id: string; status: OrderStatus };
   risk?: PreTradeRiskDecision;
   error?: { code: string; message: string };
+}
+
+function isOrderStatus(value: unknown): value is OrderStatus {
+  return typeof value === "string" && ORDER_STATUSES.some((status) => status === value);
 }
 
 interface AccountsResponse {
@@ -119,7 +129,7 @@ interface PendingOrderCommand {
 }
 
 function normalizedOrderCommand(request: CreateOrderRequest, clientOrderId: string): TerminalOrderCommandRequest {
-  const orderType = request.order_type === "STOP" ? "SL" : request.order_type === "STOP-LIMIT" ? "SL-M" : request.order_type;
+  const orderType = request.order_type === "STOP" ? "SL-M" : request.order_type === "STOP-LIMIT" ? "SL" : request.order_type;
   return {
     account_id: request.account_id,
     client_order_id: clientOrderId,
@@ -251,14 +261,17 @@ export async function submitTerminalOrderCommand(request: TerminalOrderCommandRe
   try {
     payload = await response.json() as typeof payload;
   } catch {
-    if (!response.ok) {
-      throw new Error(`Order command was rejected (${response.status}).`);
-    }
-    return { ok: true, replayed: false, order: undefined };
+    throw new Error(response.ok
+      ? "Terminal OS returned an invalid order response."
+      : `Order command was rejected (${response.status}).`);
   }
 
   if (!response.ok) throw new Error(payload.error?.message ?? "Order command was rejected.");
-  return { ok: true, replayed: payload.data?.replayed ?? false, order: payload.data?.order };
+  const order = payload.data?.order;
+  if (!order || typeof order.id !== "string" || !isOrderStatus(order.status)) {
+    throw new Error("Terminal OS did not return the persisted order status.");
+  }
+  return { ok: true, replayed: payload.data?.replayed ?? false, order: { ...order, id: order.id, status: order.status } };
 }
 export interface TerminalHealthCheck {
   name: string;
@@ -952,17 +965,17 @@ export async function fetchTerminalAccounts(): Promise<AccountsResponse> {
 
   const { data, error } = await supabase
     .from("trading_accounts")
-    .select("id, account_code, broker_provider, current_balance, status, available_margin, used_margin")
-    .eq("owner_user_id", user.id)
+    .select("id, account_code, broker_provider, balance, status, available_margin, used_margin, trader_id")
+    .eq("trader_id", user.id)
     .order("created_at", { ascending: true });
   if (error) throw new Error(`Trading accounts request failed: ${error.message}`);
 
   const accounts: TerminalAccount[] = (data ?? []).map((account) => ({
     id: account.id,
     account_code: account.account_code,
-    trader_id: user.id,
+    trader_id: account.trader_id ?? user.id,
     broker_provider: account.broker_provider,
-    balance: Number(account.current_balance ?? 0),
+    balance: Number(account.balance ?? account.current_balance ?? 0),
     status: account.status,
     available_margin: account.available_margin == null ? undefined : Number(account.available_margin),
     used_margin: account.used_margin == null ? undefined : Number(account.used_margin),
@@ -1143,6 +1156,20 @@ export function fetchTerminalOrders(accountId?: string) {
   })();
 }
 
+export async function cancelTerminalOrder(orderId: string, accountId: string): Promise<TerminalOrder> {
+  const { data, error } = await supabase.rpc("cancel_simulated_order", {
+    requested_order_id: orderId,
+    requested_account_id: accountId,
+  });
+  if (error) throw new Error(`Order cancellation failed: ${error.message}`);
+
+  const result = data as { ok?: boolean; error?: { message?: string }; order?: CanonicalOrderRow } | null;
+  if (!result?.ok || !result.order) {
+    throw new Error(result?.error?.message ?? "Order cancellation was rejected.");
+  }
+  return deserializeCanonicalOrder(result.order) as TerminalOrder;
+}
+
 export function subscribeToTerminalOrders(accountId: string, onChange: () => void) {
   if (!SUPABASE_CONFIGURED) return () => undefined;
 
@@ -1163,6 +1190,20 @@ export function subscribeToTerminalPositions(accountId: string, onChange: () => 
   return () => { void supabase.removeChannel(channel); };
 }
 
+export function subscribeToTerminalTradingState(accountId: string, onChange: () => void) {
+  if (!SUPABASE_CONFIGURED) return () => undefined;
+
+  const channel = supabase
+    .channel(createRealtimeChannel(`customer-trading-state-${accountId}`))
+    .on("postgres_changes", { event: "*", schema: "public", table: "orders", filter: `account_id=eq.${accountId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "positions", filter: `account_id=eq.${accountId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "executions", filter: `account_id=eq.${accountId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "trading_accounts", filter: `id=eq.${accountId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "account_metric_snapshots", filter: `account_id=eq.${accountId}` }, onChange)
+    .subscribe();
+  return () => { void supabase.removeChannel(channel); };
+}
+
 export function fetchTerminalExecutions(accountId?: string) {
   return (async (): Promise<PaginatedResponse<TerminalExecution>> => {
     const { data, error } = await supabase.rpc("get_terminal_executions", { requested_account_id: accountId ?? null });
@@ -1175,18 +1216,16 @@ export function fetchTerminalExecutions(accountId?: string) {
 export function fetchTerminalRisk(accountId?: string) {
   return (async (): Promise<{ data: TerminalRiskSummary }> => {
     if (!accountId) throw new Error("A trading account is required to load risk data.");
-    const ownerUserId = await getAuthenticatedCustomerId();
     const { data, error } = await supabase
       .from("risk_events")
-      .select("id, account_id, event_type, severity, metric_name, metric_value, limit_value, breach_status, occurred_at")
-      .eq("owner_user_id", ownerUserId)
-      .eq("account_id", accountId)
-      .order("occurred_at", { ascending: false })
+      .select("id, trading_account_id, event_type, severity, rule_type, threshold_value, actual_value, acknowledged, created_at")
+      .eq("trading_account_id", accountId)
+      .order("created_at", { ascending: false })
       .limit(100);
     if (error) throw new Error(`Risk events request failed: ${error.message}`);
 
     const recentEvents = data ?? [];
-    const openEvents = recentEvents.filter((event) => event.breach_status === "open");
+    const openEvents = recentEvents.filter((event) => event.acknowledged === false);
     return {
       data: {
         accounts_at_risk: openEvents.length > 0 ? 1 : 0,
@@ -1202,24 +1241,22 @@ export function fetchTerminalRisk(accountId?: string) {
 export function fetchTerminalPerformance(accountId?: string) {
   return (async (): Promise<PaginatedResponse<TerminalPerformanceRow>> => {
     if (!accountId) throw new Error("A trading account is required to load performance data.");
-    const ownerUserId = await getAuthenticatedCustomerId();
     const { data, error } = await supabase
-      .from("daily_performance")
-      .select("id, account_id, trading_date, opening_balance, closing_balance, realized_pnl, trade_count, winning_trades, losing_trades")
-      .eq("owner_user_id", ownerUserId)
-      .eq("account_id", accountId)
-      .order("trading_date", { ascending: true })
+      .from("account_metrics")
+      .select("id, trading_account_id, date, starting_balance, ending_balance, realized_pnl, total_trades, winning_trades, losing_trades")
+      .eq("trading_account_id", accountId)
+      .order("date", { ascending: true })
       .limit(100);
     if (error) throw new Error(`Daily performance request failed: ${error.message}`);
 
     const rows: TerminalPerformanceRow[] = (data ?? []).map((row) => ({
       id: row.id,
-      trading_account_id: row.account_id,
-      date: row.trading_date,
-      opening_balance: row.opening_balance == null ? null : Number(row.opening_balance),
-      closing_balance: row.closing_balance == null ? null : Number(row.closing_balance),
+      trading_account_id: row.trading_account_id,
+      date: row.date,
+      opening_balance: row.starting_balance == null ? null : Number(row.starting_balance),
+      closing_balance: row.ending_balance == null ? null : Number(row.ending_balance),
       daily_pnl: Number(row.realized_pnl),
-      total_trades: row.trade_count,
+      total_trades: row.total_trades,
       winning_trades: row.winning_trades,
       losing_trades: row.losing_trades,
     }));
@@ -1235,21 +1272,25 @@ export function fetchTerminalWatchlists() {
     const ownerUserId = await getAuthenticatedCustomerId();
     const { data, error } = await supabase
       .from("watchlists")
-      .select("id, owner_user_id, name, watchlist_items(symbol, display_order)")
-      .eq("owner_user_id", ownerUserId)
+      .select("id, trader_id, name, items")
+      .eq("trader_id", ownerUserId)
       .order("created_at", { ascending: false })
       .limit(100);
     if (error) throw new Error(`Watchlists request failed: ${error.message}`);
 
-    const rows: TerminalWatchlist[] = (data ?? []).map((row) => ({
-      id: row.id,
-      trader_id: row.owner_user_id,
-      name: row.name,
-      items: [...(row.watchlist_items ?? [])]
-        .sort((left, right) => left.display_order - right.display_order)
-        .map((item) => item.symbol),
-      is_default: false,
-    }));
+    const rows: TerminalWatchlist[] = (data ?? []).map((row) => {
+      const items = Array.isArray(row.items) ? row.items : [];
+      const symbols = items
+        .map((item) => (typeof item === "string" ? item : typeof item === "object" && item && "symbol" in item ? String((item as Record<string, unknown>).symbol ?? "") : ""))
+        .filter(Boolean);
+      return {
+        id: row.id,
+        trader_id: row.trader_id,
+        name: row.name,
+        items: symbols,
+        is_default: false,
+      };
+    });
     return {
       data: rows,
       meta: { total: rows.length, page: 1, page_size: 100, has_more: rows.length === 100 },

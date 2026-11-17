@@ -2,6 +2,7 @@
   RewriteEngine On
   RewriteBase /
   RewriteRule ^auth/sso/?$ sso-proxy.php?route=sso [QSA,L]
+  RewriteRule ^auth/sso/store/?$ sso-proxy.php?route=store [QSA,L]
   RewriteRule ^auth/sso/exchange/?$ sso-proxy.php?route=exchange [QSA,L]
   RewriteRule ^index\.html$ - [L]
   RewriteCond %{REQUEST_FILENAME} !-f

@@ -13,6 +13,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { X, Zap, TrendingUp, TrendingDown, RefreshCw, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAccountContext } from "@/hooks/useAccountContext";
@@ -77,9 +78,9 @@ const fmtPct = (n: number) => (n >= 0 ? `+${fmt(n)}%` : `${fmt(n)}%`);
 export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrderPopupProps) {
   /* — account — */
   const { activeAccountId, accounts, hasNoAccount } = useAccountContext();
+  const queryClient = useQueryClient();
   const activeAccount = accounts.find(a => a.id === activeAccountId);
   const availableFunds = activeAccount?.available_margin ?? null;
-  const isSimulated = !activeAccount?.broker_provider || activeAccount.status !== "active";
 
   /* — side / ticket mode — */
   const [side, setSide] = useState<"BUY" | "SELL">(initialSide);
@@ -298,13 +299,15 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
       const result = await createTerminalOrder(req);
 
       if (result.ok) {
-        const oid = (result.order as { id?: string } | undefined)?.id ?? "—";
-        setOrderId(oid);
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["terminal-os"] }),
+          queryClient.invalidateQueries({ queryKey: ["customer-account"] }),
+        ]);
+        const status = result.order.status.replace(/_/g, " ");
+        setOrderId(result.order.id);
         setOrderState("done");
-        setOrderMessage(isSimulated
-          ? `Simulated ${side} order placed. Order ID: ${oid}`
-          : `Order placed. Order ID: ${oid}`);
-        toast.success(`${side} ${contract.tradingSymbol} — order placed.`);
+        setOrderMessage(`Simulated ${side} order ${status}. Order ID: ${result.order.id}`);
+        toast.success(`${side} ${contract.tradingSymbol} — ${status}.`);
       } else {
         const msg = result.error?.message ?? "Order rejected.";
         setOrderState("error");

@@ -20,7 +20,7 @@ beforeEach(() => {
 
 describe("Main Terminal order command client", () => {
   it("sends only the customer command and bearer identity to Terminal OS", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: { replayed: false, order: { id: "order-1" } } }), { status: 202 }));
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: { replayed: false, order: { id: "order-1", status: "requested" } } }), { status: 202 }));
     vi.stubGlobal("fetch", fetchMock);
     const command = { account_id: "11111111-1111-4111-8111-111111111111", client_order_id: "client-1", symbol: "NIFTY", exchange: "NSE", side: "BUY" as const, quantity: 1, order_type: "MARKET" as const };
     await submitTerminalOrderCommand(command);
@@ -73,7 +73,7 @@ describe("Main Terminal order command client", () => {
   });
 
   it("normalizes aliases and strips untrusted routing and credential fields", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: { replayed: false, order: { id: "order-2" } } }), { status: 202 }));
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: { replayed: false, order: { id: "order-2", status: "requested" } } }), { status: 202 }));
     vi.stubGlobal("fetch", fetchMock);
     const request = {
       account_id: "11111111-1111-4111-8111-111111111111",
@@ -91,8 +91,26 @@ describe("Main Terminal order command client", () => {
 
     await createTerminalOrder(request);
     const sentBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    expect(sentBody).toMatchObject({ symbol: "NIFTY", exchange: "NSE", order_type: "SL-M", client_order_id: "retry-key" });
+    expect(sentBody).toMatchObject({ symbol: "NIFTY", exchange: "NSE", order_type: "SL", client_order_id: "retry-key" });
     expect(sentBody).not.toHaveProperty("broker_connection_id");
     expect(sentBody).not.toHaveProperty("access_token");
+  });
+
+  it("does not report success when the gateway omits the persisted order status", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ data: { order: { id: "order-3" } } }), { status: 202 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const command = {
+      account_id: "11111111-1111-4111-8111-111111111111",
+      client_order_id: "client-3",
+      symbol: "NIFTY",
+      exchange: "NSE",
+      side: "BUY" as const,
+      quantity: 1,
+      order_type: "MARKET" as const,
+    };
+
+    await expect(submitTerminalOrderCommand(command)).rejects.toThrow("persisted order status");
   });
 });

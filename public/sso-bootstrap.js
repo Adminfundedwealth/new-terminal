@@ -29,7 +29,7 @@
       tokenHash: result.tokenHash,
       accountId: result.accountId,
     });
-    const stored = await fetch("/sso-proxy.php?route=store", {
+    const stored = await fetch("/auth/sso/store", {
       method: "POST",
       credentials: "same-origin",
       cache: "no-store",
