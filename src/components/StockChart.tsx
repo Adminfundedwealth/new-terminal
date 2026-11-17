@@ -166,7 +166,7 @@ function OpenAlgoChart({
   ].join("\u001f");
   const previousSelectionKey = useRef(selectionKey);
   const isDark = useIsDark();
-  const initialTheme = useRef(isDark ? "dark" : "light");
+  const initialTheme = useRef<"dark" | "light">(isDark ? "dark" : "light");
   const [quoteStatus, setQuoteStatus] = useState("Connecting to Dhan quotes…");
   const [mountError, setMountError] = useState<string | null>(null);
   const [quoteError, setQuoteError] = useState(false);

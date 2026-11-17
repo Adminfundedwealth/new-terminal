@@ -6,6 +6,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/hooks/useMarketData", () => ({
   useMarketStatus: () => ({ data: { isOpen: true } }),
 }));
+vi.mock("@/lib/centralMarketQuotes", () => ({
+  fetchCentralMarketQuotes: vi.fn().mockResolvedValue({ quotes: {}, errors: [] }),
+}));
 vi.mock("@/hooks/useLocalDatabase", () => ({
   useInstrumentLookup: () => ({
     instruments: [
@@ -61,6 +64,13 @@ describe("Watchlist instrument chart navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "View chart for RELIANCE" }));
 
     await waitFor(() => expect(screen.getByTestId("current-location")).toHaveTextContent("/stocks?symbol=RELIANCE"));
+  });
+
+  it("shows each watchlisted instrument's exchange", async () => {
+    renderWatchlist();
+
+    expect(await screen.findAllByText("NSE")).toHaveLength(2);
+    expect(screen.getByRole("columnheader", { name: "Exchange" })).toBeInTheDocument();
   });
 
   it("excludes legacy debt-series instruments from watchlist rows", async () => {

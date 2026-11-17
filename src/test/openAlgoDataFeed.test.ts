@@ -13,7 +13,7 @@ const {
   subscribeToTerminalMarketDataStreamMock,
 } = vi.hoisted(() => ({
   requestTerminalMarketDataMock: vi.fn(),
-  subscribeToTerminalMarketDataStreamMock: vi.fn(() => vi.fn()),
+  subscribeToTerminalMarketDataStreamMock: vi.fn((..._args: unknown[]) => vi.fn()),
 }));
 vi.mock("@/lib/terminalApi", () => ({
   requestTerminalMarketData: requestTerminalMarketDataMock,
@@ -68,6 +68,31 @@ describe("OpenAlgo FundedWealth datafeed", () => {
       exchangeSegment: "NASDAQ",
       instrumentType: "EQUITY",
     }))).toBe(false);
+  });
+
+  it.each([
+    ["1m", "1m", true],
+    ["3m", "1m", false],
+    ["5m", "5m", true],
+    ["15m", "15m", true],
+    ["30m", "15m", false],
+    ["1h", "1h", true],
+    ["1d", "1d", true],
+  ] as const)("resolves %s to central %s history", (interval, sourceInterval, native) => {
+    const datafeed = new FundedWealthOpenAlgoDataFeed(instrument(), vi.fn());
+
+    const plan = datafeed.feed.resolve({
+      symbol: "HDFCBANK",
+      exchange: "NSE",
+      interval,
+    });
+
+    expect(plan).toMatchObject({
+      interval,
+      source: { interval: sourceInterval },
+      native,
+    });
+    datafeed.destroy();
   });
 
   it("parses Dhan's offset-free timestamps as India Standard Time", () => {
@@ -126,7 +151,19 @@ describe("OpenAlgo FundedWealth datafeed", () => {
   });
 
   it("forwards the chart history cancellation signal to the Dhan request", async () => {
-    requestTerminalMarketDataMock.mockImplementationOnce(() => new Promise(() => {}));
+    requestTerminalMarketDataMock.mockImplementationOnce((
+      _accountId: null,
+      _provider: string,
+      _operation: unknown,
+      _environment: string,
+      signal?: AbortSignal,
+    ) => new Promise((_, reject) => {
+      signal?.addEventListener(
+        "abort",
+        () => reject(new DOMException("The market-data request was cancelled.", "AbortError")),
+        { once: true },
+      );
+    }));
     const datafeed = new FundedWealthOpenAlgoDataFeed(instrument(), vi.fn());
     const controller = new AbortController();
 

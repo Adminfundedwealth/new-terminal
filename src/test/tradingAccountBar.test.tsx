@@ -73,7 +73,7 @@ describe("TradingAccountBar", () => {
     expect(screen.getByText("ACTIVE")).toHaveClass("text-bullish");
   }, 30_000);
 
-  it("renders zero values and a neutral NO ACCOUNT status for an empty account list", () => {
+  it("renders unavailable values and a neutral NO ACCOUNT status for an empty account list", () => {
     mockAccountContext({
       accounts: [],
       accountContext: undefined,
@@ -85,16 +85,33 @@ describe("TradingAccountBar", () => {
 
     expect(screen.getByText("NO ACCOUNT")).toHaveClass("text-muted-foreground");
     expect(screen.queryByText(/Dhan|broker|connect/i)).not.toBeInTheDocument();
-    expect(screen.getByText("Account Type").parentElement).toHaveTextContent("Account Type00");
-    expect(screen.getByText("Balance").parentElement).toHaveTextContent("Balance00");
-    expect(screen.getByText("Equity").parentElement).toHaveTextContent("Equity00");
-    expect(screen.getByText("Available Funds").parentElement).toHaveTextContent("Available Funds00");
-    expect(screen.getByText("Total P&L").parentElement).toHaveTextContent("Total P&L00");
-    expect(screen.getByText("Daily Loss").parentElement).toHaveTextContent("Daily Loss00");
-    expect(screen.getByText("Max Drawdown").parentElement).toHaveTextContent("Max Drawdown00");
-    expect(screen.getByText("Profit Target").parentElement).toHaveTextContent("Profit Target00");
-    expect(screen.getByText("Open Risk Events").parentElement).toHaveTextContent("Open Risk Events00");
+    expect(screen.getByText("Account Type").parentElement).toHaveTextContent("Account Type—");
+    expect(screen.getByText("Balance").parentElement).toHaveTextContent("Balance—");
+    expect(screen.getByText("Equity").parentElement).toHaveTextContent("Equity—");
+    expect(screen.getByText("Available Funds").parentElement).toHaveTextContent("Available Funds—");
+    expect(screen.getByText("Total P&L").parentElement).toHaveTextContent("Total P&L—");
+    expect(screen.getByText("Daily Loss").parentElement).toHaveTextContent("Daily Loss—");
+    expect(screen.getByText("Max Drawdown").parentElement).toHaveTextContent("Max Drawdown—");
+    expect(screen.getByText("Profit Target").parentElement).toHaveTextContent("Profit Target—");
+    expect(screen.getByText("Open Risk Events").parentElement).toHaveTextContent("Open Risk Events—");
   }, 30_000);
+
+  it("does not display a zero balance when account loading fails", () => {
+    mockAccountContext({
+      accounts: [],
+      accountContext: undefined,
+      activeAccountId: null,
+      isError: true,
+      error: new Error("account service unavailable"),
+      hasNoAccount: false,
+    });
+
+    render(<TradingAccountBar />);
+
+    expect(screen.getByText("Balance").parentElement).toHaveTextContent("Balance—");
+    expect(screen.queryByText("₹0.00")).not.toBeInTheDocument();
+    expect(screen.getByText("Account details unavailable")).toBeInTheDocument();
+  });
 
   it("uses a danger status color for a breached account", () => {
     mockAccountContext({

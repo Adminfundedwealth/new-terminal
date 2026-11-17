@@ -55,9 +55,9 @@ export function TradingAccountBar() {
       : accountStatus === "WARNING"
         ? "bg-warning"
         : "bg-bearish";
-  const emptyValue = hasNoAccount ? "00" : "—";
+  const emptyValue = "—";
   const accountType = hasNoAccount
-    ? "00"
+    ? "—"
     : String(account?.account_type ?? account?.challenge_type ?? accountContext?.product.name ?? "—").replace(/[_-]+/g, " ");
 
   const metrics = [

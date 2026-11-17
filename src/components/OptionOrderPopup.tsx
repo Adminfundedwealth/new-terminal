@@ -606,7 +606,6 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
                   <Button
                     size="sm"
                     onClick={() => void handleSubmit()}
-                    disabled={orderState === "submitting"}
                     className={isBuy ? "bg-emerald-600 text-white hover:bg-emerald-500" : "bg-red-600 text-white hover:bg-red-500"}
                   >
                     Confirm and submit

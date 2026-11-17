@@ -31,14 +31,17 @@ function quote(instrumentId: string, ltp: number, tradingSymbol: string) {
 
 function instrument(overrides: Partial<{
   securityId: string;
+  providerInstrumentId: string;
   symbol: string;
   tradingSymbol: string;
   exchangeSegment: string;
   provider: "dhan" | "kite" | "zerodha";
   exchange: string;
 }> = {}) {
+  const securityId = overrides.securityId ?? "2885";
   return {
-    securityId: "2885",
+    securityId,
+    providerInstrumentId: overrides.providerInstrumentId ?? securityId,
     symbol: "RELIANCE INDUSTRIES LTD",
     tradingSymbol: "RELIANCE",
     exchangeSegment: "NSE_EQ",

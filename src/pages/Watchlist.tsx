@@ -66,7 +66,12 @@ export default function Watchlist() {
   const [addSymbol, setAddSymbol] = useState("");
   const [addSymbolError, setAddSymbolError] = useState<string | null>(null);
   const [optionContracts, setOptionContracts] = useState(() => readOptionContractWatchlist());
-  const { instruments, isLoaded: instrumentsLoaded, loadError: instrumentLoadError } = useInstrumentLookup();
+  const {
+    instruments,
+    isLoaded: instrumentsLoaded,
+    isCatalogLoading,
+    loadError: instrumentLoadError,
+  } = useInstrumentLookup();
   const { data: marketStatusData } = useMarketStatus();
 
   const supportedInstruments = useMemo(
@@ -110,16 +115,18 @@ export default function Watchlist() {
   const statusText = quoteQuery.data?.errors.length
     ? `${baseStatusText}. ${quoteQuery.data.errors[0]}`
     : baseStatusText;
-  const isLoading = !instrumentsLoaded;
+  const isLoading = !instrumentsLoaded || (isCatalogLoading && supportedInstruments.length === 0);
 
   const watchlistRows = useMemo(() => {
     return watchedSymbols
       .map((sym) => {
-        if (!findWatchlistInstrument(supportedInstruments, sym)) return null;
+        const instrument = findWatchlistInstrument(supportedInstruments, sym);
+        if (!instrument) return null;
         const quote = quotes[sym];
         if (quote) {
           return {
             symbol: sym,
+            exchange: instrument.exchange,
             ltp: quote.ltp,
             change: quote.change,
             changePercent: quote.changePercent,
@@ -137,6 +144,7 @@ export default function Watchlist() {
         }
         return {
           symbol: sym,
+          exchange: instrument.exchange,
           ltp: null,
           change: null,
           changePercent: null,
@@ -312,7 +320,7 @@ export default function Watchlist() {
           {isLoading ? (
             <div className="flex items-center justify-center py-12 gap-2 text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
-              <span className="text-sm">Loading live data...</span>
+              <span className="text-sm">Loading instruments and market data...</span>
             </div>
           ) : (
             <Table>
@@ -320,6 +328,7 @@ export default function Watchlist() {
                 <TableRow className="text-xs">
                   <TableHead className="w-8"></TableHead>
                   <TableHead>Symbol</TableHead>
+                  <TableHead>Exchange</TableHead>
                   <TableHead className="text-right">LTP</TableHead>
                   <TableHead className="text-right">Change</TableHead>
                   <TableHead className="text-right">Chg%</TableHead>
@@ -354,6 +363,7 @@ export default function Watchlist() {
                         {w.symbol}
                       </button>
                     </TableCell>
+                    <TableCell className="text-muted-foreground">{w.exchange}</TableCell>
                     <TableCell className="text-right font-semibold">
                       {hasPrice ? `₹${w.ltp!.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
                     </TableCell>
@@ -414,7 +424,7 @@ export default function Watchlist() {
                 })}
                 {watchlistRows.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={12} className="text-center py-8 text-muted-foreground text-sm">
+                    <TableCell colSpan={14} className="text-center py-8 text-muted-foreground text-sm">
                       {search ? "No symbols match your filter" : "Add symbols to your watchlist to track them here"}
                     </TableCell>
                   </TableRow>
@@ -436,7 +446,7 @@ export default function Watchlist() {
                     }`}>
                       Avg: {((watchlistRows.reduce((s, w) => s + (w.changePercent || 0), 0) / Math.max(watchlistRows.length, 1))).toFixed(2)}%
                     </TableCell>
-                    <TableCell colSpan={7} />
+                    <TableCell colSpan={9} />
                   </TableRow>
                 )}
               </TableBody>
