@@ -965,17 +965,17 @@ export async function fetchTerminalAccounts(): Promise<AccountsResponse> {
 
   const { data, error } = await supabase
     .from("trading_accounts")
-    .select("id, account_code, broker_provider, balance, status, available_margin, used_margin, trader_id")
-    .eq("trader_id", user.id)
+    .select("id, account_code, broker_provider, current_balance, status, available_margin, used_margin, owner_user_id")
+    .eq("owner_user_id", user.id)
     .order("created_at", { ascending: true });
   if (error) throw new Error(`Trading accounts request failed: ${error.message}`);
 
   const accounts: TerminalAccount[] = (data ?? []).map((account) => ({
     id: account.id,
     account_code: account.account_code,
-    trader_id: account.trader_id ?? user.id,
+    trader_id: account.owner_user_id ?? user.id,
     broker_provider: account.broker_provider,
-    balance: Number(account.balance ?? account.current_balance ?? 0),
+    balance: Number(account.current_balance ?? 0),
     status: account.status,
     available_margin: account.available_margin == null ? undefined : Number(account.available_margin),
     used_margin: account.used_margin == null ? undefined : Number(account.used_margin),
