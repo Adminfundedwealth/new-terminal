@@ -81,6 +81,7 @@ export function OptionOrderPopup({ contract, initialSide, onClose }: OptionOrder
   const queryClient = useQueryClient();
   const activeAccount = accounts.find(a => a.id === activeAccountId);
   const availableFunds = activeAccount?.available_margin ?? null;
+  const isSimulated = activeAccount?.broker_provider?.toLowerCase() === "simulated";
 
   /* — side / ticket mode — */
   const [side, setSide] = useState<"BUY" | "SELL">(initialSide);
