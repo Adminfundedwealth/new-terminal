@@ -682,6 +682,16 @@ async function getCustomerAccessToken(): Promise<string> {
   return session.access_token;
 }
 
+async function getOptionalCustomerAccessToken(): Promise<string | null> {
+  try {
+    const { data: { session }, error } = await supabase.auth.getSession();
+    if (error || !session?.access_token) return null;
+    return session.access_token;
+  } catch {
+    return null;
+  }
+}
+
 async function readMarketDataResponse<T>(response: Response): Promise<T> {
   let payload: { data?: T | null; error?: { code?: string } } | null;
   try {
@@ -731,14 +741,16 @@ export async function requestTerminalMarketData<T>(
   return withRequestTimeout(
     provider === "dhan" ? DHAN_MARKET_DATA_REQUEST_TIMEOUT_MS : DEFAULT_REQUEST_TIMEOUT_MS,
     async (requestSignal) => {
-    const accessToken = await getCustomerAccessToken();
+    const accessToken = provider === "dhan"
+      ? await getOptionalCustomerAccessToken()
+      : await getCustomerAccessToken();
     const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/market-data`, {
       method: "POST",
       credentials: "omit",
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       },
       body: JSON.stringify({ ...(scopedAccountId ? { account_id: scopedAccountId } : {}), provider, environment, ...requestOperation }),
       signal: requestSignal,
@@ -758,11 +770,16 @@ export async function fetchTerminalMarketDataStatus(
   const scopedAccountId = provider === "dhan" ? null : accountId;
   if (!scopedAccountId && provider !== "dhan") throw new Error("A trading account is required for account-scoped market-data status.");
   return withRequestTimeout(DEFAULT_REQUEST_TIMEOUT_MS, async (requestSignal) => {
-    const accessToken = await getCustomerAccessToken();
+    const accessToken = provider === "dhan"
+      ? await getOptionalCustomerAccessToken()
+      : await getCustomerAccessToken();
     const query = new URLSearchParams({ ...(scopedAccountId ? { account_id: scopedAccountId } : {}), provider, environment });
     const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/market-data?${query}`, {
       credentials: "omit",
-      headers: { Accept: "application/json", Authorization: `Bearer ${accessToken}` },
+      headers: {
+        Accept: "application/json",
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
       signal: requestSignal,
     });
     return readMarketDataResponse<TerminalMarketDataStatus>(response);
@@ -833,7 +850,9 @@ function waitForReconnectDelay(signal: AbortSignal, delayMs: number): Promise<vo
 }
 
 async function readRealtimeStream(pool: TerminalRealtimePool, generation: number, signal: AbortSignal): Promise<void> {
-  const accessToken = await getCustomerAccessToken();
+  const accessToken = pool.provider === "dhan"
+    ? await getOptionalCustomerAccessToken()
+    : await getCustomerAccessToken();
   const query = new URLSearchParams({
     provider: pool.provider,
     environment: pool.environment,
@@ -850,7 +869,10 @@ async function readRealtimeStream(pool: TerminalRealtimePool, generation: number
   if (pool.accountId) query.set("account_id", pool.accountId);
   const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/market-data/stream?${query}`, {
     credentials: "omit",
-    headers: { Accept: "text/event-stream", Authorization: `Bearer ${accessToken}` },
+    headers: {
+      Accept: "text/event-stream",
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
     signal,
   });
   if (!response.ok || !response.body) {
@@ -1194,7 +1216,7 @@ export function subscribeToTerminalOrders(accountId: string, onChange: () => voi
 
   const channel = supabase
     .channel(createRealtimeChannel(`customer-orders-${accountId}`))
-    .on("postgres_changes", { event: "*", schema: "public", table: "trading_orders", filter: `account_id=eq.${accountId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "orders", filter: `account_id=eq.${accountId}` }, onChange)
     .subscribe();
   return () => { void supabase.removeChannel(channel); };
 }
@@ -1214,11 +1236,14 @@ export function subscribeToTerminalTradingState(accountId: string, onChange: () 
 
   const channel = supabase
     .channel(createRealtimeChannel(`customer-trading-state-${accountId}`))
-    .on("postgres_changes", { event: "*", schema: "public", table: "trading_orders", filter: `account_id=eq.${accountId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "orders", filter: `account_id=eq.${accountId}` }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "positions", filter: `account_id=eq.${accountId}` }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "executions", filter: `account_id=eq.${accountId}` }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "trading_accounts", filter: `id=eq.${accountId}` }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "account_metric_snapshots", filter: `account_id=eq.${accountId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "daily_performance", filter: `account_id=eq.${accountId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "risk_events", filter: `account_id=eq.${accountId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "account_ledger_entries", filter: `account_id=eq.${accountId}` }, onChange)
     .subscribe();
   return () => { void supabase.removeChannel(channel); };
 }

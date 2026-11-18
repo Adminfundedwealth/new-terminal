@@ -103,13 +103,22 @@ describe("Task D7-A controlled Main Terminal certification", () => {
     expect(screen.queryByTestId("main-terminal-shell")).not.toBeInTheDocument();
   });
 
-  it("preserves the requested protected route when redirecting an unauthenticated customer", async () => {
+  it("allows unauthenticated access to public market-data routes", async () => {
     window.history.replaceState({}, "", "/stocks");
     supabaseAuth.getSession.mockResolvedValueOnce({ data: { session: null }, error: null });
     render(<App />);
 
+    expect(await screen.findByTestId("main-terminal-shell")).toBeInTheDocument();
+    expect(screen.queryByTestId("customer-login")).not.toBeInTheDocument();
+  });
+
+  it("preserves the requested protected route when redirecting an unauthenticated customer", async () => {
+    window.history.replaceState({}, "", "/watchlist");
+    supabaseAuth.getSession.mockResolvedValueOnce({ data: { session: null }, error: null });
+    render(<App />);
+
     const customerLogin = await screen.findByTestId("customer-login");
-    expect(customerLogin).toHaveAttribute("data-from", "/stocks");
+    expect(customerLogin).toHaveAttribute("data-from", "/watchlist");
     expect(screen.queryByTestId("main-terminal-shell")).not.toBeInTheDocument();
   });
 

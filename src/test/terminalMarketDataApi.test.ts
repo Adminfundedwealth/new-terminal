@@ -399,10 +399,18 @@ describe("Main Terminal market-data contract", () => {
     expect(JSON.stringify(init.body)).not.toContain(accessToken);
   });
 
-  it("fails before network access when the customer session is missing", async () => {
+  it("allows global Dhan requests without a customer session", async () => {
     getSession.mockResolvedValueOnce({ data: { session: null }, error: null });
 
     await expect(requestTerminalMarketData(accountId, "dhan", { operation: "authenticate" }))
+      .resolves.toEqual({ authenticated: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires a customer session for account-scoped providers", async () => {
+    getSession.mockResolvedValueOnce({ data: { session: null }, error: null });
+
+    await expect(requestTerminalMarketData(accountId, "kite", { operation: "authenticate" }))
       .rejects.toThrow("Authentication required");
     expect(fetchMock).not.toHaveBeenCalled();
   });
