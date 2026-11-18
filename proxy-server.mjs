@@ -582,8 +582,8 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
       const exchSeg = params.get("exchangeSegment") || "IDX_I";
       const instrument = params.get("instrument") || "INDEX";
       const interval = params.get("interval") || "5";
-      const fromDate = params.get("fromDate");
-      const toDate = params.get("toDate");
+      const fromDate = params.get("fromDate") || params.get("from");
+      const toDate = params.get("toDate") || params.get("to");
 
       if (!secId) throw new Error("Missing securityId parameter");
 
@@ -625,9 +625,11 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
         instrument,
         fromDate: formatDhanChartDateTime(from, "09:15:00"),
         toDate: formatDhanChartDateTime(to, "15:30:00"),
-        expiryCode: 0,
-        oi: exchSeg === "NSE_FNO",
       };
+      if (exchSeg === "NSE_FNO" || exchSeg === "BSE_FNO") {
+        body.expiryCode = 0;
+        body.oi = true;
+      }
       // Only add interval for intraday calls
       if (!isDailyCandle) {
         body.interval = interval;
