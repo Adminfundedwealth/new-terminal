@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import {
@@ -229,6 +230,87 @@ function ConnectionStatusPanel() {
   );
 }
 
+function DhanControlCenter() {
+  const [clientId, setClientId] = useState("");
+  const [accessToken, setAccessToken] = useState("");
+  const [running, setRunning] = useState(false);
+  const [stages, setStages] = useState<Record<string, { status: string; detail: string }>>({});
+  const [message, setMessage] = useState("");
+
+  const control = async (action: "save" | "test" | "initialize" | "reinitialize" | "reconnect") => {
+    setRunning(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/dhan/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(action === "save"
+          ? { action, clientId, accessToken }
+          : { action, ...(clientId ? { clientId } : {}), ...(accessToken ? { accessToken } : {}) }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Dhan control action failed.");
+      if (payload.stages) setStages(payload.stages);
+      setMessage(payload.message || (payload.success ? "Dhan action completed." : "Dhan action requires attention."));
+      toast.success(payload.message || "Dhan action completed.");
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Dhan control action failed.";
+      setMessage(detail);
+      toast.error(detail);
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Key className="h-5 w-5" />
+          Dhan Central Market-Data Control
+        </CardTitle>
+        <CardDescription>
+          Save and initialize the canonical Dhan market-data infrastructure.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-3 md:grid-cols-2">
+          <Input value={clientId} onChange={(event) => setClientId(event.target.value)} placeholder="Dhan Client ID" autoComplete="off" />
+          <Input value={accessToken} onChange={(event) => setAccessToken(event.target.value)} placeholder="Dhan Access Token" type="password" autoComplete="off" />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => control("save")} disabled={running || !clientId.trim() || !accessToken.trim()}>
+            {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Shield className="mr-2 h-4 w-4" />}
+            Save Keys
+          </Button>
+          <Button variant="outline" onClick={() => control("test")} disabled={running}>Test Authentication</Button>
+          <Button variant="outline" onClick={() => control("initialize")} disabled={running}>Initialize Infrastructure</Button>
+          <Button variant="outline" onClick={() => control("reinitialize")} disabled={running}>Reinitialize Safely</Button>
+          <Button variant="outline" onClick={() => control("reconnect")} disabled={running}>Reconnect WebSocket</Button>
+        </div>
+        {message && (
+          <div className="rounded-md border p-3 text-sm text-muted-foreground">{message}</div>
+        )}
+        {Object.keys(stages).length > 0 && (
+          <div className="grid gap-2 md:grid-cols-2">
+            {Object.entries(stages).map(([name, stage]) => (
+              <div key={name} className="flex items-start gap-2 rounded-md border p-3">
+                {stage.status === "operational"
+                  ? <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-500" />
+                  : <XCircle className="mt-0.5 h-4 w-4 text-red-500" />}
+                <div>
+                  <p className="text-sm font-medium">{name}</p>
+                  <p className="text-xs text-muted-foreground">{stage.detail}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function BrokerSettings() {
   const [savedBrokers, setSavedBrokers] = useState(getSavedBrokers());
   const activeBroker = getActiveBroker();
@@ -286,6 +368,7 @@ export default function BrokerSettings() {
 
       {/* Connection Status Panel */}
       <ConnectionStatusPanel />
+      <DhanControlCenter />
 
       {/* Database Manager */}
       <DatabaseManager />

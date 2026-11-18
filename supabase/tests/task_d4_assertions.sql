@@ -2,6 +2,7 @@ begin;
 
 do $$
 declare
+  synthetic_user_id uuid := 'd4000000-0000-4000-8000-000000000001';
   synthetic_account_id uuid := 'd4000000-0000-4000-8000-000000000002';
   claim_outbox_id uuid := 'd4000000-0000-4000-8000-000000000007';
   recovery_outbox_id uuid := 'd4000000-0000-4000-8000-000000000006';
@@ -15,6 +16,8 @@ declare
   fill_result jsonb;
   duplicate_fill_result jsonb;
   fill_event jsonb;
+  command_request jsonb;
+  command_result jsonb;
   event_time timestamptz := '2026-10-02 09:15:00+00';
   execution_count integer;
   position_count integer;
@@ -24,6 +27,32 @@ begin
     raise exception 'D4 assertions are restricted to the isolated local execution test runner';
   end if;
   perform set_config('request.jwt.claim.role', 'service_role', true);
+
+  perform set_config('request.jwt.claim.sub', synthetic_user_id::text, true);
+  command_request := jsonb_build_object(
+    'account_id', synthetic_account_id,
+    'client_order_id', 'D4-CUSTOMER-COMMAND',
+    'symbol', 'D4UNKNOWN',
+    'exchange', 'NSE',
+    'segment', 'NSE_EQ',
+    'side', 'BUY',
+    'order_type', 'MARKET',
+    'quantity', 1
+  );
+  command_result := public.create_order_command(command_request);
+  if command_result->'error'->>'code' is distinct from 'INVALID_INSTRUMENT' then
+    raise exception 'SIMULATED_COMMAND_DEPENDED_ON_MARKET_DATA_PROVIDER_OR_BROKER_BINDING: %', command_result;
+  end if;
+  update public.trading_accounts set execution_mode = 'broker' where id = synthetic_account_id;
+  command_request := jsonb_set(command_request, '{client_order_id}', '"D4-UNSUPPORTED-MODE"');
+  command_result := public.create_order_command(command_request);
+  if command_result->'error'->>'code' is distinct from 'EXECUTION_MODE_UNSUPPORTED' then
+    raise exception 'NON_SIMULATED_EXECUTION_MODE_WAS_NOT_REJECTED: %', command_result;
+  end if;
+  update public.trading_accounts set execution_mode = 'simulated' where id = synthetic_account_id;
+  if exists (select 1 from public.orders where client_order_id in ('D4-CUSTOMER-COMMAND', 'D4-UNSUPPORTED-MODE')) then
+    raise exception 'INVALID_CUSTOMER_COMMAND_PERSISTED_AN_ORDER';
+  end if;
 
   select claimed_by into worker_name from public.order_execution_outbox where id = claim_outbox_id;
   if worker_name is null then raise exception 'CONCURRENT_CLAIM_DID_NOT_PERSIST'; end if;

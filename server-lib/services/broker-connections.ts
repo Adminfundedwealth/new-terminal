@@ -2,6 +2,7 @@ import { getSupabaseClient } from "../supabase/client.js";
 import { decryptCredentials } from "../security/broker-encryption.js";
 import { MarketDataProviderError } from "../brokers/provider-error.js";
 import type { BrokerCredentialMap } from "../brokers/types.js";
+import { encryptCredentials } from "../security/broker-encryption.js";
 
 export interface BrokerConnectionScope {
   broker_id: "dhan" | "zerodha";
@@ -107,4 +108,49 @@ export async function getBrokerConnectionById(
       "INVALID_CREDENTIALS"
     );
   }
+}
+
+export async function saveCentralBrokerCredentials(
+  credentials: BrokerCredentialMap,
+  scope: BrokerConnectionScope
+): Promise<{ id: string; broker_id: string; environment: string }> {
+  const db = getSupabaseClient();
+  const encryptedCredentials = encryptCredentials(credentials);
+
+  const { data, error } = await db
+    .from("broker_connections")
+    .upsert({
+      broker_id: scope.broker_id,
+      environment: scope.environment,
+      encrypted_credentials: encryptedCredentials,
+      is_active: true,
+      is_connected: false,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "broker_id,environment" })
+    .select("id,broker_id,environment")
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) throw new Error("The broker connection could not be persisted.");
+  return data;
+}
+
+export async function markCentralBrokerConnected(
+  scope: BrokerConnectionScope,
+  isConnected: boolean,
+  testResult?: string
+): Promise<void> {
+  const db = getSupabaseClient();
+  const { error } = await db
+    .from("broker_connections")
+    .update({
+      is_connected: isConnected,
+      last_tested_at: new Date().toISOString(),
+      last_test_result: testResult ?? null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("broker_id", scope.broker_id)
+    .eq("environment", scope.environment);
+
+  if (error) throw error;
 }

@@ -50,7 +50,12 @@ const NSE_REQUEST_TIMEOUT_MS = 8000;
 // ── Import broker backend modules ──
 import { DhanMarketDataProvider } from "./dist/brokers/dhan.js";
 import { KiteMarketDataProvider } from "./dist/brokers/kite.js";
-import { getCentralCredentialsForAccount, getBrokerConnectionById } from "./dist/services/broker-connections.js";
+import {
+  getCentralCredentialsForAccount,
+  getBrokerConnectionById,
+  saveCentralBrokerCredentials,
+  markCentralBrokerConnected,
+} from "./dist/services/broker-connections.js";
 import { isEncryptionAvailable } from "./dist/security/broker-encryption.js";
 import { createHash } from "node:crypto";
 const INDIAN_NEWS_FEEDS = [
@@ -1154,6 +1159,7 @@ let dhanWSReconnectTimer = null;
 let dhanWSReconnectDelay = 1000;
 let dhanWSConnected = false;
 let dhanWSCredentials = { clientId: null, accessToken: null };
+const dhanInitializationStages = {};
 
 function connectDhanWebSocket(clientId, accessToken) {
   if (dhanWS && dhanWS.readyState === WebSocket.OPEN) {
@@ -1434,6 +1440,141 @@ const server = http.createServer(async (req, res) => {
     // ──────────────────────────────────────────────
     // ── Broker Backend Endpoints ──
     // ──────────────────────────────────────────────
+
+    if (url.pathname === "/api/dhan/control" && (req.method === "POST" || req.method === "GET")) {
+      if (!requireApiSecret(req)) {
+        res.writeHead(401);
+        res.end(JSON.stringify({ error: "Unauthorized - invalid or missing API secret" }));
+        return;
+      }
+
+      let body = {};
+      if (req.method === "POST") body = await readJsonBody(req);
+      const action = String(body.action || "status").toLowerCase();
+
+      try {
+        if (req.method === "GET" || action === "status") {
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            configured: !!(process.env.DHAN_CLIENT_ID && process.env.DHAN_ACCESS_TOKEN),
+            stages: dhanInitializationStages,
+            websocket: {
+              connected: dhanWSConnected,
+              subscriptions: WS_INSTRUMENTS.length,
+              cachedTicks: latestTicks.size,
+            },
+            credential: {
+              clientIdConfigured: !!process.env.DHAN_CLIENT_ID,
+              accessTokenConfigured: !!process.env.DHAN_ACCESS_TOKEN,
+            },
+            tokenExpiration: null,
+            lastSuccessfulDataTimestamp: [...latestTicks.values()].map((tick) => tick.timestamp).filter(Boolean).sort().at(-1) || null,
+          }));
+          return;
+        }
+
+        if (action === "save") {
+          const credentials = {
+            clientId: String(body.clientId || "").trim(),
+            accessToken: String(body.accessToken || "").trim(),
+          };
+          if (!credentials.clientId || !credentials.accessToken) {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: "Client ID and Access Token are required." }));
+            return;
+          }
+
+          process.env.DHAN_CLIENT_ID = credentials.clientId;
+          process.env.DHAN_ACCESS_TOKEN = credentials.accessToken;
+          await saveCentralBrokerCredentials(credentials, { broker_id: "dhan", environment: "production" });
+          res.writeHead(200);
+          res.end(JSON.stringify({ success: true, configured: true, message: "Dhan credentials saved encrypted in Terminal OS." }));
+          return;
+        }
+
+        if (action === "test" || action === "initialize" || action === "reinitialize" || action === "reconnect") {
+          const clientId = String(body.clientId || process.env.DHAN_CLIENT_ID || "").trim();
+          const accessToken = String(body.accessToken || process.env.DHAN_ACCESS_TOKEN || "").trim();
+          if (!clientId || !accessToken) throw new Error("Dhan credentials are not configured.");
+
+          if (action === "reconnect") {
+            if (dhanWS) {
+              try { dhanWS.close(); } catch {}
+            }
+            connectDhanWebSocket(clientId, accessToken);
+            res.writeHead(200);
+            res.end(JSON.stringify({ success: true, websocket: { connected: dhanWSConnected, subscriptions: WS_INSTRUMENTS.length } }));
+            return;
+          }
+
+          const provider = new DhanMarketDataProvider({ clientId, accessToken });
+          const stages = {};
+          const runStage = async (name, operation) => {
+            try {
+              const value = await operation();
+              stages[name] = { status: "operational", detail: "Verified", data: value };
+              return value;
+            } catch (error) {
+              stages[name] = { status: "failed", detail: error instanceof Error ? error.message : String(error) };
+              throw error;
+            }
+          };
+
+          await runStage("credentials", () => provider.authenticate());
+          await runStage("instrumentMaster", () => provider.searchInstruments("NIFTY"));
+          await runStage("historical", () => {
+            const to = new Date();
+            const from = new Date(to);
+            from.setDate(from.getDate() - 7);
+            return provider.getHistoricalCandles({
+              provider: "dhan",
+              symbol: "NIFTY",
+              tradingSymbol: "NIFTY",
+              exchange: "NSE",
+              exchangeSegment: "IDX_I",
+              providerInstrumentId: "13",
+              instrumentType: "INDEX",
+            }, "day", from.toISOString().slice(0, 10), to.toISOString().slice(0, 10));
+          });
+          await runStage("quotes", () => provider.getQuote({
+            provider: "dhan",
+            symbol: "NIFTY",
+            tradingSymbol: "NIFTY",
+            exchange: "NSE",
+            exchangeSegment: "IDX_I",
+            providerInstrumentId: "13",
+            instrumentType: "INDEX",
+          }));
+          await runStage("optionChain", () => provider.getOptionChain("NIFTY"));
+
+          process.env.DHAN_CLIENT_ID = clientId;
+          process.env.DHAN_ACCESS_TOKEN = accessToken;
+          connectDhanWebSocket(clientId, accessToken);
+          await markCentralBrokerConnected({ broker_id: "dhan", environment: "production" }, true, "Dhan authentication and market-data stages verified");
+          Object.assign(dhanInitializationStages, stages);
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            success: true,
+            stages,
+            websocket: { connected: dhanWSConnected, subscriptions: WS_INSTRUMENTS.length },
+          }));
+          return;
+        }
+
+        res.writeHead(400);
+        res.end(JSON.stringify({ error: "Unknown Dhan control action." }));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await markCentralBrokerConnected(
+          { broker_id: "dhan", environment: "production" },
+          false,
+          message
+        ).catch(() => {});
+        res.writeHead(500);
+        res.end(JSON.stringify({ success: false, error: message }));
+      }
+      return;
+    }
 
     if (url.pathname === "/api/broker/connections/test" && req.method === "POST") {
       // Authenticate request

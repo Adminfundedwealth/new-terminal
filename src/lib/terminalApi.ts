@@ -837,13 +837,12 @@ function parseSseFrame(frame: string): { event: string; data: string } | null {
 function waitForReconnectDelay(signal: AbortSignal, delayMs: number): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   return new Promise((resolve) => {
-    let timer: ReturnType<typeof setTimeout>;
     const finish = () => {
       clearTimeout(timer);
       signal.removeEventListener("abort", finish);
       resolve();
     };
-    timer = setTimeout(finish, delayMs);
+    const timer = setTimeout(finish, delayMs);
     signal.addEventListener("abort", finish, { once: true });
     if (signal.aborted) finish();
   });

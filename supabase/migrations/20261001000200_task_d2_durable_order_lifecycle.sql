@@ -71,8 +71,8 @@ declare
   account_row public.trading_accounts%rowtype;
   instrument_row public.instruments%rowtype;
   order_row public.orders%rowtype;
-  binding_row public.trading_account_broker_connections%rowtype;
-  connection_row public.broker_connections%rowtype;
+  binding_row record;
+  connection_row record;
   risk_result jsonb;
   account_id_value uuid;
   client_order_id_value text;
@@ -123,6 +123,9 @@ begin
     where id = account_id_value and owner_user_id = auth.uid() for update;
   if not found then
     return jsonb_build_object('ok', false, 'replayed', false, 'error', jsonb_build_object('code', 'ACCOUNT_NOT_OWNED', 'message', 'Trading account is not owned by the authenticated user'));
+  end if;
+  if lower(coalesce(account_row.broker_provider, '')) <> 'simulated' then
+    return jsonb_build_object('ok', false, 'replayed', false, 'error', jsonb_build_object('code', 'SIMULATED_EXECUTION_REQUIRED', 'message', 'Customer orders require a simulated trading account'));
   end if;
 
   if symbol_value is null or exchange_value is null or side_value not in ('buy', 'sell') then
