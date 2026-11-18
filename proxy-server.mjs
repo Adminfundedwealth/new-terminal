@@ -623,8 +623,9 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
         securityId: secId,
         exchangeSegment: exchSeg,
         instrument,
-        fromDate: formatDhanChartDateTime(from, "09:15:00"),
-        toDate: formatDhanChartDateTime(to, "15:30:00"),
+        fromDate: isDailyCandle ? String(from).slice(0, 10) : formatDhanChartDateTime(from, "09:15:00"),
+        toDate: isDailyCandle ? String(to).slice(0, 10) : formatDhanChartDateTime(to, "15:30:00"),
+        expiryCode: 0,
       };
       if (exchSeg === "NSE_FNO" || exchSeg === "BSE_FNO") {
         body.expiryCode = 0;
