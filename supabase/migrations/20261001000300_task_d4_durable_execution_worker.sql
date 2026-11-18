@@ -518,6 +518,7 @@ begin
 
   perform set_config('request.jwt.claim.role', 'service_role', true);
   perform set_config('app.order_lifecycle_transition', 'allowed', true);
+  perform set_config('app.execution_engine_owned', 'true', true);
   if row_order.status = 'requested' then
     update public.orders set status = 'pending', external_order_id = provider_order_id_value,
       submitted_at = coalesce(submitted_at, now_value), updated_at = now_value

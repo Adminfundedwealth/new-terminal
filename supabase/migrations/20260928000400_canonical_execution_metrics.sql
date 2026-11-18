@@ -19,6 +19,8 @@ declare
   exchange_value text;
   position_found boolean;
 begin
+  if current_setting('app.execution_engine_owned', true) = 'true' then return new; end if;
+
   -- The safe simulated RPC already performs its own atomic position mutation.
   if upper(coalesce(new.external_execution_id, '')) like 'SIM-%' then return new; end if;
 
