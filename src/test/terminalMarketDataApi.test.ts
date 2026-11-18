@@ -323,6 +323,12 @@ describe("Main Terminal market-data contract", () => {
       is_connected: true,
       last_tested_at: null,
       last_test_result: null,
+      market_session: {
+        state: "HISTORICAL",
+        is_live: false,
+        timestamp: "2026-11-18T09:00:00+05:30",
+        instrument: "NIFTY",
+      },
     } }), { status: 200 }));
 
     const status = await fetchTerminalMarketDataStatus(accountId, "kite");
@@ -332,6 +338,12 @@ describe("Main Terminal market-data contract", () => {
     expect(new URL(url, "http://main.test").searchParams.get("provider")).toBe("kite");
     expect(new Headers(init.headers).get("Authorization")).toBe(`Bearer ${accessToken}`);
     expect(status.is_connected).toBe(true);
+    expect(status.market_session).toEqual({
+      state: "HISTORICAL",
+      is_live: false,
+      timestamp: "2026-11-18T09:00:00+05:30",
+      instrument: "NIFTY",
+    });
   });
 
   it("requests Founder-global Dhan status without a trading-account identifier", async () => {

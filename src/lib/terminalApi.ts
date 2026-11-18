@@ -233,6 +233,7 @@ function prepareOrderCommand(request: CreateOrderRequest): TerminalOrderCommandR
 export async function submitTerminalOrderCommand(request: TerminalOrderCommandRequest): Promise<CreateOrderResponse> {
   if (!TERMINAL_OS_BASE) throw new Error("Terminal OS is not configured.");
   const accessToken = await getCustomerAccessToken();
+  const command = normalizedOrderCommand(request, request.client_order_id);
 
   let response: Response;
   try {
@@ -244,7 +245,7 @@ export async function submitTerminalOrderCommand(request: TerminalOrderCommandRe
         "Content-Type": "application/json",
         Authorization: `Bearer ${accessToken}`,
       },
-      body: JSON.stringify(request),
+      body: JSON.stringify(command),
     });
   } catch (error) {
     throw error instanceof Error ? error : new Error("Network response was lost after acceptance");
@@ -579,6 +580,12 @@ export interface TerminalMarketDataStatus {
   is_connected: boolean;
   last_tested_at: string | null;
   last_test_result: string | null;
+  market_session?: {
+    state: "LIVE" | "MARKET_CLOSED" | "HISTORICAL" | "DEGRADED";
+    is_live: boolean;
+    timestamp: string | null;
+    instrument: string | null;
+  };
 }
 
 export async function requestTerminalRealtimeTicket(
@@ -810,6 +817,21 @@ function parseSseFrame(frame: string): { event: string; data: string } | null {
   return data.length ? { event, data: data.join("\n") } : null;
 }
 
+function waitForReconnectDelay(signal: AbortSignal, delayMs: number): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout>;
+    const finish = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    timer = setTimeout(finish, delayMs);
+    signal.addEventListener("abort", finish, { once: true });
+    if (signal.aborted) finish();
+  });
+}
+
 async function readRealtimeStream(pool: TerminalRealtimePool, generation: number, signal: AbortSignal): Promise<void> {
   const accessToken = await getCustomerAccessToken();
   const query = new URLSearchParams({
@@ -888,10 +910,7 @@ function startRealtimePool(pool: TerminalRealtimePool): void {
         notifyRealtimeStatus(pool, "reconnecting");
       }
       if (controller.signal.aborted || generation !== pool.generation) break;
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, delay);
-        controller.signal.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
-      });
+      await waitForReconnectDelay(controller.signal, delay);
       delay = Math.min(delay * 2, 30000);
     }
   })();
@@ -1175,7 +1194,7 @@ export function subscribeToTerminalOrders(accountId: string, onChange: () => voi
 
   const channel = supabase
     .channel(createRealtimeChannel(`customer-orders-${accountId}`))
-    .on("postgres_changes", { event: "*", schema: "public", table: "orders", filter: `account_id=eq.${accountId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "trading_orders", filter: `account_id=eq.${accountId}` }, onChange)
     .subscribe();
   return () => { void supabase.removeChannel(channel); };
 }
@@ -1195,7 +1214,7 @@ export function subscribeToTerminalTradingState(accountId: string, onChange: () 
 
   const channel = supabase
     .channel(createRealtimeChannel(`customer-trading-state-${accountId}`))
-    .on("postgres_changes", { event: "*", schema: "public", table: "orders", filter: `account_id=eq.${accountId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "trading_orders", filter: `account_id=eq.${accountId}` }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "positions", filter: `account_id=eq.${accountId}` }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "executions", filter: `account_id=eq.${accountId}` }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "trading_accounts", filter: `id=eq.${accountId}` }, onChange)

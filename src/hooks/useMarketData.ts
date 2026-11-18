@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchMarketIndicesSnapshot, fetchMarketStatus, fetchLiveFnOStocks, fetchProxyHealth, isNseMarketOpenAt, isWithinNseSessionAt } from "@/lib/marketApi";
+import { fetchMarketIndicesSnapshot, fetchLiveFnOStocks, fetchProxyHealth } from "@/lib/marketApi";
 import type { FnOStockData, MarketIndicesSnapshot, OptionUnderlying } from "@/lib/marketApi";
 import { getMaxPain } from "@/lib/oiUtils";
 import type { OptionData, IndexData, ExpiryDate } from "@/lib/mockData";
@@ -7,6 +7,7 @@ import { useAccountContext } from "@/hooks/useAccountContext";
 import {
   requestTerminalMarketData,
   resolveTerminalMarketDataProvider,
+  fetchTerminalMarketDataStatus,
   type TerminalMarketDataInstrument,
   type TerminalMarketDataOptionChain,
 } from "@/lib/terminalApi";
@@ -183,34 +184,31 @@ export function useMarketStatus() {
   return useQuery({
     queryKey: ["nse-market-status"],
     queryFn: async ({ signal }) => {
-      if (shouldTryProxy()) {
-        try {
-          const data = await fetchMarketStatus(signal);
-          if (data?.marketState) {
-            markProxyOnline();
-            const nseStatus = data.marketState.find((m: any) => m.market === "Capital Market" || m.market === "CM");
-            const giftNifty = data.giftnifty ? {
-              lastPrice: data.giftnifty.LASTPRICE || 0, change: data.giftnifty.DAYCHANGE || 0,
-              changePercent: data.giftnifty.PERCHANGE || 0, expiry: data.giftnifty.EXPIRYDATE || "",
-              timestamp: data.giftnifty.TIMESTMP || "", contractsTraded: data.giftnifty.CONTRACTSTRADED || 0,
-            } : null;
-            const indicativeNifty = data.indicativenifty50 ? {
-              value: data.indicativenifty50.finalClosingValue || data.indicativenifty50.closingValue || 0,
-              change: data.indicativenifty50.change || 0, changePercent: data.indicativenifty50.perChange || 0,
-              status: data.indicativenifty50.status || "",
-            } : null;
-            const isOpen = isNseMarketOpenAt(nseStatus?.marketStatus, nseStatus?.tradeDate);
-            return { isOpen, status: isOpen ? "Open" : "Closed", isLive: true, giftNifty, indicativeNifty };
-          }
-        } catch (e) {
-          if (signal.aborted) throw e;
-          markProxyOffline();
-          console.warn("Market status fetch failed:", e);
+      try {
+        const status = await fetchTerminalMarketDataStatus(null, "dhan", "production", signal);
+        const session = status.market_session;
+        if (session) {
+          return {
+            isOpen: session.is_live,
+            status: session.state === "LIVE" ? "Open" : "Closed",
+            isLive: session.is_live,
+            giftNifty: null,
+            indicativeNifty: null,
+            timestamp: session.timestamp,
+          };
         }
+      } catch (error) {
+        if (signal.aborted) throw error;
+        console.warn("Central market status fetch failed:", error);
       }
-      const now = new Date();
-      const isOpen = isWithinNseSessionAt(now);
-      return { isOpen, status: isOpen ? "Open" : "Closed", isLive: false, giftNifty: null, indicativeNifty: null };
+      return {
+        isOpen: false,
+        status: "Closed",
+        isLive: false,
+        giftNifty: null,
+        indicativeNifty: null,
+        timestamp: null,
+      };
     },
     refetchInterval: (query) => query.state.data?.isLive ? 15000 : 60000,
     staleTime: 10000,
