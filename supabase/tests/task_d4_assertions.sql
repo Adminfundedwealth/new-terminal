@@ -19,8 +19,9 @@ declare
   execution_count integer;
   position_count integer;
 begin
-  if current_database() <> 'postgres' then
-    raise exception 'D4 tests must run against the canonical postgres database';
+  if current_database() <> 'postgres'
+     or current_setting('application_name', true) is distinct from 'fundedwealth-execution-test' then
+    raise exception 'D4 assertions are restricted to the isolated local execution test runner';
   end if;
   perform set_config('request.jwt.claim.role', 'service_role', true);
 

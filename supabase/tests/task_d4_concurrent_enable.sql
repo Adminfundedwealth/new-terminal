@@ -1,7 +1,8 @@
 do $$
 begin
-  if current_database() <> 'postgres' then
-    raise exception 'D4 tests must run against the canonical postgres database';
+  if current_database() <> 'postgres'
+     or current_setting('application_name', true) is distinct from 'fundedwealth-execution-test' then
+    raise exception 'D4 concurrency enablement is restricted to the isolated local execution test runner';
   end if;
   update public.order_execution_outbox
   set state = 'completed', claimed_by = null, claimed_until = null

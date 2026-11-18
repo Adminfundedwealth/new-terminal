@@ -1,5 +1,14 @@
 begin;
 
+do $$
+begin
+  if current_database() <> 'postgres'
+     or current_setting('application_name', true) is distinct from 'fundedwealth-execution-test' then
+    raise exception 'D4 fixture cleanup is restricted to the isolated local execution test runner';
+  end if;
+end;
+$$;
+
 delete from public.order_execution_outbox
 where id in (
   'd4000000-0000-4000-8000-000000000006',

@@ -41,6 +41,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:execution:db": "node scripts/run-isolated-execution-db-tests.mjs",
     "test:watch": "vitest"
   },
   "dependencies": {

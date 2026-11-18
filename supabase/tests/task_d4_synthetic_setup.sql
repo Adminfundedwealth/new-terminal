@@ -8,8 +8,9 @@ declare
   recovery_order_id uuid := 'd4000000-0000-4000-8000-000000000004';
   fill_order_id uuid := 'd4000000-0000-4000-8000-000000000005';
 begin
-  if current_database() <> 'postgres' then
-    raise exception 'D4 tests must run against the canonical postgres database';
+  if current_database() <> 'postgres'
+     or current_setting('application_name', true) is distinct from 'fundedwealth-execution-test' then
+    raise exception 'D4 fixtures are restricted to the isolated local execution test runner';
   end if;
   if exists (select 1 from auth.users where id = synthetic_user_id)
      or exists (select 1 from public.trading_accounts where id = synthetic_account_id)
