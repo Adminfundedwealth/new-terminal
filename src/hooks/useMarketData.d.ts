@@ -66,56 +66,14 @@ export declare function useAllIndices(): {
 export declare function useFnOStocks(): import("@tanstack/react-query").UseQueryResult<NoInfer<{
     gainers: FnOStockData[];
     losers: FnOStockData[];
-    mostActive: {
+    mostActive: (FnOStockData & {
         oi: number;
         oiChange: number;
         oiInterpretation: string;
-        symbol: string;
-        ltp: number;
-        change: number;
-        changePercent: number;
-        open: number;
-        high: number;
-        low: number;
-        previousClose: number;
-        volume: number;
-        totalTradedVolume?: number;
-        openInterest?: number;
-        sector?: string;
-    }[];
+    })[];
     allStocks: FnOStockData[];
     isLive: boolean;
-    source: "terminal-os";
-} | {
-    gainers: FnOStockData[];
-    losers: FnOStockData[];
-    mostActive: {
-        oi: number;
-        oiChange: number;
-        oiInterpretation: string;
-        symbol: string;
-        ltp: number;
-        change: number;
-        changePercent: number;
-        open: number;
-        high: number;
-        low: number;
-        previousClose: number;
-        volume: number;
-        totalTradedVolume?: number;
-        openInterest?: number;
-        sector?: string;
-    }[];
-    allStocks: FnOStockData[];
-    isLive: boolean;
-    source: "database";
-} | {
-    gainers: any[];
-    losers: any[];
-    mostActive: any[];
-    allStocks: FnOStockData[];
-    isLive: boolean;
-    source: "none";
+    source: "dhan";
 }>, Error>;
 export declare function useStoredCandles(symbol: string, interval?: string): import("@tanstack/react-query").UseQueryResult<NoInfer<{
     symbol: string;
@@ -138,5 +96,5 @@ export declare function resetProxyStatus(): void;
  * re-reads from IndexedDB (call after DB update).
  */
 export declare function invalidateLocalPriceCache(): void;
-export declare function useProxyHealth(): import("@tanstack/react-query").UseQueryResult<any, Error>;
+export declare function useCentralMarketDataStatus(): import("@tanstack/react-query").UseQueryResult<NoInfer<import("@/lib/terminalApi").TerminalMarketDataStatus>, Error>;
 export {};

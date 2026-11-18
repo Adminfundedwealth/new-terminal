@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchLiveFnOStocks, fetchProxyHealth } from "@/lib/marketApi";
+import { isWithinNseSessionAt } from "@/lib/marketApi";
 import type { FnOStockData, MarketIndicesSnapshot, OptionUnderlying } from "@/lib/marketApi";
 import { getMaxPain } from "@/lib/oiUtils";
 import type { OptionData, IndexData, ExpiryDate } from "@/lib/mockData";
@@ -10,6 +10,7 @@ import {
   fetchTerminalMarketDataStatus,
   type TerminalMarketDataInstrument,
   type TerminalMarketDataOptionChain,
+  type TerminalMarketDataQuote,
 } from "@/lib/terminalApi";
 import { useWebSocketIndices, useWebSocketVix, useWebSocketStatus } from "@/hooks/useWebSocket";
 import { useMemo, useEffect, useState, useRef } from "react";
@@ -94,6 +95,12 @@ function buildCachedIndices(prices: PriceSnapshot[]): IndexData[] {
 
 type MarketIndexQueryData = MarketIndicesSnapshot & { isLive: boolean };
 
+function isRecentMarketQuote(timestamp: string | number, checkedAt: number): boolean {
+  const quoteAt = typeof timestamp === "number" ? timestamp : Date.parse(timestamp);
+  const age = checkedAt - quoteAt;
+  return Number.isFinite(quoteAt) && age >= -60_000 && age <= 5 * 60_000;
+}
+
 function useMarketIndexSnapshot() {
   const wsConnected = useWebSocketStatus();
 
@@ -107,13 +114,13 @@ function useMarketIndexSnapshot() {
           { provider: "dhan", providerInstrumentId: "27", symbol: "NIFTY FINANCIAL SERVICES", tradingSymbol: "FINNIFTY", exchange: "NSE", exchangeSegment: "IDX_I", instrumentType: "INDEX" },
           { provider: "dhan", providerInstrumentId: "442", symbol: "NIFTY MID SELECT", tradingSymbol: "MIDCPNIFTY", exchange: "NSE", exchangeSegment: "IDX_I", instrumentType: "INDEX" },
         ];
-        const quotes = await requestTerminalMarketData(
+        const quotes = await requestTerminalMarketData<TerminalMarketDataQuote[]>(
           null,
           "dhan",
-          "production",
           { operation: "getQuotes", instruments },
+          "production",
           signal,
-        ) as Array<{ symbol: string; tradingSymbol: string; ltp: number; change: number | null; changePercent: number | null; open: number | null; high: number | null; low: number | null; previousClose: number | null }>;
+        );
         const indices: IndexData[] = quotes.map((quote) => ({
           name: quote.symbol,
           symbol: quote.tradingSymbol,
@@ -126,10 +133,13 @@ function useMarketIndexSnapshot() {
           prevClose: quote.previousClose ?? quote.ltp,
         }));
         if (indices.length > 0) {
+          const checkedAt = Date.now();
+          const isLive = isWithinNseSessionAt(new Date(checkedAt)) &&
+            quotes.some((quote) => isRecentMarketQuote(quote.timestamp, checkedAt));
           return {
             indices,
             allIndices: { vix: null, sectors: [], advances: 0, declines: 0, unchanged: 0 },
-            isLive: true,
+            isLive,
           };
         }
       } catch (error) {
@@ -161,12 +171,16 @@ function useMarketIndexSnapshot() {
 export function useLiveIndices() {
   const { indices: wsIndices } = useWebSocketIndices();
   const pollingQuery = useMarketIndexSnapshot();
+  const checkedAt = Date.now();
+  const freshWsIndices = wsIndices.filter((index) =>
+    isRecentMarketQuote(index.timestamp, checkedAt)
+  );
 
   // Merge WebSocket data over polling data
   const mergedData = useMemo(() => {
-    if (wsIndices.length > 0) {
+    if (freshWsIndices.length > 0) {
       const polledData = pollingQuery.data?.indices || [];
-      const merged = wsIndices.map((wsIdx) => {
+      const merged = freshWsIndices.map((wsIdx) => {
         const polled = polledData.find((p) => p.symbol === wsIdx.symbol);
         return {
           name: wsIdx.name,
@@ -187,18 +201,21 @@ export function useLiveIndices() {
         }
       }
 
-      return { data: merged, isLive: true };
+      return {
+        data: merged,
+        isLive: isWithinNseSessionAt(new Date(checkedAt)),
+      };
     }
 
     return {
       data: pollingQuery.data?.indices ?? [],
       isLive: pollingQuery.data?.isLive ?? false,
     };
-  }, [wsIndices, pollingQuery.data]);
+  }, [freshWsIndices, pollingQuery.data, checkedAt]);
 
   return {
     data: mergedData,
-    isLoading: pollingQuery.isLoading && wsIndices.length === 0,
+    isLoading: pollingQuery.isLoading && freshWsIndices.length === 0,
   };
 }
 
@@ -383,60 +400,101 @@ export function useAllIndices() {
 // NO MOCK FALLBACK — returns empty arrays when offline
 export function useFnOStocks() {
   return useQuery({
-    queryKey: ["nse-fno-stocks"],
+    queryKey: ["central-dhan-fno-stocks"],
     queryFn: async ({ signal }) => {
-      if (shouldTryProxy()) {
-        try {
-          const stocks = await fetchLiveFnOStocks(signal);
-          if (stocks.length > 0) {
-            markProxyOnline();
-            const gainers = [...stocks].filter(s => s.changePercent > 0).sort((a, b) => b.changePercent - a.changePercent).slice(0, 5);
-            const losers = [...stocks].filter(s => s.changePercent < 0).sort((a, b) => a.changePercent - b.changePercent).slice(0, 5);
-            const mostActive = [...stocks].sort((a, b) => (b.volume || 0) - (a.volume || 0)).slice(0, 10).map(s => ({
-              ...s, oi: s.openInterest || 0, oiChange: s.oiChange || 0,
-              oiInterpretation: getOIInterpretation(s.changePercent, s.oiChange || 0),
-            }));
-            const hasOI = stocks.some(s => (s.openInterest || 0) > 0);
-            const source = hasOI ? "nse" as const : "tradingview" as const;
-            return { gainers, losers, mostActive, allStocks: stocks, isLive: true, source };
-          }
-        } catch (e) {
-          if (signal.aborted) throw e;
-          markProxyOffline();
-          console.warn("F&O stocks fetch failed:", e);
+      const catalog = await requestTerminalMarketData<TerminalMarketDataInstrument[]>(
+        null,
+        "dhan",
+        { operation: "listInstruments" },
+        "production",
+        signal,
+      );
+      const normalizeSymbol = (value: string) => value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+      const futuresByUnderlying = new Map<string, TerminalMarketDataInstrument>();
+      for (const instrument of catalog) {
+        const expiry = instrument.expiryDate ? Date.parse(instrument.expiryDate) : Number.NaN;
+        if (
+          instrument.exchangeSegment !== "NSE_FNO" ||
+          instrument.instrumentType !== "FUTSTK" ||
+          !Number.isFinite(expiry) ||
+          expiry < Date.now()
+        ) continue;
+        const underlying = normalizeSymbol(instrument.symbol);
+        const current = futuresByUnderlying.get(underlying);
+        if (!underlying || !current || expiry < Date.parse(current.expiryDate ?? "")) {
+          futuresByUnderlying.set(underlying, instrument);
         }
       }
-      // Try local DB price snapshots
-      const dbPrices = await getCachedPricesOnce();
-      if (dbPrices.length > 0) {
-        const dbStocks: FnOStockData[] = dbPrices
-          .filter(p => p.ltp > 0 && p.symbol)
-          .map(p => ({
-            symbol: p.symbol,
-            ltp: p.ltp,
-            change: p.change,
-            changePercent: p.changePercent,
-            open: p.open,
-            high: p.high,
-            low: p.low,
-            previousClose: p.close,
-            volume: p.volume,
-            totalTradedVolume: p.volume,
-            openInterest: p.oi,
-            oiChange: 0,
-          }));
-        if (dbStocks.length > 0) {
-          const gainers = [...dbStocks].filter(s => s.changePercent > 0).sort((a, b) => b.changePercent - a.changePercent).slice(0, 5);
-          const losers = [...dbStocks].filter(s => s.changePercent < 0).sort((a, b) => a.changePercent - b.changePercent).slice(0, 5);
-          const mostActive = [...dbStocks].sort((a, b) => (b.volume || 0) - (a.volume || 0)).slice(0, 10).map(s => ({
-            ...s, oi: s.openInterest || 0, oiChange: s.oiChange || 0,
-            oiInterpretation: getOIInterpretation(s.changePercent, s.oiChange || 0),
-          }));
-          return { gainers, losers, mostActive, allStocks: dbStocks, isLive: false, source: "database" as const };
-        }
+
+      const equities = catalog.filter((instrument) =>
+        instrument.exchangeSegment === "NSE_EQ" &&
+        instrument.instrumentType === "EQUITY" &&
+        (futuresByUnderlying.has(normalizeSymbol(instrument.tradingSymbol)) ||
+          futuresByUnderlying.has(normalizeSymbol(instrument.symbol)))
+      );
+      const futures = equities.flatMap((equity) => {
+        const future = futuresByUnderlying.get(normalizeSymbol(equity.tradingSymbol)) ??
+          futuresByUnderlying.get(normalizeSymbol(equity.symbol));
+        return future ? [future] : [];
+      });
+      const requestedInstruments = [...equities, ...futures];
+      if (requestedInstruments.length === 0) {
+        return { gainers: [], losers: [], mostActive: [], allStocks: [] as FnOStockData[], isLive: false, source: "dhan" as const };
       }
-      // NO MOCK — return empty
-      return { gainers: [], losers: [], mostActive: [], allStocks: [] as FnOStockData[], isLive: false, source: "none" as const };
+
+      const quotes = await requestTerminalMarketData<TerminalMarketDataQuote[]>(
+        null,
+        "dhan",
+        { operation: "getQuotes", instruments: requestedInstruments },
+        "production",
+        signal,
+      );
+      const quoteByTradingSymbol = new Map(quotes.map((quote) => [
+        normalizeSymbol(quote.tradingSymbol),
+        quote,
+      ]));
+      const futuresByStock = new Map(futures.map((future) => [
+        normalizeSymbol(future.symbol),
+        quoteByTradingSymbol.get(normalizeSymbol(future.tradingSymbol)),
+      ]));
+      const stocks: FnOStockData[] = equities.flatMap((equity) => {
+        const quote = quoteByTradingSymbol.get(normalizeSymbol(equity.tradingSymbol));
+        if (!quote || !Number.isFinite(quote.ltp) || quote.ltp <= 0) return [];
+        const futureQuote = futuresByStock.get(normalizeSymbol(equity.tradingSymbol)) ??
+          futuresByStock.get(normalizeSymbol(equity.symbol));
+        const volume = futureQuote?.volume ?? quote.volume ?? 0;
+        return [{
+          symbol: equity.tradingSymbol,
+          ltp: quote.ltp,
+          change: quote.change ?? 0,
+          changePercent: quote.changePercent ?? 0,
+          open: quote.open ?? quote.ltp,
+          high: quote.high ?? quote.ltp,
+          low: quote.low ?? quote.ltp,
+          previousClose: quote.previousClose ?? quote.ltp,
+          volume,
+          totalTradedVolume: volume,
+          openInterest: futureQuote?.openInterest ?? undefined,
+          oiChange: undefined,
+        }];
+      });
+      const gainers = stocks.filter((stock) => stock.changePercent > 0)
+        .sort((left, right) => right.changePercent - left.changePercent).slice(0, 5);
+      const losers = stocks.filter((stock) => stock.changePercent < 0)
+        .sort((left, right) => left.changePercent - right.changePercent).slice(0, 5);
+      const mostActive = [...stocks]
+        .sort((left, right) => right.volume - left.volume)
+        .slice(0, 10)
+        .map((stock) => ({
+          ...stock,
+          oi: stock.openInterest ?? 0,
+          oiChange: stock.oiChange ?? 0,
+          oiInterpretation: getOIInterpretation(stock.changePercent, stock.oiChange ?? 0),
+        }));
+      const checkedAt = Date.now();
+      const isLive = isWithinNseSessionAt(new Date(checkedAt)) &&
+        quotes.some((quote) => isRecentMarketQuote(quote.timestamp, checkedAt));
+      return { gainers, losers, mostActive, allStocks: stocks, isLive, source: "dhan" as const };
     },
     refetchInterval: (query) => query.state.data?.isLive ? 30000 : 120000,
     staleTime: 15000,
@@ -509,23 +567,10 @@ export function invalidateLocalPriceCache() {
 
 
 // ── Hook: Proxy Health ──
-export function useProxyHealth() {
+export function useCentralMarketDataStatus() {
   return useQuery({
-    queryKey: ["proxy-health"],
-    queryFn: async ({ signal }) => {
-      try {
-        const health = await fetchProxyHealth(signal);
-        return { ...health, reachable: true };
-      } catch (error) {
-        if (signal.aborted) throw error;
-        console.warn("Market-data proxy health check failed:", error);
-        return {
-          reachable: false,
-          status: "offline",
-          errorMessage: error instanceof Error ? error.message : "The market-data proxy is unavailable.",
-        };
-      }
-    },
+    queryKey: ["central-market-data-status", "dhan"],
+    queryFn: ({ signal }) => fetchTerminalMarketDataStatus(null, "dhan", "production", signal),
     refetchInterval: 30000,
     staleTime: 10000,
     retry: 0,

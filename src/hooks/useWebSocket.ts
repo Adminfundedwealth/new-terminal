@@ -94,6 +94,7 @@ export function useWebSocketTick(symbol: string): TickData | null {
 export interface WebSocketIndexData {
   symbol: string;
   name: string;
+  timestamp: number;
   ltp: number;
   change: number;
   changePercent: number;
@@ -121,6 +122,7 @@ export function useWebSocketIndices(): { indices: WebSocketIndexData[]; isConnec
         result.push({
           symbol,
           name,
+          timestamp: tick.timestamp,
           ltp: tick.ltp,
           change: tick.change || 0,
           changePercent: tick.changePercent || 0,

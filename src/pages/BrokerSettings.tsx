@@ -13,12 +13,12 @@ import {
   type BrokerInfo,
   type BrokerCredentials,
 } from "@/lib/brokerConfig";
-import { testDhanConnection } from "@/lib/marketApi";
-import { useProxyHealth } from "@/hooks/useMarketData";
+import { fetchTerminalMarketDataStatus } from "@/lib/terminalApi";
+import { useCentralMarketDataStatus, useFnOStocks } from "@/hooks/useMarketData";
 import { useWebSocketStatus } from "@/hooks/useWebSocket";
 import {
   Shield, ExternalLink, CheckCircle2, Circle, Key, Plug, AlertTriangle,
-  Server, Zap, Globe, BarChart3, Loader2, CheckCircle, XCircle, Wifi,
+  Zap, BarChart3, Loader2, CheckCircle, XCircle, Wifi,
 } from "lucide-react";
 import { DatabaseManager } from "@/components/DatabaseManager";
 import { ChartDataDownloader } from "@/components/ChartDataDownloader";
@@ -104,7 +104,8 @@ function BrokerCard({
 }
 
 function ConnectionStatusPanel() {
-  const { data: health } = useProxyHealth();
+  const { data: health } = useCentralMarketDataStatus();
+  const { data: fnoData, isError: fnoFailed } = useFnOStocks();
   const wsConnected = useWebSocketStatus();
   const [dhanStatus, setDhanStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
   const [dhanMessage, setDhanMessage] = useState("");
@@ -112,64 +113,67 @@ function ConnectionStatusPanel() {
   const handleTestDhan = async () => {
     setDhanStatus("testing");
     try {
-      const result = await testDhanConnection();
-      if (result.status === "success") {
+      const result = await fetchTerminalMarketDataStatus(null, "dhan", "production");
+      if (!result.configured) {
+        setDhanStatus("error");
+        setDhanMessage("Founder Dhan credentials are not configured in Terminal OS.");
+        toast.error("Central Dhan credentials are not configured.");
+      } else if (result.is_connected) {
         setDhanStatus("success");
-        setDhanMessage("Connected successfully");
-        toast.success("Dhan API connection verified!");
+        setDhanMessage(result.market_session?.is_live
+          ? "Central Dhan connection verified; fresh market data is available."
+          : `Central Dhan connection verified; market state: ${result.market_session?.state ?? "unverified"}.`);
+        toast.success("Central Dhan API connection verified.");
       } else {
         setDhanStatus("error");
-        setDhanMessage(result.message || "Connection failed");
-        toast.error("Dhan connection failed: " + result.message);
+        setDhanMessage(result.last_test_result || "Central Dhan connection is not verified.");
+        toast.error("Central Dhan connection is not verified.");
       }
-    } catch (e: any) {
+    } catch (error: unknown) {
       setDhanStatus("error");
-      setDhanMessage(e.message || "Network error");
-      toast.error("Connection test failed");
+      setDhanMessage(error instanceof Error ? error.message : "The central market-data status request failed.");
+      toast.error("Central Dhan status check failed.");
     }
   };
 
+  const dhanConnected = health?.configured === true && health.is_connected === true;
+  const fnoCount = fnoData?.allStocks.length ?? 0;
+
   const sources = [
     {
-      name: "Dhan API (Primary)",
+      name: "Dhan API (Central)",
       icon: <Wifi className="h-4 w-4" />,
-      status: dhanStatus === "success" ? "online" : dhanStatus === "error" ? "offline" : health?.sources?.dhan ? "online" : "unknown",
+      status: dhanStatus === "success" || (dhanStatus === "idle" && dhanConnected)
+        ? "online"
+        : dhanStatus === "error" || (health?.configured && !health.is_connected) ? "offline" : "unknown",
       detail: dhanStatus === "success"
-        ? "Primary source · Option Chain, Greeks, WebSocket"
-        : health?.sources?.dhan
-        ? "Credentials loaded from .env · Option Chain, Expiry, WebSocket"
-        : dhanMessage || "Click Test to verify — provides Option Chain, Greeks, Live Ticks",
-      color: dhanStatus === "success" || health?.sources?.dhan ? "text-emerald-500" : dhanStatus === "error" ? "text-red-500" : "text-zinc-500",
+        ? dhanMessage
+        : dhanMessage || (dhanConnected
+          ? `Central credentials verified · ${health.market_session?.state ?? "market state unverified"}`
+          : health?.configured
+          ? health.last_test_result || "Central Dhan connection is not verified"
+          : "Founder Dhan credentials are not configured"),
+      color: dhanStatus === "success" || (dhanStatus === "idle" && dhanConnected)
+        ? "text-emerald-500"
+        : dhanStatus === "error" || (health?.configured && !health.is_connected) ? "text-red-500" : "text-zinc-500",
     },
     {
-      name: "Dhan WebSocket",
+      name: "Central Realtime Stream",
       icon: <Zap className="h-4 w-4" />,
       status: wsConnected ? "online" : "offline",
       detail: wsConnected
-        ? `Live ticks · ${health?.websocket?.cachedTicks || 0} cached, ${health?.websocket?.instrumentsSubscribed || 0} instruments`
-        : "Requires Dhan credentials · Real-time index + VIX ticks",
+        ? "Customer terminal connected to central realtime market data"
+        : "Customer terminal is not connected to the central realtime stream",
       color: wsConnected ? "text-emerald-500" : "text-zinc-500",
     },
     {
-      name: "NSE India (Fallback)",
-      icon: <Globe className="h-4 w-4" />,
-      status: health?.reachable ? "online" : "offline",
-      detail: "Fallback · Indices, Sectors, A/D, Option Chain if Dhan fails",
-      color: health?.reachable ? "text-emerald-500" : "text-red-500",
-    },
-    {
-      name: "TradingView Scanner",
+      name: "Central F&O Quotes",
       icon: <BarChart3 className="h-4 w-4" />,
-      status: "online",
-      detail: "No auth needed · 100+ F&O stocks LTP, Volume, Sectors",
-      color: "text-emerald-500",
-    },
-    {
-      name: "Proxy Server",
-      icon: <Server className="h-4 w-4" />,
-      status: health?.reachable ? "online" : "offline",
-      detail: health?.reachable ? `Uptime: ${Math.floor((health.uptime || 0) / 60)}min · Routes all API traffic` : "Not reachable — run: npm run dev",
-      color: health?.reachable ? "text-emerald-500" : "text-red-500",
+      status: fnoData?.isLive ? "online" : fnoCount ? "unknown" : "offline",
+      detail: fnoCount
+        ? `${fnoCount} central Dhan F&O stocks${fnoData?.isLive ? " · fresh quotes" : " · freshness not confirmed"}`
+        : fnoFailed ? "Central Dhan F&O request failed" : "No central Dhan F&O quotes available",
+      color: fnoData?.isLive ? "text-emerald-500" : fnoCount ? "text-zinc-500" : "text-red-500",
     },
   ];
 

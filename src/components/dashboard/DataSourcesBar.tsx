@@ -1,8 +1,8 @@
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useProxyHealth, useAllIndices, useFnOStocks, useLiveOptionChain } from "@/hooks/useMarketData";
+import { useCentralMarketDataStatus, useAllIndices, useFnOStocks, useLiveIndices, useLiveOptionChain } from "@/hooks/useMarketData";
 import { useWebSocketStatus, useWebSocketVix } from "@/hooks/useWebSocket";
-import { Globe, BarChart3, Activity, Server, Zap, Radio, Database, TrendingUp } from "lucide-react";
+import { Activity, Zap, Radio, TrendingUp, BarChart3 } from "lucide-react";
 
 interface SourceStatus {
   name: string;
@@ -13,94 +13,75 @@ interface SourceStatus {
 }
 
 export function DataSourcesBar() {
-  const { data: health } = useProxyHealth();
+  const { data: health, isError: healthFailed } = useCentralMarketDataStatus();
   const { data: allIndices } = useAllIndices();
-  const { data: fnoData } = useFnOStocks();
+  const liveIndices = useLiveIndices();
+  const { data: fnoData, isError: fnoFailed } = useFnOStocks();
   const { data: niftyOC } = useLiveOptionChain("NIFTY");
   const wsConnected = useWebSocketStatus();
   const { vix: wsVix } = useWebSocketVix();
 
-  const dhanConfigured = health?.sources?.dhan === true;
-  const dhanWSConnected = health?.websocket?.dhanConnected === true;
-  const fnoSource = (fnoData as any)?.source || "none";
+  const dhanConfigured = health?.configured === true;
+  const dhanConnected = health?.is_connected === true;
+  const fnoSource = fnoData?.source ?? "none";
   const ocSource = niftyOC?.source || "offline";
+  const hasIndexData = liveIndices.data.data.length > 0;
+  const hasFnoData = (fnoData?.allStocks.length ?? 0) > 0;
 
   const sources: SourceStatus[] = [
-    // ── DHAN (Primary — always first) ──
     {
       name: "Dhan API",
       icon: <TrendingUp className="h-3 w-3" />,
-      status: dhanConfigured
-        ? (ocSource === "dhan" ? "live" : dhanWSConnected ? "degraded" : "offline")
+      status: dhanConnected
+        ? health?.market_session?.is_live ? "live" : "degraded"
         : "offline",
-      detail: !dhanConfigured
-        ? "No credentials in .env"
-        : ocSource === "dhan"
-        ? "Primary · Option Chain"
-        : dhanWSConnected
-        ? "WebSocket only"
-        : "Configured but no response",
+      detail: healthFailed
+        ? "Central market-data status unavailable"
+        : !dhanConfigured
+        ? "Founder Dhan credentials are not configured"
+        : !dhanConnected
+        ? health?.last_test_result || "Central Dhan connection is not verified"
+        : health?.market_session?.is_live
+        ? `Connected · live market data${ocSource === "dhan" ? " · option chain ready" : ""}`
+        : `Connected · ${health?.market_session?.state ?? "market-data freshness unverified"}`,
       primary: true,
     },
-    // ── Dhan WebSocket ──
     {
-      name: "Dhan WS",
+      name: "Central Stream",
       icon: <Zap className="h-3 w-3" />,
-      status: dhanWSConnected ? "live" : dhanConfigured ? "offline" : "offline",
-      detail: dhanWSConnected
-        ? `Live ticks · ${health?.websocket?.cachedTicks || 0} cached · ${health?.websocket?.instrumentsSubscribed || 0} instruments`
-        : dhanConfigured
-        ? "Disconnected"
-        : "Requires Dhan credentials",
-    },
-    // ── Browser WebSocket (relay) ──
-    {
-      name: "Live Feed",
-      icon: <Radio className="h-3 w-3" />,
-      status: wsConnected ? "live" : "offline",
+      status: wsConnected ? "live" : dhanConnected ? "degraded" : "offline",
       detail: wsConnected
-        ? `Browser connected · ${health?.websocket?.browserClients || 0} clients`
-        : "Browser WS disconnected",
+        ? "Customer terminal connected to central realtime market data"
+        : "Customer terminal is not connected to the central realtime stream",
     },
-    // ── NSE India ──
     {
-      name: "NSE",
-      icon: <Globe className="h-3 w-3" />,
-      status: allIndices?.isLive
-        ? "live"
-        : ocSource === "nse"
-        ? "live"
-        : "offline",
-      detail: allIndices?.isLive
-        ? `Indices${ocSource === "nse" ? " + Option Chain (fallback)" : " + Sectors"}`
-        : ocSource === "nse"
-        ? "Option Chain (Dhan unavailable)"
-        : "No data",
+      name: "Index Quotes",
+      icon: <Radio className="h-3 w-3" />,
+      status: hasIndexData ? liveIndices.data.isLive ? "live" : "degraded" : "offline",
+      detail: hasIndexData
+        ? `${liveIndices.data.data.length} central Dhan index quotes${liveIndices.data.isLive ? " · fresh" : " · not confirmed live"}`
+        : "No central index quotes available",
     },
-    // ── TradingView Scanner ──
     {
-      name: "TradingView",
+      name: "F&O Quotes",
       icon: <BarChart3 className="h-3 w-3" />,
-      status: fnoSource === "tradingview"
-        ? "live"
-        : fnoData?.isLive
-        ? "degraded"
-        : "offline",
-      detail: fnoSource === "tradingview"
-        ? `${fnoData?.allStocks?.length || 0} F&O stocks (no OI)`
-        : fnoData?.isLive
-        ? `NSE primary · ${fnoData.allStocks?.length || 0} stocks`
-        : "Standby",
+      status: hasFnoData ? fnoData?.isLive ? "live" : "degraded" : "offline",
+      detail: hasFnoData
+        ? `${fnoData?.allStocks.length} central Dhan F&O stocks${fnoData?.isLive ? " · fresh" : " · not confirmed live"}`
+        : fnoFailed
+        ? "Central Dhan F&O request failed"
+        : fnoSource === "dhan" ? "No F&O quotes returned by central Dhan" : "No central F&O quotes available",
     },
-    // ── VIX (composite) ──
     {
       name: "VIX",
       icon: <Activity className="h-3 w-3" />,
-      status: wsVix ? "live" : allIndices?.vix ? "degraded" : "offline",
+      status: wsVix
+        ? health?.market_session?.is_live ? "live" : "degraded"
+        : allIndices?.vix ? "degraded" : "offline",
       detail: wsVix
-        ? `Dhan WS: ${wsVix.value?.toFixed(2)}`
+        ? `Central stream: ${wsVix.value.toFixed(2)}${health?.market_session?.is_live ? "" : " · not confirmed live"}`
         : allIndices?.vix
-        ? `NSE Poll: ${allIndices.vix.value?.toFixed(2)}`
+        ? `Central snapshot: ${allIndices.vix.value.toFixed(2)} · not confirmed live`
         : "No data",
     },
   ];
