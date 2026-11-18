@@ -4,6 +4,7 @@ import type { RiskRequest } from "@/lib/riskEngine";
 import type { Instrument } from "@/lib/localDatabase";
 import type { OptionData } from "@/lib/mockData";
 import type { RawOptionLeg } from "@/lib/optionChainAnalytics";
+import { canonicalOrderSegment } from "@/lib/orderInstrument";
 import {
   deserializeCanonicalOrder,
   ORDER_STATUSES,
@@ -135,7 +136,7 @@ function normalizedOrderCommand(request: CreateOrderRequest, clientOrderId: stri
     client_order_id: clientOrderId,
     symbol: request.symbol.trim().toUpperCase(),
     exchange: request.exchange.trim().toUpperCase(),
-    ...(request.segment?.trim() ? { segment: request.segment.trim().toUpperCase() } : {}),
+    ...(request.segment?.trim() ? { segment: canonicalOrderSegment(request.segment) } : {}),
     side: request.side,
     quantity: request.quantity,
     order_type: orderType,

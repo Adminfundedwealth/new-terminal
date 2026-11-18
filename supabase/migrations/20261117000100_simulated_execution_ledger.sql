@@ -68,7 +68,7 @@ begin
     order by id limit 1 for update;
   end if;
 
-  if found and position_row.side <> case when new.side = 'buy' then 'long' else 'short' end then
+  if found and position_row.side <> (case when new.side = 'buy' then 'long' else 'short' end) then
     close_quantity := least(position_row.quantity, new.quantity);
     realized_delta := (new.execution_price - position_row.average_price) * close_quantity
       * case when position_row.side = 'long' then 1 else -1 end;
