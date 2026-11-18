@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Search, Star, TrendingUp, TrendingDown, Loader2, BarChart3, ExternalLink, X, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -25,6 +25,7 @@ import {
   toTerminalMarketDataInstrument,
   type TerminalMarketDataQuote,
 } from "@/lib/terminalApi";
+import { canonicalOrderSegment, resolveStockOrderInstrument } from "@/lib/orderInstrument";
 import { fetchCentralMarketQuotes } from "@/lib/centralMarketQuotes";
 import { subscribeToTerminalMarketDataStream, type TerminalRealtimeStatus } from "@/lib/terminalApi";
 import { isWithinNseSessionAt } from "@/lib/marketApi";
@@ -116,6 +117,7 @@ export function InstrumentExplorer({
   initialExpiry,
   initialInstrumentToken,
 }: ExplorerProps) {
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"activity" | "symbol" | "price" | "change">("activity");
   const [currentPage, setCurrentPage] = useState(0);
@@ -127,6 +129,7 @@ export function InstrumentExplorer({
   const [ticketSide, setTicketSide] = useState<"BUY" | "SELL" | null>(null);
   const [orderType, setOrderType] = useState<"MARKET" | "LIMIT" | "STOP" | "STOP-LIMIT">("MARKET");
   const [quantity, setQuantity] = useState("1");
+  const [stockProduct, setStockProduct] = useState<"CNC" | "MIS">("CNC");
   const [limitPrice, setLimitPrice] = useState("");
   const [triggerPrice, setTriggerPrice] = useState("");
   const [takeProfitEnabled, setTakeProfitEnabled] = useState(false);
@@ -331,21 +334,21 @@ export function InstrumentExplorer({
     : null;
 
   const ticketInstrument = useMemo(() => {
+    if (workspaceContext === "stocks") {
+      const stockInstruments = workspaceInstruments.filter((instrument) =>
+        isProductionInstrument(instrument) && classifyInstrument(instrument) === "stocks",
+      );
+      return resolveStockOrderInstrument(chartSymbol, rows, stockInstruments);
+    }
+
     const matches = workspaceInstruments.filter((instrument) => {
       if (!isProductionInstrument(instrument)) return false;
-      if (workspaceContext === "stocks") {
-        return classifyInstrument(instrument) === "stocks" && (
-          instrument.tradingSymbol.toUpperCase() === (chartSymbol ?? "").toUpperCase() ||
-          instrument.symbol.toUpperCase() === (chartSymbol ?? "").toUpperCase()
-        );
-      }
-
       return instrument.tradingSymbol.toUpperCase() === (chartSymbol ?? "").toUpperCase();
     });
 
     if (matches.length === 0) return undefined;
     return matches.find((instrument) => instrument.exchange === "NSE" || instrument.exchangeSegment === "NSE_EQ") ?? matches[0];
-  }, [workspaceInstruments, chartSymbol, workspaceContext]);
+  }, [workspaceInstruments, chartSymbol, rows, workspaceContext]);
 
   const { data: selectedTerminalQuote, error: selectedTerminalQuoteError } = useQuery({
     queryKey: ["terminal-selected-quote", marketDataAccountId, marketDataProvider, chartSymbol],
@@ -366,11 +369,11 @@ export function InstrumentExplorer({
         candidate.symbol.toUpperCase() === chartSymbol.toUpperCase()
       ) ?? ((searchResults ?? []).length === 1 ? (searchResults ?? [])[0] : undefined);
       if (!instrument) return null;
-      return requestTerminalMarketData<TerminalMarketDataQuote>(
+      return await requestTerminalMarketData<TerminalMarketDataQuote>(
         marketDataAccountId,
         marketDataProvider,
         { operation: "getQuote", instrument: toTerminalMarketDataInstrument(instrument, marketDataProvider) },
-      );
+      ) ?? null;
     },
     enabled: Boolean(canLoadMarketData && chartSymbol && workspaceContext !== "options"),
     staleTime: 5_000,
@@ -549,6 +552,7 @@ export function InstrumentExplorer({
 
   const openOrderTicket = (side: "BUY" | "SELL", chartOrder?: OrderRequest) => {
     setTicketSide(side);
+    setStockProduct("CNC");
     const nextOrderType = chartOrder?.type === "LIMIT"
       ? "LIMIT"
       : chartOrder?.type === "SL"
@@ -576,17 +580,23 @@ export function InstrumentExplorer({
       return;
     }
 
-    const stockMatches = workspaceInstruments.filter((instrument) =>
-      isProductionInstrument(instrument) &&
-      instrument.symbol.toUpperCase() === chartSymbol.toUpperCase() &&
-      classifyInstrument(instrument) === "stocks"
-    );
-
-    const preferredSelectedInstrument = stockMatches.find((instrument) => instrument.exchange === "NSE" || instrument.exchangeSegment === "NSE_EQ")
-      ?? stockMatches.find((instrument) => instrument.exchange === "BSE" || instrument.exchangeSegment === "BSE_EQ")
-      ?? stockMatches[0];
     const ticketCategory = ticketInstrument ? classifyInstrument(ticketInstrument) : null;
     const isDerivative = ticketCategory === "futures" || ticketCategory === "options";
+    const isCashStock = asset === "stocks" && workspaceContext === "stocks";
+    if (asset === "indices" && workspaceContext === "stocks") {
+      setTicketState("error");
+      setTicketMessage("Index spot instruments are not tradable. Select a valid futures or options contract.");
+      return;
+    }
+    if (isCashStock && (
+      !ticketInstrument ||
+      ticketCategory !== "stocks" ||
+      !["NSE_EQ", "BSE_EQ"].includes(canonicalOrderSegment(ticketInstrument.exchangeSegment))
+    )) {
+      setTicketState("error");
+      setTicketMessage("Select a valid NSE or BSE cash-equity instrument.");
+      return;
+    }
     if (workspaceContext !== "stocks" && (
       !ticketInstrument ||
       !isDerivative ||
@@ -594,6 +604,11 @@ export function InstrumentExplorer({
     )) {
       setTicketState("error");
       setTicketMessage("Select a valid Indian futures or options contract.");
+      return;
+    }
+    if (!isCashStock && !isDerivative) {
+      setTicketState("error");
+      setTicketMessage("Select a valid cash-equity, futures, or options instrument.");
       return;
     }
     const currentPrice = selectedQuote?.ltp ?? 0;
@@ -639,13 +654,23 @@ export function InstrumentExplorer({
     setTicketState("submitting");
     setTicketMessage("");
     try {
-      const orderInstrument = isDerivative ? ticketInstrument : undefined;
+      const orderInstrument = (isDerivative || isCashStock) && ticketInstrument
+        ? {
+            ...ticketInstrument,
+            exchangeSegment: ticketInstrument.exchangeSegment.trim().toUpperCase() === "NFO"
+              ? "NSE_FNO"
+              : ticketInstrument.exchangeSegment.trim().toUpperCase() === "BFO"
+                ? "BSE_FNO"
+                : canonicalOrderSegment(ticketInstrument.exchangeSegment),
+          }
+        : undefined;
       const result = await createTerminalOrder({
         account_id: activeAccountId,
         client_order_id: `customer-${createClientOrderId()}`,
         symbol: orderInstrument?.tradingSymbol ?? chartSymbol,
-        exchange: orderInstrument?.exchange ?? "NSE",
-        segment: orderInstrument?.exchangeSegment ?? preferredSelectedInstrument?.exchangeSegment ?? "NSE_EQ",
+        exchange: orderInstrument?.exchange ?? "",
+        segment: orderInstrument?.exchangeSegment
+          ?? "",
         side: ticketSide,
         quantity: parsedQuantity,
         order_type: orderType,
@@ -654,12 +679,16 @@ export function InstrumentExplorer({
         ...(parsedStopLoss != null ? { stop_loss: parsedStopLoss } : {}),
         ...(parsedTakeProfit != null ? { take_profit: parsedTakeProfit } : {}),
         time_in_force: "DAY",
-        product: orderInstrument ? "NRML" : "CNC",
+        product: isDerivative ? "NRML" : isCashStock ? stockProduct : "CNC",
         is_overnight: false,
         ...(orderInstrument ? { instrument: orderInstrument } : {}),
       });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["terminal-os"] }),
+        queryClient.invalidateQueries({ queryKey: ["customer-account"] }),
+      ]);
       setTicketState("submitted");
-      setTicketMessage(`Canonical order created: ${String(result.order?.id ?? "pending")}`);
+      setTicketMessage(`Simulated order ${result.order.status.replace(/_/g, " ")}: ${result.order.id}`);
     } catch (error) {
       setTicketState("error");
       setTicketMessage(error instanceof Error ? error.message : "Order creation failed.");
@@ -727,6 +756,10 @@ export function InstrumentExplorer({
       product: "CNC",
       is_overnight: false,
     });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["terminal-os"] }),
+      queryClient.invalidateQueries({ queryKey: ["customer-account"] }),
+    ]);
   };
 
   const handleProtectionChange = async (positionId: string, field: "stop_loss" | "take_profit", value: string) => {
@@ -1315,6 +1348,7 @@ export function InstrumentExplorer({
                   <label className="block text-xs font-medium text-muted-foreground">Units / Quantity<input type="number" min="1" step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" /></label>
                   <div className="text-xs font-medium text-muted-foreground">Risk, INR<div className="mt-1 flex h-10 items-center rounded-md border border-input bg-muted/50 px-3 font-mono text-sm text-foreground">{estimatedRisk == null ? "—" : `₹${estimatedRisk.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</div></div>
                 </div>
+                {asset === "stocks" && workspaceContext === "stocks" && <label className="mt-3 block text-xs font-medium text-muted-foreground">Product<select aria-label="Stock product" value={stockProduct} onChange={(event) => setStockProduct(event.target.value as "CNC" | "MIS")} className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"><option value="CNC">Delivery (CNC)</option><option value="MIS">Intraday (MIS)</option></select></label>}
                 {(orderType === "LIMIT" || orderType === "STOP-LIMIT") && <label className="mt-3 block text-xs font-medium text-muted-foreground">Limit price<input type="number" min="0" step="0.05" value={limitPrice} onChange={(event) => setLimitPrice(event.target.value)} className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" /></label>}
                 {(orderType === "STOP" || orderType === "STOP-LIMIT") && <label className="mt-3 block text-xs font-medium text-muted-foreground">Trigger price<input type="number" min="0" step="0.05" value={triggerPrice} onChange={(event) => setTriggerPrice(event.target.value)} className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" /></label>}
 
@@ -1338,7 +1372,7 @@ export function InstrumentExplorer({
                 {ticketMessage && <p className={`mt-3 text-xs ${ticketState === "error" ? "text-destructive" : "text-emerald-500"}`}>{ticketMessage}</p>}
                 <div className="mt-5 flex gap-2">
                   <Button variant="outline" onClick={() => setTicketSide(null)}>Cancel</Button>
-                  <Button disabled={ticketState === "submitting" || ticketState === "submitted"} aria-label={`SIMULATED ${ticketSide} ${orderType === "MARKET" ? "Market" : orderType}`} onClick={() => void submitOrder()} className={`flex-1 font-semibold text-white ${ticketSide === "BUY" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"}`}>{ticketState === "submitting" ? "Submitting..." : ticketState === "submitted" ? "Order Created" : `${ticketSide} ${orderType === "MARKET" ? "Market" : orderType}`}</Button>
+                  <Button disabled={ticketState === "submitting" || ticketState === "submitted"} aria-label={`SIMULATED ${ticketSide} ${orderType === "MARKET" ? "Market" : orderType}`} onClick={() => void submitOrder()} className={`flex-1 font-semibold text-white ${ticketSide === "BUY" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"}`}>{ticketState === "submitting" ? "Submitting..." : ticketState === "submitted" ? "Order Accepted" : `${ticketSide} ${orderType === "MARKET" ? "Market" : orderType}`}</Button>
                 </div>
               </div>
             </div>

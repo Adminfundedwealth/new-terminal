@@ -146,7 +146,9 @@ begin
 
   select count(*) into execution_count from public.executions where order_id=fill_order_id and external_execution_id='D4-SYNTH-FILL-001';
   select count(*) into position_count from public.positions where account_id=synthetic_account_id and symbol='D4SYNTHC' and quantity=1 and position_status='open';
-  if execution_count <> 1 or position_count <> 1 then raise exception 'FILL_DUPLICATED_POSITION_OR_EXECUTION'; end if;
+  if execution_count <> 1 or position_count <> 1 then
+    raise exception 'FILL_DUPLICATED_POSITION_OR_EXECUTION execution_count=%, position_count=%', execution_count, position_count;
+  end if;
   if not exists (select 1 from public.execution_submissions where outbox_id=fill_outbox_id and submission_state='filled') then
     raise exception 'FILL_STATE_NOT_PERSISTED';
   end if;
