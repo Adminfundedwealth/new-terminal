@@ -4,8 +4,8 @@ do $$
 declare
   synthetic_user_id uuid := 'd4000000-0000-4000-8000-000000000001';
   synthetic_account_id uuid := 'd4000000-0000-4000-8000-000000000002';
-  claim_outbox_id uuid := 'd4000000-0000-4000-8000-000000000007';
-  recovery_outbox_id uuid := 'd4000000-0000-4000-8000-000000000006';
+  claim_outbox_id uuid := 'd4000000-0000-4000-8000-000000000006';
+  recovery_outbox_id uuid := 'd4000000-0000-4000-8000-000000000007';
   fill_outbox_id uuid := 'd4000000-0000-4000-8000-000000000008';
   fill_order_id uuid := 'd4000000-0000-4000-8000-000000000005';
   worker_name text;
