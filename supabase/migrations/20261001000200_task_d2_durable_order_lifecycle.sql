@@ -124,10 +124,6 @@ begin
   if not found then
     return jsonb_build_object('ok', false, 'replayed', false, 'error', jsonb_build_object('code', 'ACCOUNT_NOT_OWNED', 'message', 'Trading account is not owned by the authenticated user'));
   end if;
-  if lower(coalesce(account_row.broker_provider, '')) <> 'simulated' then
-    return jsonb_build_object('ok', false, 'replayed', false, 'error', jsonb_build_object('code', 'SIMULATED_EXECUTION_REQUIRED', 'message', 'Customer orders require a simulated trading account'));
-  end if;
-
   if symbol_value is null or exchange_value is null or side_value not in ('buy', 'sell') then
     return jsonb_build_object('ok', false, 'replayed', false, 'error', jsonb_build_object('code', 'INVALID_ORDER', 'message', 'Order identity is invalid'));
   end if;
