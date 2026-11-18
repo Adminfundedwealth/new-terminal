@@ -798,6 +798,11 @@ export async function requestTerminalMarketData<T>(
 
   const scopedAccountId = provider === "dhan" ? null : accountId;
   if (!scopedAccountId && provider !== "dhan") throw new Error("A trading account is required for account-scoped market data.");
+  if (provider === "dhan" && accountId === null &&
+      (requestOperation.operation === "listInstruments" || requestOperation.operation === "getHistoricalCandles")) {
+    const fallback = await fallbackToDhanProxy<T>(requestOperation, signal);
+    if (fallback !== null) return fallback;
+  }
   return withRequestTimeout(
     provider === "dhan" ? DHAN_MARKET_DATA_REQUEST_TIMEOUT_MS : DEFAULT_REQUEST_TIMEOUT_MS,
     async (requestSignal) => {
