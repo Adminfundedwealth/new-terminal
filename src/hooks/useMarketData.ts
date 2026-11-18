@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchMarketIndicesSnapshot, fetchLiveFnOStocks, fetchProxyHealth } from "@/lib/marketApi";
+import { fetchLiveFnOStocks, fetchProxyHealth } from "@/lib/marketApi";
 import type { FnOStockData, MarketIndicesSnapshot, OptionUnderlying } from "@/lib/marketApi";
 import { getMaxPain } from "@/lib/oiUtils";
 import type { OptionData, IndexData, ExpiryDate } from "@/lib/mockData";
@@ -100,18 +100,41 @@ function useMarketIndexSnapshot() {
   return useQuery({
     queryKey: ["nse-market-index-snapshot"],
     queryFn: async ({ signal }): Promise<MarketIndexQueryData> => {
-      if (shouldTryProxy()) {
-        try {
-          const snapshot = await fetchMarketIndicesSnapshot(signal);
-          if (snapshot) {
-            markProxyOnline();
-            return { ...snapshot, isLive: true };
-          }
-        } catch (error) {
-          if (signal.aborted) throw error;
-          markProxyOffline();
-          console.warn("Market indices fetch failed:", error);
+      try {
+        const instruments: TerminalMarketDataInstrument[] = [
+          { provider: "dhan", providerInstrumentId: "13", symbol: "NIFTY 50", tradingSymbol: "NIFTY", exchange: "NSE", exchangeSegment: "IDX_I", instrumentType: "INDEX" },
+          { provider: "dhan", providerInstrumentId: "25", symbol: "NIFTY BANK", tradingSymbol: "BANKNIFTY", exchange: "NSE", exchangeSegment: "IDX_I", instrumentType: "INDEX" },
+          { provider: "dhan", providerInstrumentId: "27", symbol: "NIFTY FINANCIAL SERVICES", tradingSymbol: "FINNIFTY", exchange: "NSE", exchangeSegment: "IDX_I", instrumentType: "INDEX" },
+          { provider: "dhan", providerInstrumentId: "442", symbol: "NIFTY MID SELECT", tradingSymbol: "MIDCPNIFTY", exchange: "NSE", exchangeSegment: "IDX_I", instrumentType: "INDEX" },
+        ];
+        const quotes = await requestTerminalMarketData(
+          null,
+          "dhan",
+          "production",
+          { operation: "getQuotes", instruments },
+          signal,
+        ) as Array<{ symbol: string; tradingSymbol: string; ltp: number; change: number | null; changePercent: number | null; open: number | null; high: number | null; low: number | null; previousClose: number | null }>;
+        const indices: IndexData[] = quotes.map((quote) => ({
+          name: quote.symbol,
+          symbol: quote.tradingSymbol,
+          ltp: quote.ltp,
+          change: quote.change ?? 0,
+          changePercent: quote.changePercent ?? 0,
+          high: quote.high ?? quote.ltp,
+          low: quote.low ?? quote.ltp,
+          open: quote.open ?? quote.previousClose ?? quote.ltp,
+          prevClose: quote.previousClose ?? quote.ltp,
+        }));
+        if (indices.length > 0) {
+          return {
+            indices,
+            allIndices: { vix: null, sectors: [], advances: 0, declines: 0, unchanged: 0 },
+            isLive: true,
+          };
         }
+      } catch (error) {
+        if (signal.aborted) throw error;
+        console.warn("Central market indices fetch failed:", error);
       }
 
       const dbIndices = buildCachedIndices(await getCachedPricesOnce());
