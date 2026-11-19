@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
-import { fetchDhanInstrumentMaster, fetchInstrumentMaster, fetchLiveFnOStocks, isNseMarketOpenAt, isWithinNseSessionAt, parseDhanOptionChain, parseNSEOptionChain, normalizeInstrumentMasterResponse } from "@/lib/marketApi";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { fetchLiveFnOStocks, isNseMarketOpenAt, isWithinNseSessionAt, parseDhanOptionChain, parseNSEOptionChain, normalizeInstrumentMasterResponse } from "@/lib/marketApi";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -79,14 +79,13 @@ describe("fetchLiveFnOStocks", () => {
 });
 
 describe("browser broker credential boundary", () => {
-  let instrumentMasterTestTime = Date.UTC(2099, 0, 1);
-  beforeEach(() => {
-    instrumentMasterTestTime += 2 * 60 * 60 * 1000;
-    vi.useFakeTimers();
-    vi.setSystemTime(instrumentMasterTestTime);
-  });
+  const loadFreshMarketApi = async () => {
+    vi.resetModules();
+    return import("@/lib/marketApi");
+  };
 
   it("loads the parsed official instrument master through the configured Dhan proxy", async () => {
+    const { fetchDhanInstrumentMaster } = await loadFreshMarketApi();
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
       instruments: [{
         securityId: "2885",
@@ -108,6 +107,8 @@ describe("browser broker credential boundary", () => {
   });
 
   it("allows enough time for the full Dhan instrument master response", async () => {
+    vi.useFakeTimers();
+    const { fetchDhanInstrumentMaster } = await loadFreshMarketApi();
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
       () => new Promise<Response>(() => {}),
     );
@@ -126,6 +127,7 @@ describe("browser broker credential boundary", () => {
   });
 
   it("does not forward browser-held Dhan credentials to the legacy proxy", async () => {
+    const { fetchInstrumentMaster } = await loadFreshMarketApi();
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
       instruments: [],
       count: 0,
