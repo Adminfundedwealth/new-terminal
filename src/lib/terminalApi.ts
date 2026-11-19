@@ -14,7 +14,7 @@ import {
 } from "@/lib/orderModel";
 import { REALTIME_MOCK_TEST_ACCOUNT_ID } from "@/lib/realtimeMockTestScope";
 import { DEFAULT_REQUEST_TIMEOUT_MS, withRequestTimeout } from "@/lib/requestTimeout";
-import { fetchDhanInstrumentMaster, fetchHistoricalCandles } from "@/lib/marketApi";
+import { fetchDhanInstrumentMaster, fetchHistoricalCandles, fetchLiveOptionChain } from "@/lib/marketApi";
 
 export function resolveTerminalOsBase(configuredUrl: string | undefined, isProduction: boolean): string {
   const defaultUrl = isProduction ? "https://terminal-os.fundedwealth.com" : "";
@@ -773,6 +773,9 @@ async function fallbackToDhanProxy<T>(
       volume: data.volume?.[index] ?? 0,
     })) as T;
   }
+  if (operation.operation === "getOptionChain") {
+    return await fetchLiveOptionChain(operation.underlying, operation.expiry, undefined, signal) as T;
+  }
   return null;
 }
 
@@ -799,7 +802,9 @@ export async function requestTerminalMarketData<T>(
   const scopedAccountId = provider === "dhan" ? null : accountId;
   if (!scopedAccountId && provider !== "dhan") throw new Error("A trading account is required for account-scoped market data.");
   if (provider === "dhan" && accountId === null &&
-      (requestOperation.operation === "listInstruments" || requestOperation.operation === "getHistoricalCandles")) {
+      (requestOperation.operation === "listInstruments" ||
+       requestOperation.operation === "getHistoricalCandles" ||
+       requestOperation.operation === "getOptionChain")) {
     const fallback = await fallbackToDhanProxy<T>(requestOperation, signal);
     if (fallback !== null) return fallback;
   }
