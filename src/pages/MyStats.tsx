@@ -289,7 +289,13 @@ export default function MyStats() {
   const maxDrawdown = numeric(riskState?.drawdown_amount);
   const dailyDrawdown = numeric(riskState?.daily_loss);
   const equityValue = accountNumber(account, "equity");
-  const profitTarget = numeric(riskState?.profit_target);
+  const profitTarget = numeric(riskState?.profit_target) ?? numeric(rules?.profit_target_amount);
+  const profitCurrent = numeric(riskState?.profit_current);
+  const dailyLossLimit = numeric(rules?.daily_loss_limit);
+  const maxDrawdownLimit = numeric(rules?.maximum_drawdown);
+  const dailyLossPct = numeric(rules?.daily_loss_limit_pct);
+  const maxDrawdownPct = numeric(rules?.max_drawdown_pct);
+  const profitTargetPct = numeric(rules?.profit_target_pct);
   const totalMetric = hasNoAccount ? "00" : stats.netPnl == null ? "—" : formatCurrency(stats.netPnl);
   const tradeMetric = hasNoAccount ? "00" : performanceQuery.isLoading ? "…" : String(stats.tradeCount);
   const noAccountNote = hasNoAccount ? "No account data" : undefined;
@@ -374,13 +380,13 @@ export default function MyStats() {
       </section>
 
       <section aria-label="Risk and consistency" className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Daily Drawdown Level" value={hasNoAccount ? "00" : formatCurrency(dailyDrawdown)} note={numeric(rules?.daily_loss_limit) == null ? "Limit unavailable" : `Configured limit ${formatCurrency(numeric(rules?.daily_loss_limit))}`} tone={dailyDrawdown != null && dailyDrawdown > 0 ? "negative" : "neutral"} empty={hasNoAccount} />
-        <MetricCard label="Maximum Drawdown Level" value={hasNoAccount ? "00" : formatCurrency(maxDrawdown)} note={numeric(rules?.maximum_drawdown) == null ? "Limit unavailable" : `Configured limit ${formatCurrency(numeric(rules?.maximum_drawdown))}`} tone={maxDrawdown != null && maxDrawdown > 0 ? "negative" : "neutral"} empty={hasNoAccount} />
+        <MetricCard label="Daily Drawdown Level" value={hasNoAccount ? "00" : formatCurrency(dailyDrawdown)} note={dailyLossLimit == null ? (dailyLossPct != null ? `Limit: ${dailyLossPct}% of account` : "Limit unavailable") : `Limit ${formatCurrency(dailyLossLimit)}${dailyLossPct != null ? ` (${dailyLossPct}%)` : ""}`} tone={dailyDrawdown != null && dailyDrawdown > 0 ? "negative" : "neutral"} empty={hasNoAccount} />
+        <MetricCard label="Maximum Drawdown Level" value={hasNoAccount ? "00" : formatCurrency(maxDrawdown)} note={maxDrawdownLimit == null ? (maxDrawdownPct != null ? `Limit: ${maxDrawdownPct}% of account` : "Limit unavailable") : `Limit ${formatCurrency(maxDrawdownLimit)}${maxDrawdownPct != null ? ` (${maxDrawdownPct}%)` : ""}`} tone={maxDrawdown != null && maxDrawdown > 0 ? "negative" : "neutral"} empty={hasNoAccount} />
         <MetricCard label="Consistency" value={hasNoAccount ? "00" : formatPercent(stats.consistency)} note="Profitable days ÷ active days" empty={hasNoAccount} />
         <MetricCard label="Maximum Profit Day" value={hasNoAccount ? "00" : formatCurrency(stats.maxProfitDay)} note="Highest daily net P&L in range" tone={valueTone(stats.maxProfitDay)} empty={hasNoAccount} />
         <MetricCard label="Edge Score" value={hasNoAccount ? "00" : "—"} note="Not calculable without trade-level outcomes" empty={hasNoAccount} />
         <MetricCard label="Current Equity" value={hasNoAccount ? "00" : formatCurrency(equityValue)} note="Current selected-account snapshot" empty={hasNoAccount} />
-        <MetricCard label="Profit Target" value={hasNoAccount ? "00" : formatCurrency(profitTarget)} note="Account risk state" empty={hasNoAccount} />
+        <MetricCard label="Profit Target" value={hasNoAccount ? "00" : formatCurrency(profitTarget)} note={profitTarget == null ? (profitTargetPct != null ? `Target: ${profitTargetPct}% of account` : "No profit target") : profitCurrent != null ? `Progress: ${formatCurrency(profitCurrent)} of ${formatCurrency(profitTarget)}${profitTargetPct != null ? ` (${profitTargetPct}%)` : ""}` : `Target: ${formatCurrency(profitTarget)}`} tone={profitCurrent != null && profitCurrent > 0 ? "positive" : "neutral"} empty={hasNoAccount} />
         <MetricCard label="Observed Maximum Drawdown" value={hasNoAccount ? "00" : formatCurrency(stats.observedDrawdown)} note="From available daily closing-equity records" tone={stats.observedDrawdown != null && stats.observedDrawdown > 0 ? "negative" : "neutral"} empty={hasNoAccount} />
       </section>
 
