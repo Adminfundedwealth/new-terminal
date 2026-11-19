@@ -1,11 +1,12 @@
 import React from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { AlertTriangle, RefreshCw, Bug } from "lucide-react";
+import { RefreshCw, Bug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface Props {
   children: React.ReactNode;
   fallbackMessage?: string;
+  onRecover?: () => void;
 }
 
 interface State {
@@ -54,7 +55,13 @@ export class ErrorBoundary extends React.Component<Props, State> {
                 variant="outline"
                 size="sm"
                 className="gap-1.5 hover:text-destructive hover:border-destructive/50 transition-colors"
-                onClick={() => this.setState({ hasError: false, error: undefined })}
+                onClick={() => {
+                  if (this.props.onRecover) {
+                    this.props.onRecover();
+                  } else {
+                    this.setState({ hasError: false, error: undefined });
+                  }
+                }}
               >
                 <RefreshCw className="h-3.5 w-3.5" /> Recover Module
               </Button>

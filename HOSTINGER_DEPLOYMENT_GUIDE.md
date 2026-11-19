@@ -24,12 +24,11 @@ The application has already been built successfully. The production files are in
 
 1. In hPanel, go to **Files** → **File Manager**
 2. Navigate to the public_html directory (or your site's root directory)
-3. **Backup existing files first** (download or create a backup)
-4. Delete old files (keep .htaccess if it exists)
-5. Upload all files from the local `dist/` folder:
-   - Upload `index.html`
-   - Upload the `assets/` folder (contains all CSS/JS bundles)
-   - Ensure all files are in the root, not in a subfolder
+3. Keep the existing `assets/` directory and `.htaccess`; do not delete old files.
+4. Upload the contents of `dist/assets/` into the existing `assets/` directory, overwriting files with matching names. Do not enable mirror/synchronize cleanup.
+5. Upload the remaining build files to the site root.
+6. Upload `index.html` last, after all new assets are present.
+7. Keep old fingerprinted assets during normal releases. A currently open browser tab may still request a chunk referenced by its previously loaded HTML or JavaScript.
 
 #### Option B: Using FTP/SFTP
 
@@ -40,7 +39,8 @@ The application has already been built successfully. The production files are in
    - Password: [from hPanel]
    - Port: 21 (FTP) or 22 (SFTP)
 3. Navigate to public_html
-4. Upload all files from `dist/` folder
+4. Upload new files from `dist/assets/` additively; do not remove files from the remote `assets/` directory.
+5. Upload the new `index.html` only after all referenced new files have uploaded successfully.
 
 #### Option C: Using Git Deployment (if configured)
 
@@ -108,24 +108,20 @@ Once deployed, test these pages:
    - Wait 2-3 minutes for cache to clear
 
 2. **Check .htaccess file:**
-   - Ensure it doesn't have aggressive caching rules
-   - Recommended .htaccess for SPA:
+   - Ensure `index.html` is revalidated and missing `/assets/` requests are not rewritten to the SPA entry point.
+   - Keep the repository's complete `public/.htaccess` file. Do not replace it with an older rewrite-only copy.
    ```apache
    <IfModule mod_rewrite.c>
      RewriteEngine On
      RewriteBase /
      RewriteRule ^index\.html$ - [L]
+     RewriteRule ^assets/ - [L]
      RewriteCond %{REQUEST_FILENAME} !-f
      RewriteCond %{REQUEST_FILENAME} !-d
      RewriteRule . /index.html [L]
    </IfModule>
    
-   # Disable caching for HTML
-   <FilesMatch "\.(html)$">
-     Header set Cache-Control "no-cache, no-store, must-revalidate"
-     Header set Pragma "no-cache"
-     Header set Expires 0
-   </FilesMatch>
+   # Also retain the Cache-Control rules from public/.htaccess.
    ```
 
 3. **Verify file upload:**
@@ -232,4 +228,4 @@ Once files are uploaded to Hostinger:
 
 **Ready to Deploy!** 🚀
 
-All code changes are complete. Just upload the `dist/` folder to Hostinger and verify.
+Upload assets additively and replace the HTML entry point last. Never delete hashed assets as part of the deployment.
