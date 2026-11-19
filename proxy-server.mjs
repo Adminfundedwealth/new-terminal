@@ -22,6 +22,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { formatDhanChartDateTime } from "./dhan-chart-date-time.mjs";
 import { createTerminalAccountLinkHandlers } from "./terminal-account-link.mjs";
 import { createTerminalSsoHandlers } from "./terminal-sso.mjs";
+import { encodeInstrumentCatalogResponse } from "./proxy-json-response.mjs";
 
 // ── Load .env manually (no external deps needed) ──
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -505,9 +506,26 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
 
       console.log("  📥 Downloading Dhan instrument master CSV...");
       const csvUrl = "https://images.dhan.co/api-data/api-scrip-master.csv";
-      const csvRes = await fetch(csvUrl);
-      if (!csvRes.ok) throw new Error(`Failed to download instrument master: ${csvRes.status}`);
-      const csvText = await csvRes.text();
+      let csvRes;
+      let csvText = "";
+      let masterError = null;
+      for (let masterAttempt = 0; masterAttempt < 2; masterAttempt += 1) {
+        try {
+          csvRes = await fetch(csvUrl, {
+            headers: { Accept: "text/csv" },
+            cache: "no-store",
+            signal: AbortSignal.timeout(90_000),
+          });
+          if (!csvRes.ok) throw new Error(`Failed to download instrument master: ${csvRes.status}`);
+          csvText = await csvRes.text();
+          masterError = null;
+          break;
+        } catch (error) {
+          masterError = error;
+          if (masterAttempt === 0) await new Promise((resolve) => setTimeout(resolve, 750));
+        }
+      }
+      if (masterError) throw masterError;
 
       // Parse CSV — Actual columns (16 total):
       // SEM_EXM_EXCH_ID, SEM_SEGMENT, SEM_SMST_SECURITY_ID, SEM_INSTRUMENT_NAME,
@@ -1907,6 +1925,19 @@ ${tokenData.data.access_token}
       const userAccessToken = req.headers["x-dhan-access-token"];
       const { data, cacheHit } = await handleDhanProxy(params, userClientId, userAccessToken);
       res.setHeader("X-Cache", cacheHit ? "HIT" : "MISS");
+      if (params.get("endpoint") === "instruments") {
+        const encoded = encodeInstrumentCatalogResponse(data, req.headers["accept-encoding"]);
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.setHeader("Vary", "Accept-Encoding");
+        if (encoded.contentEncoding) res.setHeader("Content-Encoding", encoded.contentEncoding);
+        res.setHeader(
+          "Content-Length",
+          String(Buffer.isBuffer(encoded.body) ? encoded.body.length : Buffer.byteLength(encoded.body)),
+        );
+        res.writeHead(200);
+        res.end(encoded.body);
+        return;
+      }
       res.writeHead(200);
       res.end(JSON.stringify(data));
     } else if (url.pathname === "/api/nse-proxy") {

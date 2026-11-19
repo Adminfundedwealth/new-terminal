@@ -854,7 +854,7 @@ export async function fetchTerminalMarketDataStatus(
 ): Promise<TerminalMarketDataStatus> {
   const scopedAccountId = provider === "dhan" ? null : accountId;
   if (!scopedAccountId && provider !== "dhan") throw new Error("A trading account is required for account-scoped market-data status.");
-  return withRequestTimeout(DEFAULT_REQUEST_TIMEOUT_MS, async (requestSignal) => {
+  return withRequestTimeout(DHAN_MARKET_DATA_REQUEST_TIMEOUT_MS, async (requestSignal) => {
     const accessToken = provider === "dhan"
       ? await getOptionalCustomerAccessToken()
       : await getCustomerAccessToken();

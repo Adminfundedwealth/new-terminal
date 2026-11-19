@@ -18,24 +18,47 @@ export interface IndianNewsArticle {
 }
 
 // Broker credentials are server-side only; customer requests must never forward them.
-const INSTRUMENT_MASTER_TIMEOUT_MS = 60_000;
+const INSTRUMENT_MASTER_TIMEOUT_MS = 90_000;
+let instrumentMasterMemoryCache: { expiresAt: number; payload: unknown } | null = null;
 
 async function fetchDhanProxy(endpoint: string, params?: Record<string, string>, signal?: AbortSignal): Promise<any> {
   const qp = new URLSearchParams({ endpoint, ...params });
   const url = `${PROXY_BASE}/api/dhan-proxy?${qp.toString()}`;
+  if (endpoint === "instruments" && instrumentMasterMemoryCache?.expiresAt > Date.now()) {
+    return instrumentMasterMemoryCache.payload;
+  }
 
-  return withRequestTimeout(
-    endpoint === "instruments" ? INSTRUMENT_MASTER_TIMEOUT_MS : DEFAULT_REQUEST_TIMEOUT_MS,
-    async (requestSignal) => {
-      const res = await fetch(url, { signal: requestSignal });
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`Dhan proxy error ${res.status}: ${errText}`);
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const payload = await withRequestTimeout(
+        endpoint === "instruments" ? INSTRUMENT_MASTER_TIMEOUT_MS : DEFAULT_REQUEST_TIMEOUT_MS,
+        async (requestSignal) => {
+          const res = await fetch(url, { signal: requestSignal });
+          if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(`Dhan proxy error ${res.status}: ${errText}`);
+          }
+          return res.json();
+        },
+        signal,
+      );
+      if (endpoint === "instruments") {
+        instrumentMasterMemoryCache = { expiresAt: Date.now() + 60 * 60 * 1000, payload };
       }
-      return res.json();
-    },
-    signal,
-  );
+      return payload;
+    } catch (error) {
+      lastError = error;
+      if (signal?.aborted) throw error;
+      if (attempt === 0 && endpoint === "instruments") {
+        await new Promise((resolve) => setTimeout(resolve, 750));
+      } else if (attempt === 0) {
+        break;
+      }
+    }
+  }
+  if (endpoint === "instruments" && instrumentMasterMemoryCache) return instrumentMasterMemoryCache.payload;
+  throw lastError;
 }
 
 export async function fetchDhanInstrumentMaster(signal?: AbortSignal): Promise<unknown[]> {

@@ -113,10 +113,10 @@ describe("browser broker credential boundary", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(settled).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(44_999);
+    await vi.advanceTimersByTimeAsync(74_999);
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
-    await expect(request).rejects.toThrow("Request timed out after 60000 ms.");
+    await expect(request).rejects.toThrow("Request timed out after 90000 ms.");
   });
 
   it("does not forward browser-held Dhan credentials to the legacy proxy", async () => {
