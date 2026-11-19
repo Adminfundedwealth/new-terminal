@@ -1,4 +1,4 @@
-import { afterEach, describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { fetchDhanInstrumentMaster, fetchInstrumentMaster, fetchLiveFnOStocks, isNseMarketOpenAt, isWithinNseSessionAt, parseDhanOptionChain, parseNSEOptionChain, normalizeInstrumentMasterResponse } from "@/lib/marketApi";
 
 afterEach(() => {
@@ -79,6 +79,13 @@ describe("fetchLiveFnOStocks", () => {
 });
 
 describe("browser broker credential boundary", () => {
+  let instrumentMasterTestTime = Date.UTC(2099, 0, 1);
+  beforeEach(() => {
+    instrumentMasterTestTime += 2 * 60 * 60 * 1000;
+    vi.useFakeTimers();
+    vi.setSystemTime(instrumentMasterTestTime);
+  });
+
   it("loads the parsed official instrument master through the configured Dhan proxy", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
       instruments: [{
@@ -101,7 +108,6 @@ describe("browser broker credential boundary", () => {
   });
 
   it("allows enough time for the full Dhan instrument master response", async () => {
-    vi.useFakeTimers();
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
       () => new Promise<Response>(() => {}),
     );
