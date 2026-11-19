@@ -116,13 +116,22 @@ export async function fetchCentralMarketQuotes(targets: CentralMarketQuoteTarget
       `${q.exchange}:${q.tradingSymbol}`.toUpperCase(),
       q,
     ]));
+    const missingSymbols: string[] = [];
 
     for (const { key, instrument } of batch) {
       const exchange = (instrument.exchange ?? (instrument.exchangeSegment.startsWith("BSE") ? "BSE" : "NSE")).toUpperCase();
       const quote =
         bySymbol.get(`${exchange}:${instrument.tradingSymbol.toUpperCase()}`) ??
         bySymbol.get(`${exchange}:${instrument.symbol.toUpperCase()}`);
-      if (quote) quotes[key] = quote;
+      if (quote && Number.isFinite(quote.ltp) && quote.ltp > 0) {
+        quotes[key] = quote;
+      } else {
+        missingSymbols.push(instrument.tradingSymbol);
+      }
+    }
+    if (missingSymbols.length > 0) {
+      const sample = missingSymbols.slice(0, 3).join(", ");
+      errors.push(`Central Dhan returned no quote for ${sample}${missingSymbols.length > 3 ? ` +${missingSymbols.length - 3} more` : ""}.`);
     }
   };
 

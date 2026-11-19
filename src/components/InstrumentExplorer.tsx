@@ -145,7 +145,9 @@ export function InstrumentExplorer({
   const { instruments } = useInstrumentLookup();
   const rowInstruments = rows.flatMap((row) => row.instrument ? [row.instrument] : []);
   const workspaceInstruments = rowInstruments.length > 0 ? rowInstruments : instruments;
-  const marketDataProvider = resolveTerminalMarketDataProvider(activeAccountProvider) ?? "dhan";
+  const marketDataProvider = asset === "indices"
+    ? "dhan"
+    : resolveTerminalMarketDataProvider(activeAccountProvider) ?? "dhan";
   const marketDataAccountId = marketDataProvider === "dhan" ? null : activeAccountId;
   const canLoadMarketData = marketDataProvider === "dhan" || Boolean(activeAccountId);
   const normalizedChartSymbol = (chartSymbol ?? "").toUpperCase();
@@ -188,16 +190,32 @@ export function InstrumentExplorer({
   useEffect(() => setCurrentPage(0), [search]);
 
   useEffect(() => {
-    if (asset !== "stocks" || !canLoadMarketData || visibleRows.length === 0 || !visibleRows.some((row) => row.instrument)) {
+    if (
+      !["stocks", "indices"].includes(asset) ||
+      !canLoadMarketData ||
+      visibleRows.length === 0 ||
+      !visibleRows.some((row) => row.instrument)
+    ) {
       setStreamStatus("disconnected");
+      setStreamQuotes({});
       return;
     }
 
     setStreamQuotes({});
-    const symbols = [...new Set(visibleRows
-      .filter((row) => row.instrument?.provider === "dhan")
-      .map((row) => row.instrument?.tradingSymbol ?? row.symbol))];
+    const streamRows = visibleRows.filter((row) => row.instrument?.provider === "dhan");
+    const symbols = [...new Set(streamRows.map((row) => row.instrument?.tradingSymbol ?? row.symbol))];
     if (symbols.length === 0) return;
+    const rowKeyByExchangeSymbol = new Map<string, string>();
+    const rowKeyBySymbol = new Map<string, string>();
+    for (const row of streamRows) {
+      if (!row.instrument) continue;
+      const rowKey = row.chartSymbol ?? row.symbol;
+      rowKeyByExchangeSymbol.set(
+        `${row.instrument.exchange.toUpperCase()}:${row.instrument.tradingSymbol.toUpperCase()}`,
+        rowKey,
+      );
+      rowKeyBySymbol.set(row.instrument.tradingSymbol.toUpperCase(), rowKey);
+    }
 
     return subscribeToTerminalMarketDataStream(
       marketDataAccountId,
@@ -212,8 +230,11 @@ export function InstrumentExplorer({
           quote.ltp <= 0 ||
           !Number.isFinite(timestamp)
         ) return;
-        const segment = quote.exchange === "BSE" ? "BSE_EQ" : "NSE_EQ";
-        const key = `${segment}:${quote.tradingSymbol}`;
+        const quoteSymbol = quote.tradingSymbol.toUpperCase();
+        const key = rowKeyByExchangeSymbol.get(`${quote.exchange.toUpperCase()}:${quoteSymbol}`)
+          ?? rowKeyBySymbol.get(event.symbol.toUpperCase())
+          ?? rowKeyBySymbol.get(quoteSymbol);
+        if (!key) return;
         setStreamQuotes((current) => {
           const previous = current[key];
           if (previous && Date.parse(previous.timestamp) > timestamp) return current;

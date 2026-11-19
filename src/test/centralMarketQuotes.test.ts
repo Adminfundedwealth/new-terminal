@@ -96,6 +96,22 @@ describe("central market quotes", () => {
     expect(result.errors).toEqual(["Central Dhan quote batch failed: global provider unavailable"]);
   });
 
+  it("reports instruments omitted from a successful central quote response", async () => {
+    vi.mocked(requestTerminalMarketData).mockResolvedValue([] as never);
+
+    const result = await fetchCentralMarketQuotes([
+      { key: "NIFTY", instrument: instrument({
+        securityId: "13",
+        symbol: "NIFTY",
+        tradingSymbol: "NIFTY",
+        exchangeSegment: "IDX_I",
+      }) },
+    ]);
+
+    expect(result.quotes).toEqual({});
+    expect(result.errors).toEqual(["Central Dhan returned no quote for NIFTY."]);
+  });
+
   it("keeps successful batch quotes when another Dhan batch fails", async () => {
     vi.mocked(requestTerminalMarketData).mockImplementation(async (_accountId, _provider, request) => {
       if (request.operation !== "getQuotes") return [];

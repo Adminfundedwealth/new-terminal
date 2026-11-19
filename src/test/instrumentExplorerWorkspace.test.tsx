@@ -1,9 +1,9 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InstrumentExplorer } from "@/components/InstrumentExplorer";
 import { useLiveOptionChain } from "@/hooks/useMarketData";
-import { createTerminalOrder, fetchTerminalExecutions, fetchTerminalOrders, fetchTerminalPositions, modifyTerminalPositionProtection } from "@/lib/terminalApi";
+import { createTerminalOrder, fetchTerminalExecutions, fetchTerminalOrders, fetchTerminalPositions, modifyTerminalPositionProtection, subscribeToTerminalMarketDataStream, type TerminalRealtimeQuoteEvent } from "@/lib/terminalApi";
 import type { Instrument } from "@/lib/localDatabase";
 
 const { requestTerminalMarketDataMock, stockChartPropsMock } = vi.hoisted(() => ({
@@ -137,6 +137,7 @@ vi.mock("@/components/stockChartLoader", () => ({
 describe("InstrumentExplorer stock workspace", () => {
   afterEach(() => {
     requestTerminalMarketDataMock.mockReset();
+    vi.mocked(subscribeToTerminalMarketDataStream).mockClear();
   });
 
   const globalTmpvInstrument: Instrument = {
@@ -185,6 +186,91 @@ describe("InstrumentExplorer stock workspace", () => {
       return null;
     });
   }
+
+  it("streams central Dhan quotes into index rows independently of the trading account provider", async () => {
+    const indexInstrument: Instrument = {
+      securityId: "13",
+      providerInstrumentId: "13",
+      provider: "dhan",
+      symbol: "NIFTY",
+      tradingSymbol: "NIFTY",
+      displayName: "NIFTY 50",
+      exchange: "NSE",
+      exchangeSegment: "IDX_I",
+      instrumentType: "INDEX",
+      lotSize: 1,
+      tickSize: 0.05,
+    };
+    requestTerminalMarketDataMock.mockResolvedValue([]);
+    let emitQuote: ((event: TerminalRealtimeQuoteEvent) => void) | undefined;
+    vi.mocked(subscribeToTerminalMarketDataStream).mockImplementationOnce(
+      (_accountId, _provider, symbols, onQuote) => {
+        expect(symbols).toEqual(["NIFTY"]);
+        emitQuote = onQuote;
+        return () => {};
+      },
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InstrumentExplorer
+          title="Indices"
+          subtitle="NSE index quotes."
+          asset="indices"
+          rows={[{
+            symbol: "NIFTY",
+            chartSymbol: "IDX_I:NIFTY",
+            label: "NIFTY 50",
+            ltp: null,
+            change: null,
+            changePercent: null,
+            open: null,
+            high: null,
+            low: null,
+            volume: null,
+            instrument: indexInstrument,
+          }]}
+          isLoading={false}
+          watchedSymbols={[]}
+          onToggleWatchlist={() => {}}
+          activeAccountId="account-1"
+          activeAccountProvider="kite"
+        />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(subscribeToTerminalMarketDataStream).toHaveBeenCalledWith(
+      null,
+      "dhan",
+      ["NIFTY"],
+      expect.any(Function),
+      expect.any(Function),
+    ));
+    act(() => emitQuote?.({
+      provider: "dhan",
+      environment: "production",
+      symbol: "NIFTY",
+      quote: {
+        provider: "dhan",
+        symbol: "NIFTY",
+        tradingSymbol: "NIFTY",
+        exchange: "NSE",
+        ltp: 25359.15,
+        open: 25186.8,
+        high: 25387,
+        low: 25104.8,
+        previousClose: 25227.95,
+        change: 131.2,
+        changePercent: 0.52,
+        volume: 0,
+        openInterest: 0,
+        timestamp: new Date().toISOString(),
+      },
+    }));
+
+    expect(await screen.findByText("₹25,359.15")).toBeInTheDocument();
+  });
 
   it("opens the existing chart workspace for a stock row using the same shared layout", async () => {
     mockGlobalDhanQuotes({
