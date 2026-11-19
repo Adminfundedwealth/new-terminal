@@ -107,10 +107,17 @@ describe("browser broker credential boundary", () => {
   });
 
   it("allows enough time for the full Dhan instrument master response", async () => {
-    vi.useFakeTimers();
     const { fetchDhanInstrumentMaster } = await loadFreshMarketApi();
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
-      () => new Promise<Response>(() => {}),
+    vi.useFakeTimers();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      new Promise<Response>((resolve) => {
+        setTimeout(() => {
+          resolve(new Response(JSON.stringify({ instruments: [], count: 0 }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }));
+        }, 30_000);
+      }),
     );
     const request = fetchDhanInstrumentMaster();
     let settled = false;
@@ -120,10 +127,10 @@ describe("browser broker credential boundary", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(settled).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(74_999);
+    await vi.advanceTimersByTimeAsync(14_999);
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
-    await expect(request).rejects.toThrow("Request timed out after 90000 ms.");
+    await expect(request).resolves.toEqual([]);
   });
 
   it("does not forward browser-held Dhan credentials to the legacy proxy", async () => {
@@ -139,6 +146,48 @@ describe("browser broker credential boundary", () => {
     const headers = new Headers(init?.headers);
     expect(headers.has("x-dhan-client-id")).toBe(false);
     expect(headers.has("x-dhan-access-token")).toBe(false);
+  });
+
+  it("waits for delayed Dhan option-chain responses and preserves contract quotes", async () => {
+    const { fetchLiveOptionChain } = await loadFreshMarketApi();
+    vi.useFakeTimers();
+    const chain = {
+      status: "success",
+      data: {
+        last_price: 1362,
+        oc: {
+          "1360.000000": {
+            ce: { last_price: 14, oi: 3_414_000 },
+            pe: { last_price: 12.1, oi: 3_694_500 },
+          },
+        },
+      },
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input: RequestInfo | URL) => {
+      const endpoint = new URL(String(input)).searchParams.get("endpoint");
+      if (endpoint === "option-chain") {
+        return new Promise<Response>((resolve) => {
+          setTimeout(() => resolve(new Response(JSON.stringify(chain), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          })), 5_000);
+        });
+      }
+      return Promise.resolve(new Response(JSON.stringify({ data: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    });
+
+    const request = fetchLiveOptionChain("RELIANCE");
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+
+    const result = await request;
+    expect(result.source).toBe("dhan");
+    expect(result.chain[0]?.ce).toMatchObject({ ltp: 14, oi: 3_414_000 });
+    expect(result.chain[0]?.pe).toMatchObject({ ltp: 12.1, oi: 3_694_500 });
   });
 });
 

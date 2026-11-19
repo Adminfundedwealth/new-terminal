@@ -19,6 +19,7 @@ export interface IndianNewsArticle {
 
 // Broker credentials are server-side only; customer requests must never forward them.
 const INSTRUMENT_MASTER_TIMEOUT_MS = 90_000;
+const OPTION_CHAIN_TIMEOUT_MS = 15_000;
 let instrumentMasterMemoryCache: { expiresAt: number; payload: unknown } | null = null;
 
 async function fetchDhanProxy(endpoint: string, params?: Record<string, string>, signal?: AbortSignal): Promise<any> {
@@ -32,7 +33,11 @@ async function fetchDhanProxy(endpoint: string, params?: Record<string, string>,
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const payload = await withRequestTimeout(
-        endpoint === "instruments" ? INSTRUMENT_MASTER_TIMEOUT_MS : DEFAULT_REQUEST_TIMEOUT_MS,
+        endpoint === "instruments"
+          ? INSTRUMENT_MASTER_TIMEOUT_MS
+          : endpoint === "option-chain"
+            ? OPTION_CHAIN_TIMEOUT_MS
+            : DEFAULT_REQUEST_TIMEOUT_MS,
         async (requestSignal) => {
           const res = await fetch(url, { signal: requestSignal });
           if (!res.ok) {
@@ -79,14 +84,18 @@ async function fetchNSEProxy(endpoint: string, symbol?: string, signal?: AbortSi
   const params = new URLSearchParams({ endpoint });
   if (symbol) params.set("symbol", symbol);
   const url = `${PROXY_BASE}/api/nse-proxy?${params.toString()}`;
-  return withRequestTimeout(DEFAULT_REQUEST_TIMEOUT_MS, async (requestSignal) => {
-    const res = await fetch(url, { signal: requestSignal });
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`NSE proxy error ${res.status}: ${errText}`);
-    }
-    return res.json();
-  }, signal);
+  return withRequestTimeout(
+    endpoint === "option-chain" ? OPTION_CHAIN_TIMEOUT_MS : DEFAULT_REQUEST_TIMEOUT_MS,
+    async (requestSignal) => {
+      const res = await fetch(url, { signal: requestSignal });
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`NSE proxy error ${res.status}: ${errText}`);
+      }
+      return res.json();
+    },
+    signal,
+  );
 }
 
 export async function fetchIndianMarketNews(signal?: AbortSignal): Promise<{ provider: string; articles: IndianNewsArticle[]; fetchedAt: string }> {
