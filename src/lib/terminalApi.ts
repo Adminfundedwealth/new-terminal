@@ -274,6 +274,34 @@ export async function submitTerminalOrderCommand(request: TerminalOrderCommandRe
   }
   return { ok: true, replayed: payload.data?.replayed ?? false, order: { ...order, id: order.id, status: order.status } };
 }
+
+export async function cancelTerminalOrder(orderId: string, accountId: string): Promise<{ ok: boolean; order?: Record<string, unknown> }> {
+  if (!TERMINAL_OS_BASE) throw new Error("Terminal OS is not configured.");
+  const accessToken = await getCustomerAccessToken();
+
+  const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/orders/${orderId}/cancel`, {
+    method: "POST",
+    credentials: "omit",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ account_id: accountId }),
+  });
+
+  const payload = await response.json() as {
+    data?: { order?: Record<string, unknown>; replayed?: boolean };
+    error?: { code?: string; message?: string };
+  };
+
+  if (!response.ok) {
+    throw new Error(payload.error?.message ?? `Order cancellation failed (${response.status}).`);
+  }
+
+  return { ok: true, order: payload.data?.order ?? undefined };
+}
+
 export interface TerminalHealthCheck {
   name: string;
   status: string;
