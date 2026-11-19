@@ -14,15 +14,13 @@ import {
 } from "@/lib/orderModel";
 import { REALTIME_MOCK_TEST_ACCOUNT_ID } from "@/lib/realtimeMockTestScope";
 import { DEFAULT_REQUEST_TIMEOUT_MS, withRequestTimeout } from "@/lib/requestTimeout";
-import { fetchDhanInstrumentMaster, fetchHistoricalCandles, fetchLiveOptionChain } from "@/lib/marketApi";
-
 export function resolveTerminalOsBase(configuredUrl: string | undefined, isProduction: boolean): string {
   const defaultUrl = isProduction ? "https://terminal-os.fundedwealth.com" : "";
   return (configuredUrl || defaultUrl).replace(/\/$/, "");
 }
 
 const TERMINAL_OS_BASE = resolveTerminalOsBase(import.meta.env.VITE_TERMINAL_OS_URL, import.meta.env.PROD);
-const DHAN_MARKET_DATA_REQUEST_TIMEOUT_MS = 12_000;
+const DHAN_MARKET_DATA_REQUEST_TIMEOUT_MS = 30_000;
 
 export interface TerminalAccount {
   id: string;
@@ -718,67 +716,6 @@ async function readMarketDataResponse<T>(response: Response): Promise<T> {
   return payload.data as T;
 }
 
-async function fallbackToDhanProxy<T>(
-  operation: TerminalMarketDataOperation,
-  signal?: AbortSignal,
-): Promise<T | null> {
-  if (operation.operation === "listInstruments") {
-    const payload = await fetchDhanInstrumentMaster(signal);
-    return payload.map((raw) => {
-      const instrument = raw as Record<string, unknown>;
-      return {
-        provider: "dhan",
-        providerInstrumentId: String(instrument.securityId ?? ""),
-        symbol: String(instrument.symbol ?? ""),
-        tradingSymbol: String(instrument.tradingSymbol ?? ""),
-        exchange: String(instrument.exchange ?? "NSE"),
-        exchangeSegment: String(instrument.exchangeSegment ?? ""),
-        instrumentType: String(instrument.instrumentType ?? ""),
-        lotSize: typeof instrument.lotSize === "number" ? instrument.lotSize : undefined,
-        tickSize: typeof instrument.tickSize === "number" ? instrument.tickSize : undefined,
-        series: typeof instrument.series === "string" ? instrument.series : undefined,
-        expiryDate: typeof instrument.expiryDate === "string" ? instrument.expiryDate : undefined,
-        strikePrice: typeof instrument.strikePrice === "number" ? instrument.strikePrice : undefined,
-        optionType: typeof instrument.optionType === "string" ? instrument.optionType : undefined,
-      };
-    }) as T;
-  }
-  if (operation.operation === "getHistoricalCandles") {
-    const interval = ["day", "1d", "D"].includes(operation.interval)
-      ? "D"
-      : operation.interval.replace(/m$/, "");
-    const payload = await fetchHistoricalCandles(
-      operation.instrument.providerInstrumentId,
-      operation.instrument.exchangeSegment,
-      operation.instrument.instrumentType,
-      interval,
-      operation.fromDate,
-      operation.toDate,
-      signal,
-    );
-    const data = payload as unknown as {
-      open?: number[];
-      high?: number[];
-      low?: number[];
-      close?: number[];
-      volume?: number[];
-      timestamp?: Array<string | number>;
-    };
-    return (data.timestamp ?? []).map((timestamp, index) => ({
-      timestamp: String(timestamp),
-      open: data.open?.[index] ?? 0,
-      high: data.high?.[index] ?? 0,
-      low: data.low?.[index] ?? 0,
-      close: data.close?.[index] ?? 0,
-      volume: data.volume?.[index] ?? 0,
-    })) as T;
-  }
-  if (operation.operation === "getOptionChain") {
-    return await fetchLiveOptionChain(operation.underlying, operation.expiry, undefined, signal) as T;
-  }
-  return null;
-}
-
 export async function requestTerminalMarketData<T>(
   accountId: string | null,
   provider: TerminalMarketDataProvider,
@@ -801,45 +738,24 @@ export async function requestTerminalMarketData<T>(
 
   const scopedAccountId = provider === "dhan" ? null : accountId;
   if (!scopedAccountId && provider !== "dhan") throw new Error("A trading account is required for account-scoped market data.");
-  if (provider === "dhan" && accountId === null &&
-      (requestOperation.operation === "listInstruments" ||
-       requestOperation.operation === "getHistoricalCandles" ||
-       requestOperation.operation === "getOptionChain")) {
-    const fallback = await fallbackToDhanProxy<T>(requestOperation, signal);
-    if (fallback !== null) return fallback;
-  }
   return withRequestTimeout(
     provider === "dhan" ? DHAN_MARKET_DATA_REQUEST_TIMEOUT_MS : DEFAULT_REQUEST_TIMEOUT_MS,
     async (requestSignal) => {
     const accessToken = provider === "dhan"
       ? await getOptionalCustomerAccessToken()
       : await getCustomerAccessToken();
-    let response: Response;
-    try {
-      response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/market-data`, {
-        method: "POST",
-        credentials: "omit",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-        },
-        body: JSON.stringify({ ...(scopedAccountId ? { account_id: scopedAccountId } : {}), provider, environment, ...requestOperation }),
-        signal: requestSignal,
-      });
-    } catch (error) {
-      if (provider === "dhan") {
-        const fallback = await fallbackToDhanProxy<T>(requestOperation, requestSignal);
-        if (fallback !== null) return fallback;
-      }
-      throw error;
-    }
+    const response = await fetch(`${TERMINAL_OS_BASE}/api/terminal/market-data`, {
+      method: "POST",
+      credentials: "omit",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
+      body: JSON.stringify({ ...(scopedAccountId ? { account_id: scopedAccountId } : {}), provider, environment, ...requestOperation }),
+      signal: requestSignal,
+    });
     if (response.ok) return readMarketDataResponse<T>(response);
-
-    if (provider === "dhan" && [400, 502, 503, 504].includes(response.status)) {
-      const fallback = await fallbackToDhanProxy<T>(requestOperation, requestSignal);
-      if (fallback !== null) return fallback;
-    }
     return readMarketDataResponse<T>(response);
     },
     signal,

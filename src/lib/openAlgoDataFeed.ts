@@ -23,6 +23,8 @@ import {
 const INDIA_TIME_ZONE = "Asia/Kolkata";
 const INDIA_OFFSET_SECONDS = 5 * 60 * 60 + 30 * 60;
 const SESSION_ANCHOR_SECONDS = (9 * 60 + 15) * 60 - INDIA_OFFSET_SECONDS;
+const MAX_LIVE_QUOTE_AGE_SECONDS = 5;
+const QUOTE_CONNECT_TIMEOUT_MS = 10_000;
 
 const ALLOWED_SEGMENTS = new Set([
   "NSE_EQ",
@@ -368,6 +370,15 @@ export class FundedWealthOpenAlgoDataFeed {
     if (options.seedFrom) builder.seed(options.seedFrom, options.cumDayVolumeSoFar);
 
     let active = true;
+    let receivedFreshQuote = false;
+    const marketIsOpen = indiaCalendar.phaseAt(Math.floor(Date.now() / 1000)) === "regular";
+    const quoteWaitTimeout = marketIsOpen
+      ? setTimeout(() => {
+          if (active && !receivedFreshQuote) {
+            this.onQuoteStatus("stale", "No fresh Dhan quote has arrived; historical chart data remains available.");
+          }
+        }, QUOTE_CONNECT_TIMEOUT_MS)
+      : undefined;
     const unsubscribe = subscribeToTerminalMarketDataStream(
       null,
       "dhan",
@@ -381,10 +392,14 @@ export class FundedWealthOpenAlgoDataFeed {
             throw new Error("The market-data service returned an invalid quote.");
           }
           const now = Math.floor(Date.now() / 1000);
-          if (indiaCalendar.phaseAt(now) !== "regular" || now - time > 60) {
+          if (indiaCalendar.phaseAt(now) !== "regular" ||
+            time > now + 2 ||
+            now - time > MAX_LIVE_QUOTE_AGE_SECONDS) {
             this.onQuoteStatus("stale", "Market closed or the latest provider quote is stale.");
             return;
           }
+          receivedFreshQuote = true;
+          if (quoteWaitTimeout) clearTimeout(quoteWaitTimeout);
           const update = builder.onTick({
             time,
             price: quote.ltp,
@@ -399,14 +414,26 @@ export class FundedWealthOpenAlgoDataFeed {
       },
       (status) => {
         if (!active) return;
-        if (status === "error") this.onQuoteStatus("error", "The Dhan quote stream is unavailable.");
-        else if (status === "disconnected") this.onQuoteStatus("stale", "Dhan quote stream disconnected.");
-        else if (status !== "connected") this.onQuoteStatus("connecting");
+        if (status === "error") {
+          if (quoteWaitTimeout) clearTimeout(quoteWaitTimeout);
+          this.onQuoteStatus("error", "The Dhan quote stream is unavailable.");
+        } else if (status === "disconnected") {
+          if (quoteWaitTimeout) clearTimeout(quoteWaitTimeout);
+          this.onQuoteStatus("stale", "Dhan quote stream disconnected.");
+        } else if (status === "connected" && !marketIsOpen) {
+          this.onQuoteStatus("stale", "Market closed; historical chart data remains available.");
+        } else if (status !== "connected") this.onQuoteStatus("connecting");
       },
     );
-    this.onQuoteStatus("connecting");
+    if (!receivedFreshQuote) {
+      this.onQuoteStatus(
+        marketIsOpen ? "connecting" : "stale",
+        marketIsOpen ? undefined : "Market closed; historical chart data remains available.",
+      );
+    }
     return () => {
       active = false;
+      if (quoteWaitTimeout) clearTimeout(quoteWaitTimeout);
       unsubscribe();
     };
   }

@@ -70,6 +70,29 @@ describe("OpenAlgo FundedWealth datafeed", () => {
     }))).toBe(false);
   });
 
+  it("derives 3-minute and 30-minute chart intervals from compatible Dhan candle sources", () => {
+    const datafeed = new FundedWealthOpenAlgoDataFeed(instrument(), vi.fn());
+    const from = Date.parse("2026-10-01T04:00:00.000Z") / 1000;
+    const threeMinute = datafeed.feed.resolve({
+      symbol: "HDFCBANK",
+      exchange: "NSE",
+      interval: "3m",
+      from,
+      to: from + 30 * 60,
+    });
+    const thirtyMinute = datafeed.feed.resolve({
+      symbol: "HDFCBANK",
+      exchange: "NSE",
+      interval: "30m",
+      from,
+      to: from + 60 * 60,
+    });
+
+    expect(threeMinute).toMatchObject({ native: false, source: { interval: "1m" } });
+    expect(thirtyMinute).toMatchObject({ native: false, source: { interval: "15m" } });
+    datafeed.destroy();
+  });
+
   it("parses Dhan's offset-free timestamps as India Standard Time", () => {
     expect(parseDhanTimestamp("2026-05-04T09:15:00")).toBe(
       Date.UTC(2026, 4, 4, 3, 45, 0) / 1000,
@@ -206,5 +229,49 @@ describe("OpenAlgo FundedWealth datafeed", () => {
     cancel();
     expect(unsubscribe).toHaveBeenCalledOnce();
     datafeed.destroy();
+  });
+
+  it("reports closed-market quote status instead of staying in the connecting state", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-01T10:01:00.000Z"));
+    const onQuoteStatus = vi.fn();
+    const datafeed = new FundedWealthOpenAlgoDataFeed(instrument(), onQuoteStatus);
+    const cancel = datafeed.feed.subscribeBars({
+      symbol: "HDFCBANK",
+      exchange: "NSE",
+      interval: "1m",
+    }, vi.fn());
+
+    expect(onQuoteStatus).toHaveBeenLastCalledWith(
+      "stale",
+      "Market closed; historical chart data remains available.",
+    );
+
+    cancel();
+    datafeed.destroy();
+    vi.useRealTimers();
+  });
+
+  it("marks an open-session stream stale if no fresh quote arrives", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-01T03:45:00.000Z"));
+    const onQuoteStatus = vi.fn();
+    const datafeed = new FundedWealthOpenAlgoDataFeed(instrument(), onQuoteStatus);
+    const cancel = datafeed.feed.subscribeBars({
+      symbol: "HDFCBANK",
+      exchange: "NSE",
+      interval: "1m",
+    }, vi.fn());
+
+    expect(onQuoteStatus).toHaveBeenLastCalledWith("connecting", undefined);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(onQuoteStatus).toHaveBeenLastCalledWith(
+      "stale",
+      "No fresh Dhan quote has arrived; historical chart data remains available.",
+    );
+
+    cancel();
+    datafeed.destroy();
+    vi.useRealTimers();
   });
 });

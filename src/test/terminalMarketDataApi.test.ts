@@ -17,6 +17,7 @@ import {
   subscribeToTerminalMarketDataStream,
   toLocalMarketDataInstrument,
   TerminalMarketDataError,
+  type TerminalMarketDataOperation,
   type TerminalRealtimeQuoteEvent,
 } from "@/lib/terminalApi";
 import { REALTIME_MOCK_TEST_ACCOUNT_ID } from "@/lib/realtimeMockTestScope";
@@ -133,6 +134,40 @@ describe("Main Terminal market-data contract", () => {
     });
   });
 
+  it("routes catalog, option-chain, and chart-history reads only through central Terminal OS", async () => {
+    const instrument = {
+      provider: "dhan" as const,
+      providerInstrumentId: "1333",
+      symbol: "SBIN",
+      tradingSymbol: "SBIN",
+      exchange: "NSE",
+      exchangeSegment: "NSE_EQ",
+      instrumentType: "EQUITY",
+    };
+    const operations: TerminalMarketDataOperation[] = [
+      { operation: "listInstruments" },
+      { operation: "getOptionChain", underlying: "NIFTY", expiry: "2026-11-26" },
+      {
+        operation: "getHistoricalCandles",
+        instrument,
+        interval: "5",
+        fromDate: "2026-11-18",
+        toDate: "2026-11-19",
+      },
+    ];
+
+    for (const operation of operations) {
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: [] }), { status: 200 }));
+      await requestTerminalMarketData(null, "dhan", operation);
+    }
+
+    expect(fetchMock).toHaveBeenCalledTimes(operations.length);
+    for (const [index, [url, init]] of fetchMock.mock.calls.entries()) {
+      expect(new URL(String(url), "https://main.test").pathname).toBe("/api/terminal/market-data");
+      expect(JSON.parse(String((init as RequestInit).body)).operation).toBe(operations[index].operation);
+    }
+  });
+
   it("sends a valid Dhan quote batch in one request", async () => {
     const instruments = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "INDIAVIX", "BAD"].map((symbol, index) => ({
       provider: "dhan" as const,
@@ -163,7 +198,7 @@ describe("Main Terminal market-data contract", () => {
     });
   });
 
-  it("allows a Dhan quote request to complete beyond the legacy 2.5-second client deadline", async () => {
+  it("allows a Dhan quote request to complete beyond the 12-second client deadline", async () => {
     vi.useFakeTimers();
     const quote = {
       provider: "dhan",
@@ -176,7 +211,7 @@ describe("Main Terminal market-data contract", () => {
     fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => {
       setTimeout(() => {
         resolve(new Response(JSON.stringify({ data: quote }), { status: 200 }));
-      }, 3_000);
+      }, 15_000);
     }));
 
     try {
@@ -192,7 +227,7 @@ describe("Main Terminal market-data contract", () => {
           instrumentType: "EQUITY",
         },
       });
-      await vi.advanceTimersByTimeAsync(3_000);
+      await vi.advanceTimersByTimeAsync(15_000);
       await expect(request).resolves.toEqual(quote);
     } finally {
       vi.useRealTimers();
