@@ -11,4 +11,3 @@ await build({
 const { verifyBuildAssets } = await import("./verify-build-assets.mjs");
 const { checkedFiles } = await verifyBuildAssets();
 console.log(`Verified ${checkedFiles} build asset references.`);
-await rm(path.resolve("dist", ".vite"), { recursive: true, force: true });
