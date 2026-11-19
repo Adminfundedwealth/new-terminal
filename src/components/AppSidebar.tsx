@@ -1,4 +1,4 @@
-import { BarChart3, Briefcase, CalendarDays, CandlestickChart, LayoutDashboard, Layers, Moon, Newspaper, Star, Sun, TableProperties, TrendingUp } from "lucide-react";
+import { BarChart3, Briefcase, CalendarDays, CandlestickChart, LayoutDashboard, Layers, Moon, Newspaper, Star, Sun, TableProperties, TrendingUp, User } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import {
   Sidebar,
@@ -17,6 +17,10 @@ import {
 import { useTheme } from "@/hooks/useTheme";
 import { cn } from "@/lib/utils";
 
+const profileItems = [
+  { title: "My Stats", url: "/my-stats", icon: User },
+];
+
 const mainItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard, shortcut: "1" },
   { title: "Stocks", url: "/stocks", icon: TrendingUp, shortcut: "2" },
@@ -32,10 +36,6 @@ const tradingItems = [
   { title: "Position Tracker", url: "/position-tracker", icon: Briefcase, shortcut: "9" },
   { title: "Calendar", url: "/calendar", icon: CalendarDays, shortcut: "10" },
   { title: "Market News", url: "/market-news", icon: Newspaper, shortcut: "11" },
-];
-
-const settingItems = [
-  { title: "My Stats", url: "/my-stats", icon: BarChart3 },
 ];
 
 const routePreloaders: Record<string, () => Promise<unknown>> = {
@@ -126,14 +126,23 @@ export function AppSidebar() {
       <SidebarContent className={cn("px-2 py-2.5", collapsed && "px-0 py-3")}>
         {collapsed ? (
           <div className="flex h-full flex-col items-center">
+            <SidebarMenu className="items-center gap-2">{renderNavItems(profileItems)}</SidebarMenu>
+            <div className="my-3 h-px w-8 bg-white/10" />
             <SidebarMenu className="items-center gap-2">{renderNavItems(mainItems)}</SidebarMenu>
             <div className="my-3 h-px w-8 bg-white/10" />
             <SidebarMenu className="items-center gap-2">{renderNavItems(tradingItems)}</SidebarMenu>
-            <div className="my-3 h-px w-8 bg-white/10" />
-            <SidebarMenu className="items-center gap-2">{renderNavItems(settingItems)}</SidebarMenu>
           </div>
         ) : (
           <>
+            <SidebarGroup>
+              <SidebarGroupLabel className="mb-1.5 px-2.5 text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground/60">Profile</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu className="space-y-0.5">{renderNavItems(profileItems)}</SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+
+            <SidebarSeparator className="my-2 opacity-35" />
+
             <SidebarGroup>
               <SidebarGroupLabel className="mb-1.5 px-2.5 text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground/60">Markets</SidebarGroupLabel>
               <SidebarGroupContent>
@@ -147,15 +156,6 @@ export function AppSidebar() {
               <SidebarGroupLabel className="mb-1.5 px-2.5 text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground/60">Trading Tools</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu className="space-y-0.5">{renderNavItems(tradingItems)}</SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-
-            <SidebarSeparator className="my-2 opacity-35" />
-
-            <SidebarGroup>
-              <SidebarGroupLabel className="mb-1.5 px-2.5 text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground/60">Settings</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu className="space-y-0.5">{renderNavItems(settingItems)}</SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
           </>
