@@ -1926,7 +1926,7 @@ ${tokenData.data.access_token}
       const { data, cacheHit } = await handleDhanProxy(params, userClientId, userAccessToken);
       res.setHeader("X-Cache", cacheHit ? "HIT" : "MISS");
       if (params.get("endpoint") === "instruments") {
-        const encoded = encodeInstrumentCatalogResponse(data, req.headers["accept-encoding"]);
+        const encoded = await encodeInstrumentCatalogResponse(data, req.headers["accept-encoding"]);
         res.setHeader("Content-Type", "application/json; charset=utf-8");
         res.setHeader("Vary", "Accept-Encoding");
         if (encoded.contentEncoding) res.setHeader("Content-Encoding", encoded.contentEncoding);
