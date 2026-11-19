@@ -852,22 +852,22 @@ export function InstrumentExplorer({
               ) : (
                 <Table>
                   <TableHeader className="sticky top-0 z-10 bg-card">
-                    <TableRow className="text-xs">
+                    <TableRow className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
                       {asset !== "stocks" && <TableHead className="w-8" />}
-                      {asset === "futures" ? <TableHead>Contract</TableHead> : <TableHead>{asset === "stocks" ? "SYMBOL" : "Symbol"}</TableHead>}
+                      {asset === "futures" ? <TableHead>Contract</TableHead> : <TableHead>Symbol</TableHead>}
                       {asset === "futures" && <TableHead>Underlying</TableHead>}
                       {asset === "futures" && <TableHead>Expiry</TableHead>}
                       <TableHead className="text-right">LTP</TableHead>
-                      <TableHead className="text-right">{asset === "stocks" ? "CHG" : "Change"}</TableHead>
-                      <TableHead className="text-right">{asset === "stocks" ? "CHG%" : "Chg%"}</TableHead>
-                      {asset === "stocks" && <TableHead className="text-right">OPEN</TableHead>}
-                      <TableHead className="text-right">{asset === "stocks" ? "HIGH" : "High"}</TableHead>
-                      <TableHead className="text-right">{asset === "stocks" ? "LOW" : "Low"}</TableHead>
-                      {asset !== "indices" && <TableHead className="text-right">{asset === "stocks" ? "VOLUME" : "Volume"}</TableHead>}
+                      <TableHead className="text-right">Chg</TableHead>
+                      <TableHead className="text-right">Chg%</TableHead>
+                      {asset === "stocks" && <TableHead className="text-right">Open</TableHead>}
+                      <TableHead className="text-right">High</TableHead>
+                      <TableHead className="text-right">Low</TableHead>
+                      {asset !== "indices" && <TableHead className="text-right">Volume</TableHead>}
                       {asset === "futures" && <TableHead className="text-right">OI</TableHead>}
                       {asset === "futures" && <TableHead className="text-right">OI Chg</TableHead>}
-                      <TableHead className="text-center w-[90px]">{asset === "stocks" ? "CHART" : "Chart"}</TableHead>
-                      <TableHead className="text-center">{asset === "stocks" ? "ACTIONS" : "Actions"}</TableHead>
+                      <TableHead className="w-[90px] text-center">Chart</TableHead>
+                      <TableHead className="text-center">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1034,13 +1034,23 @@ export function InstrumentExplorer({
                             <div className="mt-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">{row.instrument ? `${row.instrument.exchange} · ${row.instrument.exchangeSegment}` : asset === "indices" ? "NSE · IDX_I" : "NSE"}</div>
                           </div>
 
-                          <div className="ml-3 text-right">
+                          <div className="ml-3 shrink-0 text-right">
                             <div className="text-xs font-semibold text-foreground">
                               {row.ltp != null && row.ltp > 0 ? `₹${row.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
                             </div>
                             <div className={`text-[10px] font-medium ${positive ? "text-bullish" : "text-bearish"}`}>
                               {row.changePercent == null ? "—" : `${positive ? "+" : ""}${row.changePercent.toFixed(2)}%`}
                             </div>
+                            {row.high != null && row.low != null && row.high > row.low && (
+                              <div className="relative mt-1 h-[2px] w-12 rounded-full bg-muted/60">
+                                <span
+                                  className={`absolute top-[-2px] h-[6px] w-[2px] rounded-sm ${positive ? "bg-bullish" : "bg-bearish"}`}
+                                  style={{
+                                    left: `${Math.max(2, Math.min(96, ((row.ltp ?? row.low) - row.low) / (row.high - row.low) * 100))}%`,
+                                  }}
+                                />
+                              </div>
+                            )}
                           </div>
                         </button>
                       );
@@ -1078,53 +1088,96 @@ export function InstrumentExplorer({
               </aside>}
 
               <section className="flex min-w-0 min-h-0 flex-1 flex-col bg-background">
-                <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border bg-background/80 px-3 py-2">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 shrink-0"
-                      onClick={() => setIsInstrumentDrawerOpen((open) => !open)}
-                      aria-label={isInstrumentDrawerOpen ? "Collapse instrument list" : "Expand instrument list"}
-                      aria-expanded={isInstrumentDrawerOpen}
-                    >
-                      {isInstrumentDrawerOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
-                    </Button>
-                    <button
-                      type="button"
-                      onClick={() => setChartSymbol(null)}
-                      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-card/80 p-0 text-xs font-medium text-foreground hover:bg-card sm:w-auto sm:gap-1.5 sm:px-2"
-                      aria-label={`Back to ${asset === "indices" ? "indices" : asset === "futures" ? "futures" : "stocks"}`}
-                    >
-                      <ArrowLeft className="h-3.5 w-3.5" />
-                      <span className="hidden sm:inline">Back to {asset === "indices" ? "Indices" : asset === "futures" ? "Futures" : "Stocks"}</span>
-                    </button>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-3">
-                        <span className="truncate text-xl font-bold tracking-tight">{selectedQuote?.label ?? chartSymbol}</span>
-                        <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{chartInstrument ? `${chartInstrument.exchange} · ${chartInstrument.exchangeSegment}` : asset === "indices" ? "NSE · IDX_I" : workspaceContext === "stocks" ? "NSE" : "NFO"}</span>
+                <div className="shrink-0 border-b border-border bg-background/80 px-3 py-2">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 shrink-0"
+                        onClick={() => setIsInstrumentDrawerOpen((open) => !open)}
+                        aria-label={isInstrumentDrawerOpen ? "Collapse instrument list" : "Expand instrument list"}
+                        aria-expanded={isInstrumentDrawerOpen}
+                      >
+                        {isInstrumentDrawerOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
+                      </Button>
+                      <button
+                        type="button"
+                        onClick={() => setChartSymbol(null)}
+                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-card/80 p-0 text-xs font-medium text-foreground hover:bg-card sm:w-auto sm:gap-1.5 sm:px-2"
+                        aria-label={`Back to ${asset === "indices" ? "indices" : asset === "futures" ? "futures" : "stocks"}`}
+                      >
+                        <ArrowLeft className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Back to {asset === "indices" ? "Indices" : asset === "futures" ? "Futures" : "Stocks"}</span>
+                      </button>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2.5">
+                          <span className="truncate text-xl font-bold tracking-tight">{selectedQuote?.label ?? chartSymbol}</span>
+                          <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{chartInstrument ? `${chartInstrument.exchange} · ${chartInstrument.exchangeSegment}` : asset === "indices" ? "NSE · IDX_I" : workspaceContext === "stocks" ? "NSE" : "NFO"}</span>
+                          {selectedQuoteIsFresh && (
+                            <span className="shrink-0 rounded border border-bullish/30 bg-bullish/5 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-bullish">LIVE</span>
+                          )}
+                        </div>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                          <span className="font-mono text-lg font-bold text-foreground">
+                            {selectedQuote?.ltp != null && selectedQuote.ltp > 0
+                              ? `₹${selectedQuote.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                              : "—"}
+                          </span>
+                          <span className={`font-mono text-sm font-semibold ${((selectedQuote?.change ?? 0) >= 0) ? "text-bullish" : "text-bearish"}`}>
+                            {selectedQuote?.change == null ? "" : `${selectedQuote.change >= 0 ? "+" : ""}${selectedQuote.change.toFixed(2)}`}
+                            {selectedQuote?.changePercent != null ? ` (${selectedQuote.changePercent >= 0 ? "+" : ""}${selectedQuote.changePercent.toFixed(2)}%)` : ""}
+                          </span>
+                        </div>
                       </div>
-                      <div className="mt-1 flex items-center gap-3 text-sm">
-                        <span className="font-mono font-semibold text-foreground">
-                          {selectedQuote?.ltp != null && selectedQuote.ltp > 0
-                            ? `₹${selectedQuote.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                            : "—"}
-                        </span>
-                        <span className={`font-mono ${((selectedQuote?.change ?? 0) >= 0) ? "text-bullish" : "text-bearish"}`}>
-                          {selectedQuote?.change == null ? "—" : `${selectedQuote.change >= 0 ? "+" : ""}${selectedQuote.change.toFixed(2)}`}
-                        </span>
-                        <span className={`font-mono ${((selectedQuote?.changePercent ?? 0) >= 0) ? "text-bullish" : "text-bearish"}`}>
-                          {selectedQuote?.changePercent == null ? "—" : `${selectedQuote.changePercent >= 0 ? "+" : ""}${selectedQuote.changePercent.toFixed(2)}%`}
-                        </span>
-                      </div>
+                    </div>
+
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button variant="outline" onClick={() => openOrderTicket("SELL")} className="h-9 min-w-[64px] rounded-lg border-0 bg-red-600 px-2 text-xs font-bold text-white shadow-sm hover:bg-red-700 sm:min-w-[88px] sm:px-3"><span aria-hidden="true" className="mr-1 text-[10px]">▼</span>SELL</Button>
+                      <Button variant="outline" onClick={() => openOrderTicket("BUY")} className="h-9 min-w-[64px] rounded-lg border-0 bg-emerald-600 px-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 sm:min-w-[88px] sm:px-3"><span aria-hidden="true" className="mr-1 text-[10px]">▲</span>BUY</Button>
                     </div>
                   </div>
 
-                  <div className="ml-auto flex shrink-0 items-center gap-2">
-                    <Button variant="outline" onClick={() => openOrderTicket("SELL")} className="h-9 min-w-[64px] rounded-lg border-0 bg-red-600 px-2 text-xs font-bold text-white shadow-sm hover:bg-red-700 sm:min-w-[88px] sm:px-3"><span aria-hidden="true" className="mr-1 text-[10px]">▼</span>SELL</Button>
-                    <Button variant="outline" onClick={() => openOrderTicket("BUY")} className="h-9 min-w-[64px] rounded-lg border-0 bg-emerald-600 px-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 sm:min-w-[88px] sm:px-3"><span aria-hidden="true" className="mr-1 text-[10px]">▲</span>BUY</Button>
-                  </div>
+                  {/* OHLV stats row — Bloomberg/TradingView style */}
+                  {(selectedQuote?.open != null || selectedQuote?.high != null || selectedQuote?.low != null) && (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+                      {selectedQuote?.open != null && selectedQuote.open > 0 && (
+                        <span className="flex items-center gap-1 text-muted-foreground">
+                          O <span className="font-mono font-medium text-foreground">₹{selectedQuote.open.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        </span>
+                      )}
+                      {selectedQuote?.high != null && selectedQuote.high > 0 && (
+                        <span className="flex items-center gap-1 text-muted-foreground">
+                          H <span className="font-mono font-medium text-bullish">₹{selectedQuote.high.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        </span>
+                      )}
+                      {selectedQuote?.low != null && selectedQuote.low > 0 && (
+                        <span className="flex items-center gap-1 text-muted-foreground">
+                          L <span className="font-mono font-medium text-bearish">₹{selectedQuote.low.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        </span>
+                      )}
+                      {selectedQuote?.volume != null && selectedQuote.volume > 0 && (
+                        <span className="flex items-center gap-1 text-muted-foreground">
+                          Vol <span className="font-mono font-medium text-foreground">{formatCompact(selectedQuote.volume)}</span>
+                        </span>
+                      )}
+                      {selectedQuote?.high != null && selectedQuote?.low != null && selectedQuote.high > selectedQuote.low && (
+                        <span className="ml-1 flex items-center gap-1.5 text-muted-foreground">
+                          Range
+                          <span className="relative inline-flex h-[3px] w-20 rounded-full bg-muted/60">
+                            <span
+                              className={`absolute top-[-2px] h-[7px] w-[3px] rounded-sm ${((selectedQuote?.changePercent ?? 0) >= 0) ? "bg-bullish" : "bg-bearish"}`}
+                              style={{
+                                left: `${Math.max(2, Math.min(97, ((selectedQuote.ltp ?? selectedQuote.low) - selectedQuote.low) / (selectedQuote.high - selectedQuote.low) * 100))}%`,
+                              }}
+                            />
+                          </span>
+                          <span className="font-mono text-foreground">₹{(selectedQuote.high - selectedQuote.low).toFixed(2)}</span>
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="shrink-0 border-b border-border px-3 py-1.5">
@@ -1224,17 +1277,37 @@ export function InstrumentExplorer({
                 </div>
 
                 {showBottomTradingWorkspace && (
-                  <div data-testid="bottom-trading-workspace" className="w-full shrink-0 border-t border-border bg-background/80">
-                    <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-[11px] text-muted-foreground">
-                      <button type="button" className="rounded border border-border bg-muted/20 px-2 py-1 text-foreground">Enter the Market</button>
-                      <button type="button" className="rounded border border-border bg-muted/20 px-2 py-1 text-foreground">Positions [{activeCanonicalPositions.length}]</button>
-                      <button type="button" className="rounded border border-border bg-muted/20 px-2 py-1 text-foreground">Pending [0]</button>
-                      <button type="button" className="rounded border border-border bg-muted/20 px-2 py-1 text-foreground">Closed Positions</button>
-                      <button type="button" className="rounded border border-border bg-muted/20 px-2 py-1 text-foreground">Order History</button>
-                      <button type="button" className="rounded border border-border bg-muted/20 px-2 py-1 text-foreground">Balance</button>
-                      <button type="button" className="rounded border border-border bg-muted/20 px-2 py-1 text-foreground">Trades</button>
-                      <button type="button" className="rounded border border-border bg-muted/20 px-2 py-1 text-foreground">Alerts [0]</button>
-                      <button type="button" className="ml-auto rounded border border-border bg-muted/20 px-2 py-1 text-foreground">Close All</button>
+                  <div data-testid="bottom-trading-workspace" className="w-full shrink-0 border-t border-border bg-background">
+                    <div className="flex items-center gap-0 border-b border-border bg-background/60 px-1 overflow-x-auto">
+                      {[
+                        { label: "New Order", key: "order" },
+                        { label: "Positions", key: "positions", badge: activeCanonicalPositions.length > 0 ? activeCanonicalPositions.length : undefined },
+                        { label: "Pending", key: "pending" },
+                        { label: "Closed", key: "closed" },
+                        { label: "History", key: "history" },
+                        { label: "Balance", key: "balance" },
+                        { label: "Alerts", key: "alerts" },
+                      ].map((tab) => (
+                        <button
+                          key={tab.key}
+                          type="button"
+                          onClick={() => tab.key === "order" ? openOrderTicket("BUY") : undefined}
+                          className="relative shrink-0 flex items-center gap-1.5 px-3 py-2 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors hover:bg-muted/30 border-b-2 border-transparent"
+                        >
+                          {tab.label}
+                          {tab.badge != null && (
+                            <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary/15 px-1 text-[9px] font-bold text-primary">
+                              {tab.badge}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        className="ml-auto shrink-0 rounded border border-red-500/40 bg-red-500/5 px-2.5 py-1 text-[11px] font-semibold text-red-500 hover:bg-red-500/15 hover:text-red-400 transition-colors mr-1"
+                      >
+                        Close All
+                      </button>
                     </div>
 
                     {activeCanonicalPositions.length === 0 && (
@@ -1250,18 +1323,15 @@ export function InstrumentExplorer({
                         <TableHeader className="bg-background/80">
                           <TableRow>
                             <TableHead>Instrument</TableHead>
-                            <TableHead>Entry Time (UTC)</TableHead>
-                            <TableHead>Type</TableHead>
                             <TableHead>Side</TableHead>
-                            <TableHead>Amount</TableHead>
-                            <TableHead>Entry Price</TableHead>
+                            <TableHead>Qty</TableHead>
+                            <TableHead className="text-right">Entry Price</TableHead>
+                            <TableHead className="text-right">LTP</TableHead>
                             <TableHead>Stop Loss</TableHead>
                             <TableHead>Take Profit</TableHead>
-                            <TableHead>Exit Time (UTC)</TableHead>
-                            <TableHead>Exit Price</TableHead>
-                            <TableHead>P&L</TableHead>
-                            <TableHead>Net P&L</TableHead>
-                            <TableHead>X</TableHead>
+                            <TableHead className="text-right">P&amp;L</TableHead>
+                            <TableHead>Time (IST)</TableHead>
+                            <TableHead className="w-8"></TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -1276,11 +1346,14 @@ export function InstrumentExplorer({
                             return (
                               <TableRow key={normalized.id}>
                                 <TableCell className="font-medium text-foreground">{normalized.symbol}</TableCell>
-                                <TableCell className="text-muted-foreground">{normalized.updated_at ? new Date(normalized.updated_at).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}</TableCell>
-                                <TableCell className="text-muted-foreground">{normalized.side === "LONG" ? "LONG" : "SHORT"}</TableCell>
-                                <TableCell className="text-muted-foreground">{String(normalized.side).toUpperCase()}</TableCell>
+                                <TableCell>
+                                  <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${normalized.side === "LONG" || normalized.side === "BUY" ? "bg-bullish/10 text-bullish" : "bg-bearish/10 text-bearish"}`}>
+                                    {normalized.side === "LONG" || normalized.side === "BUY" ? "LONG" : "SHORT"}
+                                  </span>
+                                </TableCell>
                                 <TableCell className="text-muted-foreground">{Number(normalized.qty ?? normalized.quantity ?? 0).toLocaleString("en-IN")}</TableCell>
-                                <TableCell className="font-mono text-foreground">₹{entryValue.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                                <TableCell className="text-right font-mono text-foreground">₹{entryValue.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                                <TableCell className="text-right font-mono text-foreground">₹{(Number(normalized.current_price ?? normalized.last_price ?? 0)).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                                 <TableCell>
                                   <input
                                     aria-label={`Stop Loss for ${normalized.symbol}`}
@@ -1327,12 +1400,16 @@ export function InstrumentExplorer({
                                     className="w-20 rounded border border-input bg-background px-1.5 py-1 text-xs text-foreground"
                                   />
                                 </TableCell>
-                                <TableCell className="text-muted-foreground">—</TableCell>
-                                <TableCell className="font-mono text-foreground">₹{(Number(normalized.current_price ?? normalized.last_price ?? 0)).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                <TableCell className={pnlValue >= 0 ? "font-mono text-bullish" : "font-mono text-bearish"}>₹{Math.abs(pnlValue).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                <TableCell className={netPnlValue >= 0 ? "font-mono text-bullish" : "font-mono text-bearish"}>₹{Math.abs(netPnlValue).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                                <TableCell className={`text-right font-mono font-semibold ${pnlValue >= 0 ? "text-bullish" : "text-bearish"}`}>
+                                  {pnlValue >= 0 ? "+" : "−"}₹{Math.abs(pnlValue).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </TableCell>
+                                <TableCell className="text-muted-foreground text-[11px]">
+                                  {normalized.updated_at ? new Date(normalized.updated_at).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) : "—"}
+                                </TableCell>
                                 <TableCell>
-                                  <button type="button" aria-label={`Close position ${normalized.symbol}`} onClick={() => void closePosition(normalized)} className="text-xs text-red-500 hover:text-red-400">X</button>
+                                  <button type="button" aria-label={`Close position ${normalized.symbol}`} onClick={() => void closePosition(normalized)} className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-red-500/10 hover:text-red-500 transition-colors">
+                                    <X className="h-3 w-3" />
+                                  </button>
                                 </TableCell>
                               </TableRow>
                             );
