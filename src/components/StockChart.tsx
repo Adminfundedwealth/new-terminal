@@ -42,6 +42,10 @@ interface StockChartProps {
   fill?: boolean;
   /** Explain the chart's unavailable state in the host workspace. */
   unavailableMessage?: string;
+  /** Hide instrument text repeated by a surrounding instrument header. */
+  showInstrumentLabel?: boolean;
+  /** Hide Buy/Sell actions repeated by a surrounding instrument header. */
+  showTradeActions?: boolean;
   /** If provided, renders as a Sheet (drawer). */
   asSheet?: boolean;
   open?: boolean;
@@ -136,6 +140,8 @@ function OpenAlgoChart({
   height,
   fill,
   unavailableMessage,
+  showInstrumentLabel = true,
+  showTradeActions = true,
   onBuy,
   onSell,
   onOrder,
@@ -145,6 +151,8 @@ function OpenAlgoChart({
   height: number;
   fill: boolean;
   unavailableMessage?: string;
+  showInstrumentLabel: boolean;
+  showTradeActions: boolean;
   onBuy?: () => void;
   onSell?: () => void;
   onOrder?: (order: OrderRequest) => void;
@@ -254,11 +262,13 @@ function OpenAlgoChart({
   return (
     <div className={`flex w-full flex-col ${fill ? "h-full min-h-[360px]" : ""}`}>
       <div className="flex min-h-8 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-2 py-1 text-[10px] text-muted-foreground">
-        <span className="truncate">
-          FundedWealth · {selectedInstrument?.tradingSymbol ?? symbol} · Indian market data
-        </span>
+        {showInstrumentLabel && (
+          <span className="truncate">
+            FundedWealth · {selectedInstrument?.tradingSymbol ?? symbol} · Indian market data
+          </span>
+        )}
         <div className="flex flex-wrap items-center justify-end gap-1.5">
-          {onBuy && (
+          {showTradeActions && onBuy && (
             <Button
               type="button"
               size="sm"
@@ -268,7 +278,7 @@ function OpenAlgoChart({
               Buy
             </Button>
           )}
-          {onSell && (
+          {showTradeActions && onSell && (
             <Button
               type="button"
               size="sm"
@@ -315,6 +325,8 @@ export function StockChart({
   height = 340,
   fill = false,
   unavailableMessage,
+  showInstrumentLabel = true,
+  showTradeActions = true,
   asSheet = false,
   open = false,
   onOpenChange,
@@ -339,6 +351,8 @@ export function StockChart({
               height={430}
               fill
               unavailableMessage={unavailableMessage}
+              showInstrumentLabel={showInstrumentLabel}
+              showTradeActions={showTradeActions}
               onBuy={onBuy}
               onSell={onSell}
               onOrder={onOrder}
@@ -357,6 +371,8 @@ export function StockChart({
         height={height}
         fill={fill}
         unavailableMessage={unavailableMessage}
+        showInstrumentLabel={showInstrumentLabel}
+        showTradeActions={showTradeActions}
         onBuy={onBuy}
         onSell={onSell}
         onOrder={onOrder}
@@ -379,6 +395,8 @@ export function StockChart({
           height={height}
           fill={false}
           unavailableMessage={unavailableMessage}
+          showInstrumentLabel={showInstrumentLabel}
+          showTradeActions={showTradeActions}
           onBuy={onBuy}
           onSell={onSell}
           onOrder={onOrder}

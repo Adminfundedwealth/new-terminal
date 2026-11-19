@@ -121,13 +121,13 @@ vi.mock("@/lib/terminalApi", async (importOriginal) => {
 
 vi.mock("@/components/stockChartLoader", () => ({
   loadStockChart: () => Promise.resolve({
-    StockChart: ({ symbol, selectedInstrument, unavailableMessage, onBuy, onSell }: { symbol: string; selectedInstrument?: { providerInstrumentId: string }; unavailableMessage?: string; onBuy?: () => void; onSell?: () => void }) => {
-      stockChartPropsMock({ onBuy, onSell });
+    StockChart: ({ symbol, selectedInstrument, unavailableMessage, onBuy, onSell, showInstrumentLabel = true, showTradeActions = true }: { symbol: string; selectedInstrument?: { providerInstrumentId: string }; unavailableMessage?: string; onBuy?: () => void; onSell?: () => void; showInstrumentLabel?: boolean; showTradeActions?: boolean }) => {
+      stockChartPropsMock({ onBuy, onSell, showInstrumentLabel, showTradeActions });
       return (
         <>
           <div data-testid="stock-chart" data-selected-instrument-id={selectedInstrument?.providerInstrumentId} data-unavailable-message={unavailableMessage}>{symbol} chart mock</div>
-          {onBuy && <button type="button" onClick={onBuy}>Chart Buy</button>}
-          {onSell && <button type="button" onClick={onSell}>Chart Sell</button>}
+          {showTradeActions && onBuy && <button type="button" onClick={onBuy}>Chart Buy</button>}
+          {showTradeActions && onSell && <button type="button" onClick={onSell}>Chart Sell</button>}
         </>
       );
     },
@@ -347,12 +347,24 @@ describe("InstrumentExplorer stock workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open ABB stock chart" }));
 
     expect(screen.getByRole("button", { name: /back to stocks/i })).toBeInTheDocument();
-    expect(screen.getAllByText("ABB").length).toBeGreaterThan(1);
-    expect(screen.getByText("NSE")).toBeInTheDocument();
+    expect(screen.getAllByText("ABB")).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /BUY/ })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /SELL/ })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Collapse instrument list" }));
+    expect(screen.getByRole("button", { name: "Expand instrument list" })).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(screen.getByRole("button", { name: "Expand instrument list" }));
+    expect(screen.getByRole("button", { name: "Collapse instrument list" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getAllByText("NSE · NSE_EQ")).toHaveLength(2);
     await waitFor(() => {
       expect(screen.getByTestId("stock-chart")).toHaveTextContent("ABB chart mock");
       expect(screen.getByTestId("stock-chart")).toHaveAttribute("data-selected-instrument-id", "500490");
     }, { timeout: 10_000 });
+    expect(stockChartPropsMock).toHaveBeenLastCalledWith(expect.objectContaining({
+      showInstrumentLabel: false,
+      showTradeActions: false,
+    }));
+    expect(screen.queryByRole("button", { name: "Chart Buy" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Chart Sell" })).not.toBeInTheDocument();
     await waitFor(() => {
       expect(queryClient.getQueryState(["terminal-selected-quote", null, "dhan", "ABB"])?.status).toBe("success");
     });
@@ -645,11 +657,11 @@ describe("InstrumentExplorer stock workspace", () => {
       onBuy: expect.any(Function),
       onSell: expect.any(Function),
     }));
-    fireEvent.click(screen.getByRole("button", { name: "Chart Buy" }));
+    fireEvent.click(screen.getByRole("button", { name: /BUY/ }));
     expect(screen.getByRole("dialog", { name: "SIMULATED BUY order ticket" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Close order ticket" }));
-    fireEvent.click(screen.getByRole("button", { name: "Chart Sell" }));
+    fireEvent.click(screen.getByRole("button", { name: /SELL/ }));
     expect(screen.getByRole("dialog", { name: "SIMULATED SELL order ticket" })).toBeInTheDocument();
     expect(createTerminalOrder).not.toHaveBeenCalled();
   }, 15_000);

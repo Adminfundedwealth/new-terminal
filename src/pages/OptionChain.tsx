@@ -1746,6 +1746,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
           } : undefined}
           inline
           height={280}
+          showInstrumentLabel={false}
         />
 
       )}
@@ -2377,12 +2378,12 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
           <div
             key={tab.id}
             className={fullscreenTabId === tab.id
-              ? "fixed inset-0 z-50 overflow-auto bg-background p-3"
+              ? "fixed inset-0 z-50 flex flex-col overflow-hidden bg-background p-3"
               : activeTabId === tab.id ? "block" : "hidden"}
             data-testid={fullscreenTabId === tab.id ? "fullscreen-option-chart" : undefined}
           >
             {fullscreenTabId === tab.id && (
-              <div className="mb-2 flex items-center justify-between">
+              <div className="mb-2 flex shrink-0 items-center justify-between">
                 <span className="text-sm font-semibold">{tab.label} · {tab.tradingSymbol} · ID {tab.securityId}</span>
                 <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setFullscreenTabId(null)} aria-label="Exit fullscreen chart">
                   <X className="mr-1 h-3.5 w-3.5" /> Exit fullscreen
@@ -2393,6 +2394,7 @@ export default function OptionChain({ defaultMarketView = "stocks" }: { defaultM
             <OptionContractChartTab
 
               tab={tab as ChartTab}
+              fill={fullscreenTabId === tab.id}
 
               onBuy={() => {
 

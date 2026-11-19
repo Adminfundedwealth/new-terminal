@@ -381,6 +381,11 @@
   /* Keep chart navigation inside the terminal viewport. */
   main.dashboard-main:has(.chart-workspace) {
     overflow: hidden;
+    padding: 0 0 2.25rem;
+  }
+
+  main.dashboard-main:has(.chart-workspace) > section[aria-label="Trading account context bar"] {
+    margin-bottom: 0;
   }
 
   html:has(.chart-workspace),

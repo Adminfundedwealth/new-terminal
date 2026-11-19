@@ -45,7 +45,7 @@ export default function Stocks() {
   };
 
   return (
-    <main className="mx-auto flex h-full min-h-0 w-full max-w-[1500px] flex-col p-3 sm:p-5">
+    <main className="flex h-full min-h-0 w-full flex-col">
       <InstrumentExplorer
         title="Stocks"
         subtitle="NSE and BSE cash equities from the Dhan instrument master. Quotes load for the visible page and refresh during the session."

@@ -1,6 +1,6 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search, Star, TrendingUp, TrendingDown, Loader2, BarChart3, ExternalLink, X, ArrowLeft } from "lucide-react";
+import { Search, Star, TrendingUp, TrendingDown, Loader2, BarChart3, ExternalLink, X, ArrowLeft, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -65,6 +65,7 @@ interface ExplorerProps {
   rows: ExplorerRow[];
   asset: ExplorerAsset;
   footerLabel?: string;
+  listHeader?: ReactNode;
   isLoading?: boolean;
   isCatalogLoading?: boolean;
   loadError?: string | null;
@@ -101,6 +102,7 @@ export function InstrumentExplorer({
   rows,
   asset,
   footerLabel,
+  listHeader,
   isLoading,
   isCatalogLoading,
   watchedSymbols,
@@ -124,6 +126,9 @@ export function InstrumentExplorer({
   const [streamQuotes, setStreamQuotes] = useState<Record<string, TerminalMarketDataQuote>>({});
   const [streamStatus, setStreamStatus] = useState<TerminalRealtimeStatus>("disconnected");
   const [chartSymbol, setChartSymbol] = useState<string | null>(initialChartSymbol ?? null);
+  const [isInstrumentDrawerOpen, setIsInstrumentDrawerOpen] = useState(
+    () => typeof window === "undefined" || window.innerWidth >= 768,
+  );
   const [activeTab, setActiveTab] = useState("Charts");
   const [workspaceContext, setWorkspaceContext] = useState<"stocks" | "options" | "futures">(initialWorkspaceContext ?? (asset === "futures" ? "futures" : "stocks"));
   const [ticketSide, setTicketSide] = useState<"BUY" | "SELL" | null>(null);
@@ -791,10 +796,11 @@ export function InstrumentExplorer({
   const showBottomTradingWorkspace = Boolean(chartSymbol && hasChartWorkspace && asset !== "futures");
 
   return (
-    <div className={chartSymbol && hasChartWorkspace ? "flex h-full min-h-0 flex-col" : "space-y-4"}>
-      {marketDataNotice && <p className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-600" role="status">{marketDataNotice}</p>}
+    <div className={chartSymbol && hasChartWorkspace ? "flex h-full min-h-0 w-full flex-col" : "flex h-full min-h-0 w-full flex-col gap-4 p-3 sm:p-5"}>
       {!chartSymbol || !hasChartWorkspace ? (
         <>
+          {listHeader}
+          {marketDataNotice && <p className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-600" role="status">{marketDataNotice}</p>}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-xs font-bold uppercase tracking-[0.2em] text-primary">{asset === "stocks" ? "Cash / Equity" : asset === "indices" ? "Cash / Index" : "Derivative"}</p>
@@ -991,26 +997,10 @@ export function InstrumentExplorer({
           </div>
         </>
       ) : (
-        <div className="chart-workspace flex h-full min-h-0 flex-col">
-          <div className="flex shrink-0 items-center justify-between gap-3 pb-3">
-            <button
-              type="button"
-              onClick={() => setChartSymbol(null)}
-              className="inline-flex h-8 items-center gap-2 rounded-md border border-border bg-card/80 px-2 text-xs font-medium text-foreground hover:bg-card"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Back to {asset === "indices" ? "Indices" : asset === "futures" ? "Futures" : "Stocks"}
-            </button>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className={`rounded-md border px-2 py-1 font-medium ${selectedQuoteIsFresh ? "border-bullish/30 bg-bullish/5 text-bullish" : "border-amber-500/30 bg-amber-500/5 text-amber-600"}`}>{chartQuoteStatus}</span>
-              {chartInstrument?.exchange && <span>{chartInstrument.exchange}</span>}
-              <span>{chartSymbol}</span>
-            </div>
-          </div>
-
-          <div className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-border bg-card shadow-[0_12px_40px_rgba(15,23,42,0.10)]">
+        <div className="chart-workspace flex h-full min-h-0 w-full flex-col">
+          <div className="min-h-0 flex-1 overflow-hidden bg-card">
             <div className="flex h-full min-h-0">
-              <aside className="flex w-[290px] min-h-0 shrink-0 flex-col border-r border-border bg-muted/20">
+              {isInstrumentDrawerOpen && <aside className="flex w-[260px] min-h-0 shrink-0 flex-col border-r border-border bg-muted/20">
                 <div className="shrink-0 border-b border-border bg-background/60 p-3">
                   <div className="relative">
                     <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
@@ -1085,37 +1075,59 @@ export function InstrumentExplorer({
                     ))}
                   </div>
                 </div>
-              </aside>
+              </aside>}
 
               <section className="flex min-w-0 min-h-0 flex-1 flex-col bg-background">
-                <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-background/80 px-4 py-3">
-                  <div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl font-bold tracking-tight">{selectedQuote?.label ?? chartSymbol}</span>
-                      <span className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{chartInstrument ? `${chartInstrument.exchange} · ${chartInstrument.exchangeSegment}` : asset === "indices" ? "NSE · IDX_I" : workspaceContext === "stocks" ? "NSE" : "NFO"}</span>
-                    </div>
-                    <div className="mt-1 flex items-center gap-3 text-sm">
-                      <span className="font-mono font-semibold text-foreground">
-                        {selectedQuote?.ltp != null && selectedQuote.ltp > 0
-                          ? `₹${selectedQuote.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                          : "—"}
-                      </span>
-                      <span className={`font-mono ${((selectedQuote?.change ?? 0) >= 0) ? "text-bullish" : "text-bearish"}`}>
-                        {selectedQuote?.change == null ? "—" : `${selectedQuote.change >= 0 ? "+" : ""}${selectedQuote.change.toFixed(2)}`}
-                      </span>
-                      <span className={`font-mono ${((selectedQuote?.changePercent ?? 0) >= 0) ? "text-bullish" : "text-bearish"}`}>
-                        {selectedQuote?.changePercent == null ? "—" : `${selectedQuote.changePercent >= 0 ? "+" : ""}${selectedQuote.changePercent.toFixed(2)}%`}
-                      </span>
+                <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border bg-background/80 px-3 py-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0"
+                      onClick={() => setIsInstrumentDrawerOpen((open) => !open)}
+                      aria-label={isInstrumentDrawerOpen ? "Collapse instrument list" : "Expand instrument list"}
+                      aria-expanded={isInstrumentDrawerOpen}
+                    >
+                      {isInstrumentDrawerOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
+                    </Button>
+                    <button
+                      type="button"
+                      onClick={() => setChartSymbol(null)}
+                      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-card/80 p-0 text-xs font-medium text-foreground hover:bg-card sm:w-auto sm:gap-1.5 sm:px-2"
+                      aria-label={`Back to ${asset === "indices" ? "indices" : asset === "futures" ? "futures" : "stocks"}`}
+                    >
+                      <ArrowLeft className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Back to {asset === "indices" ? "Indices" : asset === "futures" ? "Futures" : "Stocks"}</span>
+                    </button>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-3">
+                        <span className="truncate text-xl font-bold tracking-tight">{selectedQuote?.label ?? chartSymbol}</span>
+                        <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{chartInstrument ? `${chartInstrument.exchange} · ${chartInstrument.exchangeSegment}` : asset === "indices" ? "NSE · IDX_I" : workspaceContext === "stocks" ? "NSE" : "NFO"}</span>
+                      </div>
+                      <div className="mt-1 flex items-center gap-3 text-sm">
+                        <span className="font-mono font-semibold text-foreground">
+                          {selectedQuote?.ltp != null && selectedQuote.ltp > 0
+                            ? `₹${selectedQuote.ltp.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : "—"}
+                        </span>
+                        <span className={`font-mono ${((selectedQuote?.change ?? 0) >= 0) ? "text-bullish" : "text-bearish"}`}>
+                          {selectedQuote?.change == null ? "—" : `${selectedQuote.change >= 0 ? "+" : ""}${selectedQuote.change.toFixed(2)}`}
+                        </span>
+                        <span className={`font-mono ${((selectedQuote?.changePercent ?? 0) >= 0) ? "text-bullish" : "text-bearish"}`}>
+                          {selectedQuote?.changePercent == null ? "—" : `${selectedQuote.changePercent >= 0 ? "+" : ""}${selectedQuote.changePercent.toFixed(2)}%`}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <Button variant="outline" onClick={() => openOrderTicket("SELL")} className="h-12 min-w-[134px] rounded-lg border-0 bg-red-600 px-4 text-sm font-bold text-white shadow-sm hover:bg-red-700"><span aria-hidden="true" className="mr-1.5 text-[10px]">▼</span>SELL</Button>
-                    <Button variant="outline" onClick={() => openOrderTicket("BUY")} className="h-12 min-w-[134px] rounded-lg border-0 bg-emerald-600 px-4 text-sm font-bold text-white shadow-sm hover:bg-emerald-700"><span aria-hidden="true" className="mr-1.5 text-[10px]">▲</span>BUY</Button>
+                  <div className="ml-auto flex shrink-0 items-center gap-2">
+                    <Button variant="outline" onClick={() => openOrderTicket("SELL")} className="h-9 min-w-[64px] rounded-lg border-0 bg-red-600 px-2 text-xs font-bold text-white shadow-sm hover:bg-red-700 sm:min-w-[88px] sm:px-3"><span aria-hidden="true" className="mr-1 text-[10px]">▼</span>SELL</Button>
+                    <Button variant="outline" onClick={() => openOrderTicket("BUY")} className="h-9 min-w-[64px] rounded-lg border-0 bg-emerald-600 px-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 sm:min-w-[88px] sm:px-3"><span aria-hidden="true" className="mr-1 text-[10px]">▲</span>BUY</Button>
                   </div>
                 </div>
 
-                <div className="shrink-0 border-b border-border px-4 py-2">
+                <div className="shrink-0 border-b border-border px-3 py-1.5">
                   <div className="flex flex-wrap gap-2">
                     {chartTabs.map((tab) => (
                       <button
@@ -1192,8 +1204,8 @@ export function InstrumentExplorer({
                   </div>
                 )}
 
-                <div className="min-h-0 flex-1 p-3">
-                  <div className="h-full min-h-0 rounded-xl border border-border bg-background/60 p-2">
+                <div className="min-h-0 flex-1">
+                  <div className="h-full min-h-0">
                     <Suspense fallback={<div data-testid="stock-chart-loading" className="flex h-full items-center justify-center text-sm text-muted-foreground">Loading chart workspace…</div>}>
                       <StockChart
                         symbol={chartSymbol}
@@ -1203,6 +1215,8 @@ export function InstrumentExplorer({
                         onBuy={() => openOrderTicket("BUY")}
                         onSell={() => openOrderTicket("SELL")}
                         onOrder={(order) => openOrderTicket(order.side, order)}
+                        showInstrumentLabel={false}
+                        showTradeActions={false}
                         unavailableMessage={workspaceContext === "stocks" ? chartUnavailableMessage : undefined}
                       />
                     </Suspense>

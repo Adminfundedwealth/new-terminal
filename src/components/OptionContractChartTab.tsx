@@ -21,13 +21,15 @@ export function OptionContractChartTab({
   tab,
   onBuy,
   onSell,
+  fill = false,
 }: {
   tab: ChartTab;
   onBuy: () => void;
   onSell: () => void;
+  fill?: boolean;
 }) {
   return (
-    <div className="flex flex-col gap-3">
+    <div className={fill ? "flex h-full min-h-0 flex-1 flex-col gap-2" : "flex flex-col gap-3"}>
       {/* Header */}
       <div className="flex items-center justify-between gap-3 px-1">
         <div className="flex items-center gap-2 flex-wrap">
@@ -63,14 +65,16 @@ export function OptionContractChartTab({
       </div>
 
       {/* Chart */}
-      <div className="h-[600px] min-h-[400px]">
+      <div className={fill ? "min-h-0 flex-1" : "h-[min(70dvh,720px)] min-h-[320px]"}>
         <StockChart
           symbol={tab.tradingSymbol}
           selectedInstrument={tab.instrument}
           onBuy={onBuy}
           onSell={onSell}
           inline
-          fill
+          fill={fill}
+          showInstrumentLabel={false}
+          showTradeActions={false}
           unavailableMessage="Historical OHLC for this contract is loading…"
         />
       </div>

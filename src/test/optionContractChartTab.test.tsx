@@ -50,6 +50,8 @@ describe("OptionContractChartTab", () => {
       symbol: "RELIANCE26NOV1340CE",
       onBuy,
       onSell,
+      showInstrumentLabel: false,
+      showTradeActions: false,
       selectedInstrument: expect.objectContaining({
         providerInstrumentId: "987654",
         exchange: "NSE",

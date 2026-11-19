@@ -60,12 +60,7 @@ export default function Futures() {
     : null;
 
   return (
-    <main className="mx-auto w-full max-w-[1500px] p-3 sm:p-5">
-      <div className="mb-3 flex items-center justify-between">
-        <span className="text-sm text-muted-foreground">Only valid, unexpired FUTSTK and FUTIDX contracts are listed.</span>
-        <Badge variant="outline">{futures.length} contracts</Badge>
-      </div>
-      {quoteStatus && <p className="mb-3 text-sm text-amber-500" role="status">{quoteStatus}</p>}
+    <main className="flex h-full min-h-0 w-full flex-col">
       <InstrumentExplorer
         title="Futures"
         subtitle="Stock and index futures with central Dhan quotes and account-scoped trading."
@@ -83,6 +78,15 @@ export default function Futures() {
         onTradeOpen={(symbol) => navigate(`/option-chain?symbol=${encodeURIComponent(symbol)}`)}
         footerLabel="contracts"
         searchPlaceholder="Search futures..."
+        listHeader={
+          <>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm text-muted-foreground">Only valid, unexpired FUTSTK and FUTIDX contracts are listed.</span>
+              <Badge variant="outline">{futures.length} contracts</Badge>
+            </div>
+            {quoteStatus && <p className="text-sm text-amber-500" role="status">{quoteStatus}</p>}
+          </>
+        }
       />
     </main>
   );

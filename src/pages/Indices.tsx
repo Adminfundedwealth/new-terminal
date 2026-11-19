@@ -48,25 +48,7 @@ export default function Indices() {
   };
 
   return (
-    <main className="mx-auto flex h-full min-h-0 w-full max-w-[1500px] flex-col p-3 sm:p-5">
-      {/* Exchange filter tabs */}
-      <div className="mb-3 flex gap-2">
-        {(["ALL", "NSE", "BSE"] as const).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setExchange(tab)}
-            className={[
-              "rounded-md px-4 py-1.5 text-sm font-medium transition-colors",
-              exchange === tab
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted text-muted-foreground hover:bg-muted/80",
-            ].join(" ")}
-          >
-            {tab === "ALL" ? "All" : tab}
-          </button>
-        ))}
-      </div>
-
+    <main className="flex h-full min-h-0 w-full flex-col">
       <InstrumentExplorer
         title="Indices"
         subtitle="Available NSE and BSE indices from the configured instrument master."
@@ -85,6 +67,24 @@ export default function Indices() {
         onTradeOpen={(symbol) => navigate(`/option-chain?symbol=${symbol}`)}
         footerLabel="indices"
         searchPlaceholder="Search indices..."
+        listHeader={
+          <div className="flex gap-2">
+            {(["ALL", "NSE", "BSE"] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setExchange(tab)}
+                className={[
+                  "rounded-md px-4 py-1.5 text-sm font-medium transition-colors",
+                  exchange === tab
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground hover:bg-muted/80",
+                ].join(" ")}
+              >
+                {tab === "ALL" ? "All" : tab}
+              </button>
+            ))}
+          </div>
+        }
       />
     </main>
   );
