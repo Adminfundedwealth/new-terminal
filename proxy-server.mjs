@@ -341,9 +341,28 @@ async function handleDhanProxy(params, userClientId, userAccessToken) {
       const requestedUnderlying = params.get("underlyingScrip");
       const requestedSegment = params.get("underlyingSeg");
       const mappedUnderlying = UNDERLYING_MAP[symbol];
-      const underlying = requestedUnderlying || requestedSegment
+      let underlying = requestedUnderlying || requestedSegment
         ? resolveRequestedUnderlying(requestedUnderlying, requestedSegment)
         : mappedUnderlying;
+      if (!underlying) {
+        try {
+          const master = await handleDhanProxy(new URLSearchParams({ endpoint: "instruments" }), userClientId, userAccessToken);
+          const instruments = master?.data?.instruments ?? master?.instruments ?? [];
+          const equity = instruments.find((instrument) =>
+            instrument.exchangeSegment === "NSE_EQ" &&
+            (instrument.symbol?.toUpperCase() === symbol || instrument.tradingSymbol?.toUpperCase() === symbol)
+          );
+          if (equity?.securityId) {
+            underlying = {
+              underlyingScrip: Number(equity.securityId),
+              expirySegment: "NSE_EQ",
+              ocSegment: "NSE_EQ",
+            };
+          }
+        } catch (instrumentError) {
+          console.log(`  ⚠️ Stock option-chain instrument lookup failed for ${symbol}: ${instrumentError.message}`);
+        }
+      }
       if (!underlying) throw new Error(`Unknown symbol: ${symbol}. Supported: ${Object.keys(UNDERLYING_MAP).join(", ")}`);
       const lastGoodKey = `lastgood:oc:${symbol}:${expiry || "nearest"}`;
 
