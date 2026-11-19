@@ -1,3 +1,48 @@
+do $$
+declare
+  unique_index record;
+begin
+  if exists (
+    select 1
+    from public.instruments
+    group by exchange_segment, security_id
+    having count(*) > 1
+  ) then
+    raise exception 'Cannot add composite instrument identity while duplicate segment/security pairs exist.';
+  end if;
+
+  for unique_index in
+    select c.conname
+    from pg_constraint c
+    where c.conrelid = 'public.instruments'::regclass
+      and c.contype = 'u'
+      and pg_get_constraintdef(c.oid) = 'UNIQUE (security_id)'
+  loop
+    execute format('alter table public.instruments drop constraint %I', unique_index.conname);
+  end loop;
+
+  for unique_index in
+    select i.indexrelid::regclass as index_name
+    from pg_index i
+    where i.indrelid = 'public.instruments'::regclass
+      and i.indisunique
+      and not i.indisprimary
+      and i.indnkeyatts = 1
+      and pg_get_indexdef(i.indexrelid, 1, true) = 'security_id'
+      and not exists (
+        select 1
+        from pg_constraint c
+        where c.conindid = i.indexrelid
+      )
+  loop
+    execute format('drop index %s', unique_index.index_name);
+  end loop;
+end;
+$$;
+
+create unique index if not exists instruments_exchange_segment_security_id_uidx
+  on public.instruments (exchange_segment, security_id);
+
 create table public.dhan_instrument_catalog_syncs (
   id uuid primary key,
   status text not null default 'pending' check (status in ('pending', 'activated')),
@@ -21,7 +66,7 @@ create table public.dhan_instrument_catalog_stage (
   strike_price numeric(20, 4),
   option_type text,
   tick_size numeric(20, 8),
-  primary key (sync_id, security_id),
+  primary key (sync_id, exchange_segment, security_id),
   check (security_id ~ '^[0-9]+$'),
   check (exchange in ('NSE', 'BSE')),
   check (exchange_segment in ('NSE_EQ', 'BSE_EQ', 'NSE_FNO', 'BSE_FNO', 'IDX_I', 'BSE_IDX')),
@@ -93,7 +138,7 @@ begin
     raise exception 'Dhan catalog batch must be a JSON array';
   end if;
 
-  select count(*), count(distinct item.security_id)
+  select count(*), count(distinct (item.exchange_segment, item.security_id))
   into v_input_count, v_unique_count
   from jsonb_to_recordset(p_rows) as item(
     security_id text,
@@ -110,7 +155,7 @@ begin
   );
 
   if v_input_count = 0 or v_input_count <> v_unique_count then
-    raise exception 'Dhan catalog batch is empty or contains duplicate security IDs';
+    raise exception 'Dhan catalog batch is empty or contains duplicate instrument identities';
   end if;
 
   insert into public.dhan_instrument_catalog_stage (
@@ -134,7 +179,7 @@ begin
     option_type text,
     tick_size numeric
   )
-  on conflict (sync_id, security_id) do update set
+  on conflict (sync_id, exchange_segment, security_id) do update set
     symbol = excluded.symbol,
     trading_symbol = excluded.trading_symbol,
     exchange = excluded.exchange,
@@ -203,7 +248,7 @@ begin
     tick_size, true, v_now
   from public.dhan_instrument_catalog_stage
   where sync_id = p_sync_id
-  on conflict (security_id) do update set
+  on conflict (exchange_segment, security_id) do update set
     symbol = excluded.symbol,
     trading_symbol = excluded.trading_symbol,
     exchange = excluded.exchange,
@@ -225,6 +270,7 @@ begin
       select 1
       from public.dhan_instrument_catalog_stage as staged
       where staged.sync_id = p_sync_id
+        and staged.exchange_segment = instrument.exchange_segment
         and staged.security_id = instrument.security_id
     );
   get diagnostics v_retired_count = row_count;
